@@ -1,4 +1,4 @@
-#!/home/max/pet/ha-htram/.venv/bin/python3
+#!/usr/bin/env python3
 """
 HTRAM Hardware Bench Tool — Single CLI for GD32F150 research.
 
@@ -28,6 +28,11 @@ VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python3"
 PYOCD = REPO_ROOT / ".venv" / "bin" / "pyocd"
 SERIAL_PORT = "/dev/ttyACM0"
 BAUD_RATE = 115200
+
+# Run under the repo's own venv: the subcommands import pyserial, which the
+# system interpreter has no reason to carry. Re-exec once, then fall through.
+if not sys.prefix.startswith(str(REPO_ROOT / ".venv")) and VENV_PYTHON.exists():
+    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), os.path.abspath(__file__)] + sys.argv[1:])
 
 
 def get_pyocd() -> str:
