@@ -76,7 +76,7 @@ PLL з IRC8M/2 ×18 = 72 МГц і виставляє flash latency 2WS; `SYSTEM
 з'являється в HA). `rx_head` на GD32 починає рости.
 
 **Файли/доки:** [`esphome/htram.yaml`](../esphome/htram.yaml),
-[`custom_components/htram/protocol.py`](../custom_components/htram/protocol.py)
+`custom_components/htram/protocol.py` у [ha-htram](https://github.com/reidMaks/ha-htram)
 (еталон CRC/формату), [`firmware/gd32/src/protocol_engine.c`](../firmware/gd32/src/protocol_engine.c)
 та [`firmware/gd32/inc/protocol.h`](../firmware/gd32/inc/protocol.h) (формат кадрів),
 [CUSTOM_FIRMWARE_SPEC §5](CUSTOM_FIRMWARE_SPEC.md). **Інструмент:** для локальної
@@ -344,9 +344,10 @@ UART-протокол до GD32 — у §3.
 ### Наскрізні доробки (fast-follow)
 - **Мелодії:** покрито службою `esphome.htram_play_rtttl(song)` з Home Assistant (мелодії граються напряму через RTTTL-рядки з HA).
 - **Індикація за порогами CO₂** (обговорено): автоматичне підсвічування LED (G / Y / R) за рівнем CO₂ + перемикач «LED Auto» в HA. Суто ESP-логіка.
-- **Архівувати legacy `custom_components/htram/`** (MQTT-шлях) — своє відіграв (див. §9),
-  заодно прибрати передіснуючий збій pytest (несумісність `paho-mqtt`).
-- **Push у remote** — досі все локально в `main`, не пушено.
+- ~~Архівувати legacy `custom_components/htram/`~~ — **зроблено 2026-09-07 інакше**:
+  репозиторій розділено. Інтеграція до заводської прошивки лишилась у
+  [ha-htram](https://github.com/reidMaks/ha-htram), прошивка живе тут. Разом із
+  нею туди пішли й тести з `paho-mqtt`, тож червоних тестів тут більше немає.
 
 ---
 

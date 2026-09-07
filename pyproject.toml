@@ -1,0 +1,26 @@
+[project]
+name = "htram-esphome"
+version = "0.1.0"
+description = "Custom firmware for the Honeywell HTRAM: ESPHome on the ESP32, bare-metal on the GD32"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Builds and flashes the ESP32 half, and drives the GD32 OTA through it.
+    "esphome>=2026.8.2",
+    "esptool>=5.3.1",
+    "pyserial>=3.5",
+    # tools/swd: SWD flashing and the SRAM probes.
+    "pyocd>=0.45.1",
+    # tools/swd/flash.py posts the GD32 image to the ESP's /gd32_ota endpoint.
+    "requests>=2.32",
+]
+
+[dependency-groups]
+dev = [
+    # tools/fonts/make_oblique.py bakes the slanted clock face.
+    "fonttools>=4.64.0",
+    # tools/images: SVG -> 1-bit mask, and tracing silhouettes out of screenshots.
+    "cairosvg>=2.7",
+    "pillow>=11",
+    "scikit-image>=0.26.0",
+]

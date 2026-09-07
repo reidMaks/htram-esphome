@@ -37,12 +37,12 @@ graph TD
 
 ### Етап 1: Оптимізація GD32 під потік пікселів
 1. **Збільшення RX буфера:**
-   - У [`firmware/gd32/src/protocol_engine.c`](file:///home/max/pet/ha-htram/firmware/gd32/src/protocol_engine.c) збільшити `RX_RING_SIZE` з 256 до `2048`.
+   - У [`firmware/gd32/src/protocol_engine.c`](../firmware/gd32/src/protocol_engine.c) збільшити `RX_RING_SIZE` з 256 до `2048`.
 2. **Оптимізація виливання пікселів у `display.c`:**
    - Додати функції пакетного стрімінгу: `display_start_pixels()` (опускає CS в LOW), `display_send_pixel_stream()` (жене біти пікселя без смикання CS), `display_end_pixels()` (піднімає CS в HIGH).
    - У `protocol_engine.c` під час обробки `CMD_TYPE_DRAW_RECT`: викликати `display_start_pixels()` на початку прямокутника та `display_end_pixels()` наприкінці. Це прискорить заливку на ~30%.
 3. **Плавна передача керування екраном від GD32 до ESP32:**
-   - У [`firmware/gd32/src/main.c`](file:///home/max/pet/ha-htram/firmware/gd32/src/main.c) при старті показувати стартовий екран ("HTRAM / SENSORS ONLINE").
+   - У [`firmware/gd32/src/main.c`](../firmware/gd32/src/main.c) при старті показувати стартовий екран ("HTRAM / SENSORS ONLINE").
    - Додати прапорець `g_external_display_active`: щойно від ESP32 приходить перший пакет `CMD_DRAW_RECT`, GD32 повністю припиняє своє локальне малювання екрана і передає контроль ESP32.
 
 ---
@@ -107,9 +107,9 @@ graph TD
 
 ## 3. Файли для модифікації та створення
 
-1. `[MODIFY]` [`firmware/gd32/src/protocol_engine.c`](file:///home/max/pet/ha-htram/firmware/gd32/src/protocol_engine.c) — `RX_RING_SIZE` до 2048, стрімінг CS у `STATE_PIXELS`.
-2. `[MODIFY]` [`firmware/gd32/src/display.c`](file:///home/max/pet/ha-htram/firmware/gd32/src/display.c) та [`display.h`](file:///home/max/pet/ha-htram/firmware/gd32/inc/display.h) — функції `display_start_pixels()`, `display_send_pixel_stream()`, `display_end_pixels()`.
-3. `[MODIFY]` [`firmware/gd32/src/main.c`](file:///home/max/pet/ha-htram/firmware/gd32/src/main.c) — передача контролю дисплея при надходженні `CMD_DRAW_RECT`.
+1. `[MODIFY]` [`firmware/gd32/src/protocol_engine.c`](../firmware/gd32/src/protocol_engine.c) — `RX_RING_SIZE` до 2048, стрімінг CS у `STATE_PIXELS`.
+2. `[MODIFY]` [`firmware/gd32/src/display.c`](../firmware/gd32/src/display.c) та [`display.h`](../firmware/gd32/inc/display.h) — функції `display_start_pixels()`, `display_send_pixel_stream()`, `display_end_pixels()`.
+3. `[MODIFY]` [`firmware/gd32/src/main.c`](../firmware/gd32/src/main.c) — передача контролю дисплея при надходженні `CMD_DRAW_RECT`.
 4. `[NEW]` `esphome/custom_components/htram_gd32/display.py` — реєстрація платформи `display` в ESPHome.
-5. `[MODIFY]` [`esphome/custom_components/htram_gd32/htram_gd32.h`](file:///home/max/pet/ha-htram/esphome/custom_components/htram_gd32/htram_gd32.h) та [`htram_gd32.cpp`](file:///home/max/pet/ha-htram/esphome/custom_components/htram_gd32/htram_gd32.cpp) — метод `send_draw_rect(...)` та клас `HtramGd32Display`.
-6. `[MODIFY]` [`esphome/htram.yaml`](file:///home/max/pet/ha-htram/esphome/htram.yaml) — конфігурація `display`, шрифти, `time`, віджети `lvgl`.
+5. `[MODIFY]` [`esphome/custom_components/htram_gd32/htram_gd32.h`](../esphome/custom_components/htram_gd32/htram_gd32.h) та [`htram_gd32.cpp`](../esphome/custom_components/htram_gd32/htram_gd32.cpp) — метод `send_draw_rect(...)` та клас `HtramGd32Display`.
+6. `[MODIFY]` [`esphome/htram.yaml`](../esphome/htram.yaml) — конфігурація `display`, шрифти, `time`, віджети `lvgl`.
