@@ -81,7 +81,7 @@ PLL з IRC8M/2 ×18 = 72 МГц і виставляє flash latency 2WS; `SYSTEM
 та [`firmware/gd32/inc/protocol.h`](../firmware/gd32/inc/protocol.h) (формат кадрів),
 [CUSTOM_FIRMWARE_SPEC §5](CUSTOM_FIRMWARE_SPEC.md). **Інструмент:** для локальної
 перевірки протоколу без ESP — [`tools/htram_uart.py`](../tools/htram_uart.py),
-[`tools/decode_telemetry.py`](../tools/decode_telemetry.py) через Pico-міст.
+[`tools/decode_telemetry.py`](https://github.com/reidMaks/ha-htram/blob/main/tools/decode_telemetry.py) через Pico-міст.
 
 ---
 
@@ -213,7 +213,7 @@ UART-протокол до GD32 — у §3.
 **Файли/доки:** [`esphome/htram.yaml`](../esphome/htram.yaml),
 [CUSTOM_FIRMWARE_SPEC §9.1](CUSTOM_FIRMWARE_SPEC.md).
 
-> **Legacy (не для ESPHome-шляху):** [`custom_components/htram/`](../custom_components/htram/)
+> **Legacy (не для ESPHome-шляху):** [`custom_components/htram/`](https://github.com/reidMaks/ha-htram/tree/main/custom_components/htram/)
 > (mqtt_source/config_flow/coordinator) і відновлений MQTT downlink-формат
 > `D/<serial>` — це шлях керування **заводською** прошивкою ESP через її
 > MQTT/cloud-протокол. На ESPHome-шляху **не потрібні** (native API замінює
@@ -737,3 +737,36 @@ Lucide/Feather/Tabler лінійні й тонкі — на 0.45 мм штрих
 > **Чесне застереження, яке має лишитись у коді коментарем:** пристрій залежить
 > від мережі й від Home Assistant. Це може бути **лише дублюючий** канал, ніколи
 > не основний, і нікого не можна заохочувати покладатись на нього як на єдиний.
+
+---
+
+## 14. 🟢 Гігієна самого репозиторію (після розділення 2026-09-07)
+
+Прошивка виїхала з `ha-htram` в окремий репозиторій разом із власною історією
+(93 коміти), `.claude/skills/`, стендовими інструментами й пісочницею дизайну.
+Інтеграція до заводської прошивки лишилась там і сюди більше не стосується.
+Розділення оголило кілька речей, які варто закрити.
+
+### 14.1. Немає CI — і саме тому пропущено, що залежності не оголошені
+
+`esphome` і `pyocd` не були в `pyproject.toml` місяцями. Це не помічалось, бо
+всі збірки йшли з одного venv на робочій машині, де вони колись опинились
+руками. Виявилось це рівно тоді, коли вперше зібрали з чистого клону.
+
+Що мало б це ловити — воркфлоу, який на кожен push робить те саме, що робить
+чужа людина: `uv sync`, `esphome config esphome/htram.yaml`, і `make` у
+`firmware/gd32` (потрібен `arm-none-eabi-gcc` з apt). Обидві половини мовчазні
+й швидкі, залізо для них не потрібне.
+
+Одна пастка: `esphome config` вимагає `esphome/secrets.yaml`, якого в
+репозиторії немає й не буде. У воркфлоу треба копіювати
+[`esphome/secrets.yaml.example`](../esphome/secrets.yaml.example) — він містить
+усі сім ключів, які шукає конфіг.
+
+### 14.2. Дрібне
+
+- `.python-version` тут немає, хоч `requires-python = ">=3.12"`. На чужій
+  машині uv візьме будь-який відповідний Python; варто закріпити той, на якому
+  збирали.
+- `uv.lock` до цього коміту не був у гіті взагалі — тобто відтворюваність
+  збірки трималась на чесному слові. Тепер закомічений.

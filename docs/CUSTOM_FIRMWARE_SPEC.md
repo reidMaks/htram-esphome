@@ -432,15 +432,15 @@ CRIR M1 має заводське калібрування та автомати
   репозиторії: воно чуже, і MIT-ліцензія цього проєкту не поширюється на нього.
 
 ### 12.3. Технічні звіти реверс-інжинірингу в репозиторії
-* [`tools/README.md`](../tools/README.md) — Фундаментальний звіт про дослідження заліза та протоколів:
+* [`tools/README.md`](https://github.com/reidMaks/ha-htram/blob/main/tools/README.md) — Фундаментальний звіт про дослідження заліза та протоколів:
   * **§8a–§8c:** Аналіз прошивки ESP-AT, ліній зв'язку між процесорами (`GPIO16/17` UART1 115200) та розшифровка AT-команд.
   * **§8f:** Повний розбір 31-байтного пакета Downlink на `D/<serial>`, розпіновка SWD, результати дизасемблювання графічного контролера та доведення відсутності іконки Wi-Fi у заводських асетах.
 * [`README.md`](../README.md) — Загальна документація інтеграції Home Assistant, опис сутностей, архітектура зв'язку та юридичний дисклеймер (Directive 2009/24/EC / DMCA 1201(f)).
 
 ### 12.4. Інструменти дослідження протоколу (CLI Tools)
-* [`tools/test_downlink_mqtt.py`](../tools/test_downlink_mqtt.py) — Утиліта прямої відправки 31-байтних двійкових Downlink-пакетів через WebSocket Secure (порт 443) з перевіркою миттєвого ACK-відгуку.
-* [`tools/htram_wifi.py`](../tools/htram_wifi.py) — BLE-клієнт конфігурації Wi-Fi та MQTT-сервера.
-* [`tools/mqtt_wss.py`](../tools/mqtt_wss.py) — Автономний локальний WSS-брокер для прийому телеметрії без хмари.
+* [`tools/test_downlink_mqtt.py`](https://github.com/reidMaks/ha-htram/blob/main/tools/test_downlink_mqtt.py) — Утиліта прямої відправки 31-байтних двійкових Downlink-пакетів через WebSocket Secure (порт 443) з перевіркою миттєвого ACK-відгуку.
+* [`tools/htram_wifi.py`](https://github.com/reidMaks/ha-htram/blob/main/tools/htram_wifi.py) — BLE-клієнт конфігурації Wi-Fi та MQTT-сервера.
+* [`tools/mqtt_wss.py`](https://github.com/reidMaks/ha-htram/blob/main/tools/mqtt_wss.py) — Автономний локальний WSS-брокер для прийому телеметрії без хмари.
 
 ### 12.5. Документація виробників компонентів (Datasheets & Specs)
 * **GigaDevice GD32F150:**
@@ -452,7 +452,7 @@ CRIR M1 має заводське калібрування та автомати
 * **Дисплей ST7789VW:**
   * *Sitronix ST7789VW 240x240 RGB TFT Controller Datasheet* (Команди `0x2A` CASET, `0x2B` RASET, `0x2C` RAMWR, `0x3A` COLMOD).
 * **Сенсор CO₂ та вологості:**
-  * *Honeywell CRIR M1 (`C06-0801-000`) Commercial CO₂ Sensor Datasheet* — [`CO2_CRIR_M1.pdf`](../CO2_CRIR_M1.pdf) у репо; UART Modbus RTU. Реєстрова карта — «CRIR M1 User Guide» (Honeywell).
+  * *Honeywell CRIR M1 (`C06-0801-000`) Commercial CO₂ Sensor Datasheet* — [`CO2_CRIR_M1.pdf`](datasheets/CO2_CRIR_M1.pdf), чужий документ і в репозиторій не входить; UART Modbus RTU. Реєстрова карта — «CRIR M1 User Guide» (Honeywell).
   * *Sensirion SHT30-DIS (SHT3x-DIS) Humidity & Temperature Sensor Datasheet* — маркування `SHT30`/`DIATHJ` підтверджено; I2C `0x44`, CRC-8.
 
 ### 12.6. Зовнішні відкриті проєкти та декомпільовані джерела
