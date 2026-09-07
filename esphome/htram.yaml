@@ -194,7 +194,14 @@ web_server:
     password: !secret web_password
 
 external_components:
+  # The GD32 driver is this repository's own -- it is meaningless without the
+  # firmware in firmware/gd32/, so it stays beside it.
   - source: custom_components
+  # The alert map client never touched this hardware, so it lives on its own
+  # and any ESP-IDF device can use it. Pinned to a tag, not main: this config
+  # is flashed to devices that must not break because that repo moved on.
+  - source: github://reidMaks/jaam_ws@v1.0.0
+    components: [jaam_ws]
 
 uart:
   id: uart_bus
