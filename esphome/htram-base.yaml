@@ -38,6 +38,9 @@ esphome:
     - priority: -100
       then:
         - script.execute: refresh_leds
+        # The GD32 keeps its backlight across an ESP restart, but the restored
+        # slider would then be describing a value nobody sent. Push it once.
+        - script.execute: apply_backlight
 
 esp32:
   board: esp32dev
@@ -298,6 +301,12 @@ script:
             snprintf(buf, sizeof(buf), "%.1f C   %.0f%%", t, h);
             return std::string(buf);
 
+  - id: apply_backlight
+    then:
+      - lambda: |-
+          if (!isnan(id(screen_brightness).state))
+            id(htram_core)->send_backlight((uint8_t) id(screen_brightness).state);
+
   # Світлофор над екраном покриває стан повітря периферійним зором — читати
   # число не треба. Поки реального виміру нема, світлодіоди не світяться:
   # зелений «усе добре» без даних — брехня.
@@ -321,6 +330,21 @@ globals:
     type: float
     restore_value: false
     initial_value: "NAN"
+
+interval:
+  # Перезапуск GD32 — не рідкість: кожна його OTA закінчується саме ним. Поки
+  # він завантажувався, USART1 ще не існував, тож усе, що ESP тоді надіслала,
+  # пропало, а сам він стартує з яскравістю 100 (main.c). Без цього повзунок
+  # показував би одне, а панель світила інше.
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(htram_core)->consume_gd32_boot()) {
+            ESP_LOGI("resync", "GD32 перезапустився: підсвітка, світлодіоди, кадр");
+            id(apply_backlight).execute();
+            id(htram_core)->resend_leds();
+            lv_obj_invalidate(lv_screen_active());
+          }
 
 sensor:
   - platform: htram_gd32
@@ -411,6 +435,21 @@ switch:
       name: "LED green"
 
 number:
+  - platform: template
+    name: "Яскравість екрана"
+    id: screen_brightness
+    icon: "mdi:brightness-6"
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    restore_value: true
+    optimistic: true
+    set_action:
+      - lambda: "id(htram_core)->send_backlight((uint8_t) x);"
+
   # Залишкове підстроювання температури, поверх моделі в GD32.
   #
   # Сама компенсація самонагріву живе у прошивці GD32 (sensors.c): вона одна
