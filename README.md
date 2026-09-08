@@ -38,9 +38,16 @@ owns the sensors, the panel and the buttons.
 | `tools/swd/` | SWD flashing, rescue, SRAM probes |
 | `tools/uidesign/` | browser studio for the face, at true physical scale |
 | `tools/images/`, `tools/fonts/` | asset pipelines: SVG → 1-bit mask, baked oblique |
-| `docs/` | hardware map, firmware spec, bench procedures, test plan, TODO |
+| `docs/` | conversion runbook, hardware map, firmware spec, bench procedures, test plan, TODO |
 
 ## Getting started
+
+**Converting a stock device for the first time?** Start at
+[docs/CONVERSION.md](docs/CONVERSION.md) — it carries the whole sequence, the
+soldering, and the one step that cannot be undone. `tools/convert.py --status`
+reads the device and tells you where you are in it.
+
+Once converted, both chips update over the air:
 
 ```bash
 uv sync

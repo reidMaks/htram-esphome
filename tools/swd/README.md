@@ -29,7 +29,7 @@ Using a standard Raspberry Pi Pico running [picoprobe / debugprobe](https://gith
 | **GP2** (Pin 4) | SWCLK | **`TP16`** | GD32 PA14 (SWCLK) |
 | **GP3** (Pin 5) | SWDIO | **`TP17`** | GD32 PA13 (SWDIO) |
 | **GND** (Pin 3, 8, etc.) | Ground | **`GND`** | USB shield / Ground pad |
-| **GP5** (Pin 7, Optional) | UART RX | **ESP32 Pin 25 (`GPIO16` / `RXD2`)** | Inter-chip UART line (connected to GD32 `PA2` / USART1_TX). Used for capturing flash dump at 115200 baud. |
+| **GP5** (Pin 7, Optional) | UART RX | **ESP32 pad 27 (`GPIO16` / `RXD2`)** | Inter-chip UART line (connected to GD32 `PA2` / USART1_TX). Used for capturing flash dump at 115200 baud. |
 
 
 ---
@@ -72,11 +72,15 @@ flash without triggering a mass erase (PT SWARM GigaVulnerability #2):
 ```bash
 .venv/bin/pyocd cmd -t cortex_m -f 100k -c "reset halt"   # regain control if needed
 # load + run the RDP unlock stub from SRAM (erases option bytes -> RDP=0xA5):
-#   see rdp_unlock.c; applied on the next reset, which mass-erases main flash.
+#   see rdp_unlock.c; applied on the next POWER-ON reset, which mass-erases main flash.
 ```
 `rdp_unlock.c` unlocks FMC+OB, erases the option bytes to the factory default
-(software watchdog, no write-protect) and programs `RDP=0xA5`. On reset the
-hardware performs the mass erase and drops protection (`OBSTAT 0x…02 -> 0x…00`).
+(software watchdog, no write-protect) and programs `RDP=0xA5`. The stub itself
+erases nothing: the option bytes take effect on the next **power-on** reset, and
+it is at that POR that the hardware mass-erases main flash and drops protection
+(`OBSTAT 0x…02 -> 0x…00`). A plain `reset` is not enough — fully remove power,
+USB and battery both. Read-back of `0x1FFFF800` stays blocked until that POR, so
+judge the stub's own success from `FMC_STAT`, not from a read.
 
 ### 4.3. Flash an image — `flash.py`
 Streaming programmer: builds `flash_writer.c` for SRAM, loads it via pyocd,
