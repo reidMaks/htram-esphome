@@ -166,13 +166,28 @@ class Gd32OtaHandler : public AsyncWebHandler {
     }
     std::string res = this->parent_->execute_ota(this->firmware_);
     request->send(200, "application/json", res.c_str());
-    this->firmware_.clear();
+    std::vector<uint8_t>().swap(this->firmware_);
   }
 
   void handleUpload(AsyncWebServerRequest *request, const PlatformString &filename, size_t index, uint8_t *data, size_t len, bool final) override {
     if (index == 0) {
-      this->firmware_.clear();
-      this->firmware_.reserve(65536);
+      // Reserve what this upload needs, not the whole 64 KB of GD32 flash.
+      //
+      // reserve(65536) asks the heap for one contiguous block. That worked
+      // while the config was small; by 2026-09-08 the largest free block was
+      // 23.5 KB, so the allocation could not succeed -- and with exceptions
+      // off a failed operator new is abort(). Every POST to /gd32_ota panicked
+      // the ESP before the GD32 was touched at all, which is why the chip
+      // survived it twice: the crash lands during staging, well before any
+      // erase.
+      //
+      // swap() rather than clear(): clear() keeps the capacity, so the buffer
+      // would sit on that memory forever afterwards.
+      std::vector<uint8_t>().swap(this->firmware_);
+      size_t want = request->contentLength();
+      if (want == 0 || want > 65536)
+        want = 16384;  // no Content-Length, or a bogus one
+      this->firmware_.reserve(want);
     }
     if (len > 0) {
       this->firmware_.insert(this->firmware_.end(), data, data + len);
