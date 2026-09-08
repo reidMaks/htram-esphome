@@ -132,24 +132,22 @@ void periph_init(void)
      * field above is dead code while this bit is set. */
     *(volatile uint32_t *)0x40021030 |= 0x0100;
 
-    /* PB2 is driven HIGH once and then left alone. It gates neither the SHT30
-     * nor the battery divider: bench probe tools/swd/battery_test.c reads the
-     * SHT30 with valid CRC at PB2=0, and channel 9 returns the same count
-     * (2589 vs 2590) either way. The datasheet gives PB2 no analog function at
-     * all. HIGH matches the factory init; toggling it per reading only risked
-     * disturbing the bus for nothing. */
 #ifndef DIAG_MINIMAL
-    /* PB2 LOW. Driving it HIGH is what kept the battery from charging for two
-     * days: with PB2=1 the charger never starts (CHRG stays released), and the
-     * moment it goes low CHRG asserts and the cell begins to gain -- verified
-     * live over SWD, the transition is immediate.
+    /* PB2 is the charger's enable input, ACTIVE LOW. Established by static
+     * analysis of the factory dump 2026-09-07: it has an inverting setter
+     * (0x0800C384) called from exactly two places, and the choice between them
+     * is made on USB presence read from PC13 -- USB in, PB2 low, charging
+     * allowed; no USB, PB2 high, charger off. See GD32_HARDWARE_MAP §6.5e.
      *
-     * The factory does exactly this: PB2=1 while the device is awake and doing
-     * something, PB2=0 in its charging/idle state. §5 recorded that PB2 gates
-     * neither the SHT30 nor the battery divider, which is true, and we wrongly
-     * concluded from that it gates nothing at all -- the bench test never asked
-     * about the charger. Its actual function is still unknown; what is known is
-     * that HIGH blocks charging and LOW does not break anything we use. */
+     * Two days of a battery that would not charge came from copying a snapshot
+     * of the factory's live GPIO instead of its behaviour: the snapshot was
+     * taken with no USB attached, so PB2 read high, and "hold it high like the
+     * factory" was exactly backwards for the charging case.
+     *
+     * Init low rather than high. The factory inits high, but its first poll
+     * corrects that within milliseconds; here, low is the fail-safe -- with no
+     * USB it changes nothing, whereas a stuck high would silently stop the cell
+     * from ever charging. periph_read_battery() mirrors USB from then on. */
     gpio_cfg_out_pp(GPIOB_BASE, 2);
     GPIOB_BC = (1 << 2);
 #endif
@@ -380,6 +378,19 @@ int periph_read_battery(uint16_t *batt_mv, uint8_t *is_usb_present, uint8_t *is_
     if (is_usb_present) {
         *is_usb_present = usb ? 1 : 0;
     }
+
+#ifndef DIAG_MINIMAL
+    /* Mirror the charger enable onto USB presence, the way the factory does
+     * (GD32_HARDWARE_MAP §6.5e). PB2 is active low, so USB present -> BC,
+     * absent -> BOP. Writing BOP/BC is a single store and idempotent, so
+     * repeating the current state every poll costs nothing and needs no
+     * shadow variable to go stale. */
+    if (usb) {
+        GPIOB_BC = (1 << 2);
+    } else {
+        GPIOB_BOP = (1 << 2);
+    }
+#endif
     if (is_charging) {
         /* CHRG is open-drain and ACTIVE LOW: measured 0 over SWD while the
          * factory image was visibly charging, and 1 both with charging stopped
