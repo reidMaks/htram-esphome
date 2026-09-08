@@ -9,7 +9,12 @@ LDFLAGS = -Wl,--gc-sections
 GIT_HASH  := $(shell git rev-parse HEAD 2>/dev/null | cut -c1-8)
 GIT_HASH  := $(if $(GIT_HASH),$(GIT_HASH),00000000)
 GIT_DIRTY := $(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo 1 || echo 0)
-BUILD_EPOCH := $(shell date -u +%s)
+# Wall clock here made every build byte-different, so two builds of the same
+# tree could never be compared by CRC -- and the image running on a device
+# could never be reproduced. The stamp now comes from the commit, which is the
+# same everywhere; a tree with uncommitted changes is still flagged separately
+# by GIT_DIRTY. SOURCE_DATE_EPOCH overrides, per the usual convention.
+BUILD_EPOCH := $(if $(SOURCE_DATE_EPOCH),$(SOURCE_DATE_EPOCH),$(shell git log -1 --format=%ct 2>/dev/null || date -u +%s))
 
 SRCS    = src/main.c \
           src/display.c \

@@ -1,0 +1,131 @@
+name: GD32 firmware
+
+# Two jobs, one purpose each.
+#
+# On every push and pull request: prove the firmware still builds, and print
+# its size. A GD32 image that stopped fitting or stopped compiling should be
+# visible immediately, not the next time someone flashes hardware.
+#
+# On a tag: publish the image as a release asset. This matters more than it
+# looks -- the firmware is meant to be final, and a device carries no copy of
+# its own sources. The release is the artifact that makes "what is actually
+# running" recoverable without an ARM toolchain.
+#
+# The build is reproducible (firmware/gd32/Makefile stamps the commit date,
+# not the wall clock), so the CRC published here is the CRC that
+# tools/swd/flash.py will compare against the device.
+
+on:
+  push:
+    # Deliberately no `paths:` filter here. GitHub ANDs path filters with the
+    # branch/tag filter, so a tag placed on a commit that happened not to touch
+    # firmware/gd32/ would silently skip the release build -- which is exactly
+    # the run that matters. The build takes about a minute; that is cheaper
+    # than a tag that quietly produces no artifact.
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'firmware/gd32/**'
+      - '.github/workflows/gd32.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # only the release job needs it; see the `if` below
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # BUILD_EPOCH reads the commit date, so the full history is not
+          # needed -- but a shallow clone of depth 1 still carries it.
+          fetch-depth: 1
+
+      - name: Install the ARM toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+
+      - name: Build
+        working-directory: firmware/gd32
+        run: make
+
+      - name: Size and CRC
+        id: stamp
+        run: |
+          arm-none-eabi-size firmware/gd32/build/gd32_firmware.elf
+          # The CRC is computed by importing flash.py's own function rather
+          # than reimplementing it. A second copy drifted from the original
+          # within an hour of being written -- flash.py seeds the register
+          # with 0, not 0xFFFF, which is XMODEM rather than CCITT-FALSE
+          # despite the name. Publishing a number that the flashing tool will
+          # not agree with is worse than publishing none, so there is exactly
+          # one implementation.
+          pip install --quiet pyserial requests
+          crc=$(python3 -c "
+          import importlib.util
+          spec = importlib.util.spec_from_file_location('f', 'tools/swd/flash.py')
+          m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          img = open('firmware/gd32/build/gd32_firmware.bin', 'rb').read()
+          if len(img) & 1: img += b'\xFF'
+          print(f'{m.crc16_ccitt(img):04X}')
+          ")
+          size=$(stat -c%s firmware/gd32/build/gd32_firmware.bin)
+          sha=$(sha256sum firmware/gd32/build/gd32_firmware.bin | cut -d' ' -f1)
+          echo "crc=$crc"   >> "$GITHUB_OUTPUT"
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha"   >> "$GITHUB_OUTPUT"
+          {
+            echo "### GD32 firmware"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| size | $size B |"
+            echo "| CRC (as flash.py computes it) | 0x$crc |"
+            echo "| sha256 | \`$sha\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the image for this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: gd32_firmware
+          path: |
+            firmware/gd32/build/gd32_firmware.bin
+            firmware/gd32/build/gd32_firmware.elf
+          retention-days: 14
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: firmware/gd32
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          cp build/gd32_firmware.bin "gd32_firmware-${tag}.bin"
+          cat > notes.md <<EOF
+          GD32F150 firmware \`${tag}\`.
+
+          | | |
+          | --- | --- |
+          | size | ${{ steps.stamp.outputs.size }} B |
+          | CRC (as flash.py computes it) | \`0x${{ steps.stamp.outputs.crc }}\` |
+          | sha256 | \`${{ steps.stamp.outputs.sha }}\` |
+
+          Flash over the air through the ESP32, no ARM toolchain needed:
+
+          \`\`\`
+          tools/swd/flash.py --ota <device> gd32_firmware-${tag}.bin
+          \`\`\`
+
+          The tool prints the host CRC before sending and the device's own
+          \`staged_crc\` after; both must equal the CRC above.
+
+          Never put a timeout on the write. See docs/CONVERSION.md.
+          EOF
+          # Create the release if the tag has none yet, then upload. --clobber
+          # keeps a re-run of the same tag idempotent.
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "$tag" --notes-file notes.md
+          gh release upload "$tag" "gd32_firmware-${tag}.bin" --clobber
