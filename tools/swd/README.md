@@ -53,9 +53,13 @@ openocd \
 ## 4. Firmware Backup & Flashing
 
 > ⚠️ **OpenOCD does not work on this GD32 and pyocd's built-in flash algorithms
-> don't fit.** openocd fails target examination over SWD-only (no NRST wired; it
-> reads DBGMCU IDCODE which is blocked under RDP), and pyocd's `stm32f103rc`
-> flash algorithm overflows this chip's 8 KB SRAM. The working path is a custom
+> don't fit.** openocd fails on SWD-only wiring: its reset sequence needs NRST,
+> which a bare debugprobe does not drive, so `reset halt` ends in
+> "AP write error, reset will not halt" and nothing is loaded. This was long
+> attributed to RDP blocking DBGMCU IDCODE; that is not the cause -- it fails
+> the same way with protection removed (verified 2026-09-08, which is why
+> run_flash_dump.sh now drives pyocd instead). pyocd's `stm32f103rc` flash
+> algorithm separately overflows this chip's 8 KB SRAM. The working path is a custom
 > SRAM-resident programmer driven by `flash.py`. pyocd is used **only** with the
 > generic `cortex_m` target for `loadmem` / `reset halt`. See
 > [../../docs/GD32_HARDWARE_MAP.md](../../docs/GD32_HARDWARE_MAP.md) §6.8.
@@ -66,6 +70,12 @@ flash without triggering a mass erase (PT SWARM GigaVulnerability #2):
 * Run `./run_flash_dump.sh` — it loads an SRAM stub at `0x20000000`, clears
   CoreSight DP register `0x4` (`CDBGPWRUPREQ`) so SRAM-executed code can read
   flash under RDP, and dumps the full 64 KB to `gd32_flash.bin` over UART.
+* It resets the chip before loading, and must: any firmware that has started
+  FWDGT keeps it running until a reset, flash_dump.c never kicks it, and a
+  plain halt therefore leaves the stub about a second before the watchdog
+  restarts the chip underneath it. The capture then reads the running
+  firmware's 921600 traffic at 115200 and times out on garbage.
+* The ESP must be off the inter-chip line first -- see docs/CONVERSION.md.
 * Keep `gd32_flash.bin` — it is the factory restore image.
 
 ### 4.2. Remove RDP (one-time, enables writing)

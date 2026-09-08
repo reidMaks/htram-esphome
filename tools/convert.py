@@ -53,6 +53,9 @@ SECRETS = REPO_ROOT / "esphome" / "secrets.yaml"
 # face: at the riskiest moment the ESP must not fail over a weather entity
 # that does not exist in someone else's Home Assistant.
 YAML = REPO_ROOT / "esphome" / "htram-base.yaml"
+# Flashed only for the dump: it declares no uart, so GPIO16/17 stay inputs and
+# the probe owns the inter-chip line. See ensure_esp_quiet().
+QUIET_YAML = REPO_ROOT / "esphome" / "htram-quiet.yaml"
 
 # Run under the repo's own venv: pyocd and requests live there, not in the
 # system interpreter. Re-exec once, then fall through.
@@ -429,6 +432,40 @@ def archive_dump(uid: str | None, label: str) -> Path:
     return dest
 
 
+def ensure_esp_quiet(args) -> bool:
+    """Get the ESP off the inter-chip line before the probe drives it.
+
+    The conversion flashes the ESP first, and that config declares
+    `uart: tx_pin: GPIO17` -- the very line the probe's GP4 is soldered to.
+    Two push-pull outputs on one node is contention whenever the ESP
+    transmits, and BENCH.md's claim that the ESP "leaves GPIO16/17 high-Z" was
+    written for a minimal config that no longer resembles what we flash.
+
+    Only the dump needs this. By the time `flash` runs, RDP has been lifted,
+    the GD32 is blank, and a blank GD32 drives no PB3 -- so the ESP has no
+    power and no way to interfere.
+    """
+    if esp_online(args.host)[0] != OK:
+        say("dump", "ESP не в мережі — лінію вона не займає, продовжую")
+        return True
+    physical([
+        "ESP зараз тримає GPIO17, до якого припаяний GP4 пробника.",
+        "Поки вона там, потік до стабу псується.",
+        "",
+        f"Зараз буде залито {QUIET_YAML.name} — конфіг без uart, тож піни",
+        "лишаться входами. Ваш звичайний конфіг повернеться на етапі verify.",
+    ])
+    if not ask("Залити тихий конфіг і звільнити лінію?"):
+        say("dump", "без цього дамп може вийти пошкодженим")
+        return ask("Усе одно продовжити?")
+    rc, _ = _run_streaming([str(ESPHOME), "run", str(QUIET_YAML),
+                            "--device", args.host, "--no-logs"])
+    if rc != 0:
+        say("dump", "не вдалося залити тихий конфіг")
+        return False
+    return True
+
+
 def stage_dump(args) -> int:
     uid = device_uid()
     say("dump", f"UID пристрою на стенді: {uid or 'не читається'}")
@@ -475,6 +512,8 @@ def stage_dump(args) -> int:
         "Триває близько двох хвилин. Не від'єднувати нічого.",
     ])
     if not ask("Почати зняття заводського образу?"):
+        return 1
+    if not ensure_esp_quiet(args):
         return 1
     rc, _ = _run_streaming(["./run_flash_dump.sh"], cwd=SWD_DIR)
     st, note = dump_state()
@@ -588,6 +627,17 @@ def stage_flash(args) -> int:
 def stage_verify(args) -> int:
     st, note = esp_online(args.host)
     say("verify", f"ESP: {note}")
+
+    # The dump left the quiet config on the ESP -- no uart, no component, no
+    # face. Put the real one back before calling the conversion done, or the
+    # device ends up finished but mute.
+    if st == OK and ask(f"Повернути справжній конфіг ({YAML.name})?"):
+        rc, _ = _run_streaming([str(ESPHOME), "run", str(YAML),
+                                "--device", args.host, "--no-logs"])
+        if rc != 0:
+            say("verify", "не вдалося залити — пристрій лишився з тихим конфігом")
+            return 1
+
     physical([
         "GD32 після старту шле HELLO зі своїм build epoch і git-хешем.",
         "Подивитись у логах ESP:",
