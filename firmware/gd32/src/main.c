@@ -382,7 +382,8 @@ int main(void)
 
         if (sht_pending && (now - sht_started_ms >= SHT30_CONVERSION_MS)) {
             sht_pending = 0;
-            sensor_err = (sensors_sht30_fetch(&temp_001c, &hum_001pct) != 0) ? 1 : 0;
+            sensor_err = (sensors_sht30_fetch(&temp_001c, &hum_001pct,
+                                              is_usb_present) != 0) ? 1 : 0;
         }
 
         /* CO2 is a Modbus exchange with per-byte timeouts, up to 300 ms on the

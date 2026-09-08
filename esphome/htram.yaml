@@ -381,6 +381,14 @@ globals:
     type: bool
     restore_value: true
     initial_value: "true"
+
+  # Температура так, як її прислав GD32, до підстроювання нижче: фільтр
+  # вологості рахує від неї. У телеметрії T публікується перед RH з того
+  # самого пакета, тож на момент фільтра RH значення свіже.
+  - id: t_from_gd32
+    type: float
+    restore_value: false
+    initial_value: "NAN"
   # 0 = clock, 1 = no time, 2 = no network, -1 = unknown/overlay dirtied it.
   # lv_label_set_text invalidates unconditionally, so the message is only
   # written when the state behind it actually changed.
@@ -1433,11 +1441,30 @@ sensor:
     temperature:
       name: "Temperature"
       id: sensor_temp
+      filters:
+        # Запам'ятовуємо те, що прийшло від GD32, і зсуваємо на підстроювання.
+        # Порядок важливий: вологість нижче рахується від цієї ж температури.
+        - lambda: |-
+            id(t_from_gd32) = x;
+            const float trim = id(temp_trim).state;
+            return isnan(trim) ? x : x + trim;
       on_value:
         - lambda: if (id(slot_idx) == 2) id(refresh_slot).execute();
     humidity:
       name: "Humidity"
       id: sensor_hum
+      filters:
+        # Вологість власного підстроювання не має — воно випливає з
+        # температурного: тепліший за повітря датчик показує нижчу RH за тієї
+        # самої кількості води. Той самий перерахунок через тиск насиченої
+        # пари, що й у GD32, тільки від уже скоригованої точки.
+        - lambda: |-
+            const float trim = id(temp_trim).state;
+            const float ts = id(t_from_gd32);
+            if (isnan(trim) || isnan(ts) || trim == 0.0f) return x;
+            auto es = [](float t) { return 6.112f * expf(17.62f * t / (243.12f + t)); };
+            const float rh = x * es(ts) / es(ts + trim);
+            return rh > 100.0f ? 100.0f : (rh < 0.0f ? 0.0f : rh);
       on_value:
         - lambda: if (id(slot_idx) == 2) id(refresh_slot).execute();
     battery:
@@ -1578,6 +1605,28 @@ number:
     set_action:
       - lambda: |-
           id(htram_core)->send_backlight(x);
+
+  # Залишкове підстроювання температури, поверх моделі в GD32.
+  #
+  # Сама компенсація самонагріву живе у прошивці GD32 (sensors.c): вона одна
+  # знає стан живлення і веде поправку плавно. Це число — не друга модель, а
+  # калібрування конкретного примірника: плати й кімнати трохи різні, а
+  # перепрошивати GD32 заради півградуса не варто. Нуль = нічого не робить.
+  #
+  # Додається до показу, тож для завищення потрібне від'ємне число.
+  - platform: template
+    name: "Підстроювання температури"
+    id: temp_trim
+    icon: "mdi:thermometer"
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    initial_value: 0
+    restore_value: true
+    optimistic: true
+    mode: box
 
 datetime:
   # Час живе на пристрої, а не в автоматизації Home Assistant: будильник

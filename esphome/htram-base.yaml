@@ -313,6 +313,15 @@ script:
           const bool warn = !high && ppm >= ${co2_warn};
           id(htram_core)->send_leds(high, warn, !high && !warn, 1);
 
+globals:
+  # Температура так, як її прислав GD32, до підстроювання нижче: фільтр
+  # вологості рахує від неї. У телеметрії T публікується перед RH з того
+  # самого пакета, тож на момент фільтра RH значення свіже.
+  - id: t_from_gd32
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+
 sensor:
   - platform: htram_gd32
     htram_gd32_id: htram_core
@@ -330,11 +339,30 @@ sensor:
     temperature:
       name: "Temperature"
       id: temp_sensor
+      filters:
+        # Запам'ятовуємо те, що прийшло від GD32, і зсуваємо на підстроювання.
+        # Порядок важливий: вологість нижче рахується від цієї ж температури.
+        - lambda: |-
+            id(t_from_gd32) = x;
+            const float trim = id(temp_trim).state;
+            return isnan(trim) ? x : x + trim;
       on_value:
         - script.execute: refresh_th
     humidity:
       name: "Humidity"
       id: hum_sensor
+      filters:
+        # Вологість власного підстроювання не має — воно випливає з
+        # температурного: тепліший за повітря датчик показує нижчу RH за тієї
+        # самої кількості води. Той самий перерахунок через тиск насиченої
+        # пари, що й у GD32, тільки від уже скоригованої точки.
+        - lambda: |-
+            const float trim = id(temp_trim).state;
+            const float ts = id(t_from_gd32);
+            if (isnan(trim) || isnan(ts) || trim == 0.0f) return x;
+            auto es = [](float t) { return 6.112f * expf(17.62f * t / (243.12f + t)); };
+            const float rh = x * es(ts) / es(ts + trim);
+            return rh > 100.0f ? 100.0f : (rh < 0.0f ? 0.0f : rh);
       on_value:
         - script.execute: refresh_th
     battery:
@@ -381,6 +409,29 @@ switch:
       name: "LED yellow"
     green:
       name: "LED green"
+
+number:
+  # Залишкове підстроювання температури, поверх моделі в GD32.
+  #
+  # Сама компенсація самонагріву живе у прошивці GD32 (sensors.c): вона одна
+  # знає стан живлення і веде поправку плавно. Це число — не друга модель, а
+  # калібрування конкретного примірника: плати й кімнати трохи різні, а
+  # перепрошивати GD32 заради півградуса не варто. Нуль = нічого не робить.
+  #
+  # Додається до показу, тож для завищення потрібне від'ємне число.
+  - platform: template
+    name: "Підстроювання температури"
+    id: temp_trim
+    icon: "mdi:thermometer"
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    initial_value: 0
+    restore_value: true
+    optimistic: true
+    mode: box
 
 button:
   - platform: template

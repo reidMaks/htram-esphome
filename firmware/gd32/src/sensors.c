@@ -126,47 +126,96 @@ static uint8_t sht30_crc8(const uint8_t *data, int len)
 }
 
 /*
- * Board self-heating offset.
+ * Board self-heating compensation.
  *
  * The SHT30 sits on the PCB beside the MCU and the 5 V boost, so it reads well
  * above ambient: the bench probe measured 31.9 C at the sensor with the die at
  * ~43 C (internal channel 16, V25 = 1.45 V, 4.1 mV/C) on an open board.
  * A correction is genuinely needed -- the factory firmware has one for a reason.
  *
- * What it must NOT be is the quantised model previously reversed from flash
- * 0x08005A30. That version fed three ramping counters through a log2 and
- * subtracted (off_bl + off_usb + off_boost) whole degrees, which meant:
- *   - the reported value slid ~8 C downward in 1 C steps over the first ~96 s
- *     after boot while the raw reading barely moved, and
- *   - it swung a further 5 C (and 10 points of RH) on the USB status bit, which
- *     PC13 does not currently deliver reliably.
- * Those two effects are exactly the wandering readings we set out to fix.
+ * The factory does not use a constant. Its model (flash 0x080059E0..0x08005A94,
+ * documented in docs/GD32_HARDWARE_MAP.md 5.1) ramps three counters -- backlight,
+ * USB, 5 V boost -- pushes each through a log2 and subtracts whole degrees,
+ * up to 13 C in total, adding up to 31 points of RH to match.
  *
- * The temperature constant is calibrated on the bench: with a factory-firmware
- * unit sitting alongside, both on battery and both thermally settled, the
- * reference reported 25 C while this board read 23.50 C at an 8.00 C offset --
- * so 6.50 C is what actually lands on the reference. Note the reference only
- * transmits whole degrees (protocol.py, telemetry byte [23]), which caps the
- * achievable accuracy here at roughly +/-0.5 C.
+ * A single constant was tried here first, and it was not enough. 6.50 C was
+ * calibrated against a factory unit alongside, both settled -- but on battery,
+ * on an open board, which is the factory's own off_bl + off_boost = 8 case with
+ * off_usb = 0. Assembled and on the charger the USB term is missing entirely and
+ * this board reads 5-6 C high: 29 C observed where the reference showed 23.
  *
- * Measure before changing these: the correction exists to cancel *this board's*
- * self-heating, so recalibrate with both units side by side and settled, or you
- * end up encoding a difference in conditions instead.
+ * So the state is back, but not the quantisation. Whole degrees through a log2
+ * are what made the reading slide ~8 C in 1 C steps over the first ~96 s after
+ * boot and jump 5 C the moment USB changed -- the wandering that b07ce05 set out
+ * to remove. Here the offset is carried in 0.01 C, relaxes toward its target
+ * with a time constant of about 8 minutes (one step per 30 s measurement cycle),
+ * and is seeded to the target on the first reading so a boot does not ramp.
  *
- * The humidity constant follows from the same measurement and is not an
- * independent fudge: a sensor sitting 6.5 C above ambient reads a lower RH for
- * the same water content. At 50 %RH / 25 C ambient the vapour pressure is
- * 1.59 kPa, and against saturation at 31.5 C (4.62 kPa) that is 34.3 %RH -- which
- * is what the raw reading actually was (34.46 %). The two constants therefore
- * describe one and the same 6.5 C of self-heating.
+ * The USB term is the factory's own 5.00 C. PC13 does deliver the bit reliably:
+ * verified in both states in b07ce05 (on battery PC13=0 -> Status []; on external
+ * power PC13=1 -> Status [Charging, USB]). An older comment here claimed it did
+ * not; that predates the check.
  *
- * Caveat: adding a constant is only valid near this operating point. The true
- * relation is multiplicative in saturation pressure, so at markedly different
- * temperature or humidity this will drift. Converting through dew point would
- * fix that properly.
+ * The backlight and boost terms stay folded into the base constant. Both are on
+ * whenever telemetry flows -- the panel comes up lit and the CO2 rail is never
+ * duty-cycled -- so splitting them out would add state that never changes.
+ *
+ * Humidity has no constant of its own any more, and should not: a sensor above
+ * ambient reads a lower RH for the same water content, so it follows from the
+ * temperature offset through saturation pressure. That also settles the caveat
+ * the old constant carried, which was only honest near one operating point.
+ * Cross-check against the same bench calibration: raw 34.46 %RH at 31.5 C with
+ * a 6.5 C offset gives 49.9 %RH against the reference's 50 %.
+ *
+ * Per-device trim lives on the ESP (a Home Assistant number, default 0), because
+ * each board and each room differ slightly and reflashing this chip to chase
+ * half a degree is not a trade worth making.
  */
-#define SHT30_T_OFFSET_001C     650   /* subtract 6.50 C  -- bench-calibrated */
-#define SHT30_RH_OFFSET_001PCT  1555  /* add 15.55 %RH    -- bench-calibrated */
+#define SHT30_T_OFF_BASE_001C   650   /* battery + backlight + boost, settled */
+#define SHT30_T_OFF_USB_001C    500   /* extra while on external power        */
+#define SHT30_T_OFF_RELAX_SHIFT 4     /* 1/16 per 30 s cycle -> tau ~ 8 min   */
+
+/* exp(x) for 0 <= x <= 1, argument and result in Q16.
+ * Fourth-order Taylor: 0.06 % at x = 0.38 (a 6.5 C offset), 0.4 % at x = 1.
+ * A libm expf would cost a soft-float import for a number that only has to be
+ * good to a tenth of a percent of RH. */
+static uint32_t exp_q16(uint32_t x)
+{
+    if (x > (1u << 16)) x = 1u << 16;
+    uint64_t term = 1u << 16;
+    uint64_t sum = term;
+    for (uint32_t n = 1; n <= 4; n++) {
+        term = (term * x) >> 16;
+        term /= n;
+        sum += term;
+    }
+    return (uint32_t)sum;
+}
+
+/* es(T_sensor) / es(T_sensor - off), Q16 -- the factor the measured RH has to
+ * be multiplied by to express it at ambient instead of at the warm sensor.
+ *
+ * Magnus: ln es = a*T/(b+T) with a = 17.62, b = 243.12 C, so d(ln es)/dT is
+ * a*b/(b+T)^2 and the ratio is exp(k*off). Taking k at the midpoint of the
+ * interval rather than at either end makes the first-order form second-order
+ * accurate: across 25..31.5 C it lands on 1.4595 against an exact 1.4595.
+ *
+ * Both arguments are in 0.01 C. With D = 100*(b + T_mid) the two 1e-4 scale
+ * factors collapse into the constant: x = 428380 * off / D^2. */
+static uint32_t rh_ratio_q16(int32_t t_sensor_001c, int32_t off_001c)
+{
+    if (off_001c <= 0)
+        return 1u << 16;
+
+    int32_t d = 24312 + t_sensor_001c - off_001c / 2;
+    if (d < 1000)                       /* far below anything this board sees */
+        d = 1000;
+
+    uint64_t x = ((uint64_t)428380 * (uint32_t)off_001c) << 16;
+    x /= (uint64_t)d * (uint64_t)d;
+
+    return exp_q16((uint32_t)x);
+}
 
 int sensors_sht30_start(void)
 {
@@ -182,7 +231,8 @@ int sensors_sht30_start(void)
 /* Call no sooner than SHT30_CONVERSION_MS after sensors_sht30_start(). The
  * datasheet limit for high repeatability is 15.5 ms; the margin is kept
  * because delay_ms() calibration runs short at full core speed. */
-int sensors_sht30_fetch(int16_t *temp_001c, uint16_t *hum_001pct)
+int sensors_sht30_fetch(int16_t *temp_001c, uint16_t *hum_001pct,
+                        uint8_t usb_present)
 {
     uint8_t buf[6];
 
@@ -205,8 +255,29 @@ int sensors_sht30_fetch(int16_t *temp_001c, uint16_t *hum_001pct)
     /* Raw RH [0.01 %] = 10000 * raw_h / 65535 */
     uint32_t h_raw = ((uint32_t)10000 * raw_h) / 65535;
 
-    int32_t t_comp = t_raw - SHT30_T_OFFSET_001C;
-    int32_t h_comp = (int32_t)h_raw + SHT30_RH_OFFSET_001PCT;
+    /* Move the offset one step toward what this power state calls for. The
+     * first reading takes the target outright: ramping from zero after every
+     * boot or reflash is the very artefact this model is written to avoid. */
+    static int32_t t_off_001c = 0;
+    static uint8_t t_off_valid = 0;
+
+    int32_t target = SHT30_T_OFF_BASE_001C
+                   + (usb_present ? SHT30_T_OFF_USB_001C : 0);
+    if (!t_off_valid) {
+        t_off_001c = target;
+        t_off_valid = 1;
+    } else {
+        int32_t d = target - t_off_001c;
+        int32_t step = d >> SHT30_T_OFF_RELAX_SHIFT;
+        if (step == 0)                  /* otherwise it stalls short of target */
+            step = (d > 0) ? 1 : (d < 0 ? -1 : 0);
+        t_off_001c += step;
+    }
+
+    int32_t t_comp = t_raw - t_off_001c;
+
+    uint32_t ratio = rh_ratio_q16(t_raw, t_off_001c);
+    int32_t h_comp = (int32_t)(((uint64_t)h_raw * ratio) >> 16);
     if (h_comp > 10000) h_comp = 10000;
     if (h_comp < 0) h_comp = 0;
 
