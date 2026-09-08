@@ -8,6 +8,7 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "esphome/components/display/display.h"
+#include <esp_heap_caps.h>
 #include "esphome/components/display/display_color_utils.h"
 #include <string>
 #include <vector>
@@ -160,6 +161,13 @@ class Gd32OtaHandler : public AsyncWebHandler {
   }
 
   void handleRequest(AsyncWebServerRequest *request) override {
+    if (this->staging_failed_) {
+      request->send(507, "application/json",
+                    "{\"result\":\"error\",\"stage\":\"staging\","
+                    "\"reason\":\"not enough contiguous heap to stage the image\"}");
+      std::vector<uint8_t>().swap(this->firmware_);
+      return;
+    }
     if (this->firmware_.empty()) {
       request->send(400, "application/json", "{\"result\":\"error\",\"reason\":\"no file uploaded\"}");
       return;
@@ -184,11 +192,27 @@ class Gd32OtaHandler : public AsyncWebHandler {
       // swap() rather than clear(): clear() keeps the capacity, so the buffer
       // would sit on that memory forever afterwards.
       std::vector<uint8_t>().swap(this->firmware_);
+      this->staging_failed_ = false;
       size_t want = request->contentLength();
       if (want == 0 || want > 65536)
         want = 16384;  // no Content-Length, or a bogus one
+
+      // Ask the heap whether it can before asking it to. reserve() on a block
+      // that is not there does not fail politely -- with exceptions off it is
+      // abort(), and this device is often reachable by OTA alone. A refused
+      // update is recoverable; a panicked ESP in someone's hallway is not.
+      // The margin covers what the flasher itself needs further on.
+      size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+      if (largest < want + 4096) {
+        ESP_LOGE("htram_gd32", "[OTA] refusing: need %u B contiguous, largest free block is %u B",
+                 (unsigned) (want + 4096), (unsigned) largest);
+        this->staging_failed_ = true;
+        return;
+      }
       this->firmware_.reserve(want);
     }
+    if (this->staging_failed_)
+      return;
     if (len > 0) {
       this->firmware_.insert(this->firmware_.end(), data, data + len);
     }
@@ -197,6 +221,7 @@ class Gd32OtaHandler : public AsyncWebHandler {
  private:
   HtramGd32Component *parent_;
   std::vector<uint8_t> firmware_;
+  bool staging_failed_{false};
 };
 
 }  // namespace htram_gd32

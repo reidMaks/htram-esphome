@@ -291,9 +291,23 @@ def main() -> int:
                   "auth enabled this will fail with 401", file=sys.stderr)
         print(f"[ota] POSTing image to {url} ... (this will take 5-10 seconds)")
         try:
-            resp = sess.post(url, files={'file': ('firmware.bin', img)}, timeout=30)
+            # Connect timeout only; no read timeout on the response.
+            #
+            # The device erases the GD32 and writes it while this request is
+            # open, so a read timeout is a timeout on a flash write -- the one
+            # thing the whole procedure says never to do. Giving up here does
+            # not stop the device (execute_ota runs to completion regardless),
+            # but it loses the confirmation, and an operator who thinks the
+            # update failed will retry into a write that is still in flight.
+            #
+            # A connect timeout is safe: nothing has been erased yet.
+            resp = sess.post(url, files={'file': ('firmware.bin', img)},
+                             timeout=(10, None))
         except requests.RequestException as e:
             print(f"[ota] Request failed: {e}", file=sys.stderr)
+            print("[ota] The device may still be writing. Do NOT retry until "
+                  "you have checked the GD32 firmware sensor -- a retry into a "
+                  "write in flight is how a chip gets bricked.", file=sys.stderr)
             return 1
 
         if resp.status_code == 401:

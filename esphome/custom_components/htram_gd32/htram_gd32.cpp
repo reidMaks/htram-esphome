@@ -640,6 +640,20 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   ESP_LOGI(TAG, "[OTA] Image size: %d bytes, Staged CRC16: 0x%04X, Battery: %d mV, Status: 0x%02X",
            (int)firmware.size(), staged_crc, last_batt_mv_, last_status_);
 
+  // Say something before going deaf. Once ota_mode_ is set, send_draw_rect()
+  // returns early and the panel keeps whatever frame it had -- so to an
+  // onlooker the device is indistinguishable from one that has hung, and the
+  // reasonable reaction to a hung device is to pull its power. Doing that
+  // between the erase and the last write is precisely how this chip gets
+  // bricked, and with no bench in reach that is the end of both OTA paths.
+  //
+  // All three LEDs at once is a combination the CO2 logic never produces, so
+  // it cannot be mistaken for a reading. Deliberately not an LVGL overlay:
+  // this runs on the HTTP task, and mutating LVGL off the render loop is what
+  // crashed this firmware in lv_inv_area before (see pump_rx_). One UART
+  // command, no allocation, no re-entrancy.
+  send_leds(1, 1, 1, 1);
+
   ota_mode_ = true;
 
   // Drain any pending telemetry in RX buffer
@@ -709,6 +723,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     ESP_LOGE(TAG, "[OTA 3/6] FAILED: Could not sync with flasher after 10 attempts!");
     rx_buffer_.clear();
     ota_mode_ = false;
+  resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"rom_sync\",\"reason\":\"No ACK from flasher (timeout on 0x7F)\"}");
     return buf;
   }
@@ -720,6 +735,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   if (!rom_erase(erase_err)) {
     rx_buffer_.clear();
     ota_mode_ = false;
+  resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"erase\",\"reason\":\"%s\"}", erase_err.c_str());
     return buf;
   }
@@ -762,6 +778,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
 
   rx_buffer_.clear();
   ota_mode_ = false;
+  resend_leds();
 
   if (!success) {
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"write\",\"reason\":\"%s\",\"bytes_written\":%d}",
