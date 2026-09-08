@@ -396,9 +396,14 @@ def discover_esp(timeout: float = 6.0) -> list[str]:
 
     Returning a list rather than a winner is the point. On this bench the
     browse turned up htram-9436b0 -- the already-converted unit in daily use --
-    while the device actually on the probe did not answer at all. Auto-picking
-    would have aimed `--stage dump` at the wrong ESP and flashed the quiet
-    config over a working one. Ambiguity is the caller's problem to refuse.
+    while the device actually on the probe did not answer, though Home
+    Assistant found it perfectly well from elsewhere on the same network. So
+    the gap is this host's, not the device's; which makes the case stronger,
+    not weaker. A lone answer can mean "one device" or it can mean "one of
+    several that this machine happens to hear", and the two are
+    indistinguishable from here. Auto-picking would have aimed `--stage dump`
+    at the wrong ESP and flashed the quiet config over a working one.
+    Ambiguity is the caller's problem to refuse.
     """
     try:
         from zeroconf import ServiceBrowser, Zeroconf
