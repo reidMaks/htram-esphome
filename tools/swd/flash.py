@@ -84,6 +84,14 @@ def build_writer() -> tuple[Path, str]:
     entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
     pc = f"0x{int(entry, 16) | 1:08X}"
     print(f"[build] writer {binf.stat().st_size} B, entry {pc}")
+    # Missing until 2026-09-08: the function did all its work and returned
+    # None, so `binf, pc = build_writer()` raised TypeError every time. The OTA
+    # path never calls it, and the SWD path had not been run since -- which is
+    # how the only route into a device with factory firmware stayed broken
+    # without anyone noticing.
+    return binf, pc
+
+
 def build_swd_writer() -> tuple[Path, int]:
     """Build swd_flash_writer.c for SRAM exec; return (bin path, thumb entry PC int)."""
     elf, binf = SWD / "swd_flash_writer.elf", SWD / "swd_flash_writer.bin"

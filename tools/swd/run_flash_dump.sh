@@ -37,9 +37,14 @@ echo "Entry: 0x${ENTRY} → PC=${ENTRY_THUMB}"
 SIZE=$(stat -c%s ${BIN})
 echo "Binary: ${SIZE} bytes"
 
-VENV_PYTHON="$(cd "$(dirname "$0")/../.." && pwd)/.venv/bin/python3"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+VENV_PYTHON="${REPO_ROOT}/.venv/bin/python3"
 if [ ! -f "${VENV_PYTHON}" ]; then
     VENV_PYTHON=python3
+fi
+PYOCD="${REPO_ROOT}/.venv/bin/pyocd"
+if [ ! -f "${PYOCD}" ]; then
+    PYOCD=pyocd
 fi
 
 echo ""
@@ -54,29 +59,42 @@ echo "  The code will:"
 echo "    1. Initialize UART"
 echo "    2. Send READY"
 echo "    3. Wait ~3 seconds"
-echo "    4. Read flash → send hex over UART"
-echo ""
-echo "  OpenOCD will clear CDBGPWRUPREQ during the 3-second wait."
+echo "    4. Read flash -> send hex over UART"
 echo ""
 
-openocd \
-    -f interface/cmsis-dap.cfg \
-    -c "transport select swd" \
-    -c "adapter speed 1000" \
-    -f target/stm32f1x.cfg \
-    -c "gdb_port disabled" \
-    -c "telnet_port disabled" \
-    -c "tcl_port disabled" \
-    -c "init" \
+# pyocd, not openocd.
+#
+# This step used openocd until 2026-09-08, when it turned out not to work at
+# all on this board: it connects (SWD DPIDR reads fine) and then fails with
+# "AP write error, reset will not halt", because NRST is not wired out on a
+# bare debugprobe and openocd's reset sequence depends on it. The stub never
+# ran, and capture_dump.py sat listening to the running firmware's 921600
+# telemetry at 115200 -- pages of garbage, then a timeout.
+#
+# tools/swd/README.md had warned that openocd does not work on this GD32, but
+# attributed it to RDP; it fails with protection removed too. pyocd drives the
+# same two operations directly, and has been reliable throughout: loadmem puts
+# the stub at 0x20000000, and writedp 0x4 0x0 clears CDBGPWRUPREQ so
+# SRAM-resident code may read flash the debugger is barred from.
+#
+# Registers are set the same way run_uart_test.sh does: SP at the top of the
+# 8 KB SRAM, PC at main with the Thumb bit, xPSR with T set.
+#
+# "reset halt", not plain "halt". Our firmware starts the free watchdog
+# (periph.c watchdog_init), and once FWDGT is running only a reset stops it --
+# flash_dump.c never kicks it, unlike flasher.c. A plain halt leaves the
+# watchdog armed, so the stub gets about a second before the chip resets out
+# from under it and the ordinary firmware comes back at 921600. That is what
+# the capture was reading as garbage. Resetting first clears the watchdog and
+# stops the core before a single instruction of the application runs.
+"${PYOCD}" cmd -t cortex_m -f 100k \
     -c "reset halt" \
-    -c "load_image ${BIN} 0x20000000 bin" \
-    -c "reg sp 0x20002000" \
-    -c "reg pc ${ENTRY_THUMB}" \
-    -c "reg xPSR 0x01000000" \
-    -c "resume" \
-    -c "sleep 500" \
-    -c "stm32f1x.dap dpreg 0x4 0x0" \
-    -c "exit"
+    -c "loadmem 0x20000000 ${BIN}" \
+    -c "wreg sp 0x20002000" \
+    -c "wreg pc ${ENTRY_THUMB}" \
+    -c "wreg xpsr 0x01000000" \
+    -c "c" \
+    -c "writedp 0x4 0x0"
 
 echo ""
 echo "=== Step 4: Waiting for dump to complete ==="
