@@ -74,7 +74,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void set_button_action_sensor(text_sensor::TextSensor *s) { button_action_sensor_ = s; }
 
   // Returns JSON string with result
-  std::string execute_ota(const std::vector<uint8_t> &firmware);
+  std::string execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery);
 
  protected:
   bool flow_paused_{false};
@@ -172,7 +172,10 @@ class Gd32OtaHandler : public AsyncWebHandler {
       request->send(400, "application/json", "{\"result\":\"error\",\"reason\":\"no file uploaded\"}");
       return;
     }
-    std::string res = this->parent_->execute_ota(this->firmware_);
+    // ?on_battery=1 waives the mains requirement. url_to() cuts the query
+    // off before canHandle() compares it, so the route still matches.
+    const bool on_battery = request->hasParam("on_battery");
+    std::string res = this->parent_->execute_ota(this->firmware_, on_battery);
     request->send(200, "application/json", res.c_str());
     std::vector<uint8_t>().swap(this->firmware_);
   }

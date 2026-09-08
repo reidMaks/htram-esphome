@@ -620,7 +620,7 @@ bool HtramGd32Component::rom_go(uint32_t address) {
   return true;
 }
 
-std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware) {
+std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery) {
   char buf[256];
   
   if (last_batt_mv_ < 3500 && last_batt_mv_ != 0) {
@@ -629,6 +629,25 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     return buf;
   }
   
+  // Prefer mains for the one operation that has no rollback. Between the erase
+  // and the last write the GD32 has neither firmware nor flasher in flash, and
+  // losing power there takes down the ESP with it -- PB3 is the ESP's rail and
+  // the GD32 drives it. That is both OTA paths gone at once, recoverable only
+  // with a probe on TP16/TP17.
+  //
+  // A refusal, not a lock: ?on_battery=1 waives it. A hard requirement would
+  // be its own trap -- a device on battery in another room could never be
+  // updated at all, and being unable to fix it is the failure this whole gate
+  // exists to prevent.
+  const bool usb_present = (last_status_ & 0x02) != 0;  // STATUS_FLAG_USB_PRESENT
+  if (!usb_present && !allow_on_battery) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"safety_gate\","
+             "\"reason\":\"no USB power; plug it in, or repeat with ?on_battery=1\"}");
+    ESP_LOGW(TAG, "[OTA] Safety gate tripped: running on battery (%d mV). "
+                  "Plug in USB, or pass ?on_battery=1 to accept the risk.", last_batt_mv_);
+    return buf;
+  }
+
   if (firmware.size() == 0 || firmware.size() > 65536) {
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"safety_gate\",\"reason\":\"invalid firmware size %d\"}", (int)firmware.size());
     ESP_LOGW(TAG, "[OTA] Safety gate tripped: invalid size %d", (int)firmware.size());

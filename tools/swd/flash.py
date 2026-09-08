@@ -241,6 +241,11 @@ def main() -> int:
                                   "(e.g. 192.168.0.78 or htram-9436b0.local)")
     ap.add_argument("--user", help="web_server username (default: from esphome/secrets.yaml)")
     ap.add_argument("--password", help="web_server password (default: from esphome/secrets.yaml)")
+    ap.add_argument("--on-battery", action="store_true",
+                    help="allow GD32 OTA without USB power. The device refuses by "
+                         "default: losing power between erase and write leaves the "
+                         "GD32 with neither firmware nor flasher, which also drops "
+                         "PB3 and takes the ESP down with it")
     ap.add_argument("--swd-mem", action="store_true",
                     help="flash via SWD memory mailbox (no UART required)")
     ap.add_argument("--no-reset", action="store_true",
@@ -267,6 +272,8 @@ def main() -> int:
 
     if args.ota:
         url = f"http://{args.ota}/gd32_ota"
+        if args.on_battery:
+            url += "?on_battery=1"
         user = args.user or web_credentials()[0]
         pw = args.password or web_credentials()[1]
         sess = requests.Session()
