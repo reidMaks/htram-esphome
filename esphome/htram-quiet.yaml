@@ -1,0 +1,62 @@
+# HTRAM — «тихий» конфіг для роботи з пробником
+#
+# Призначення одне: прибрати ESP з міжчипової лінії, лишивши її в мережі.
+#
+# BENCH.md каже, що ESP «лишає GPIO16/17 входами (high-Z), тож конфлікту
+# немає». Це було правдою для мінімального ESPHome, який UART не піднімав.
+# У htram.yaml і htram-base.yaml є `uart:` з `tx_pin: GPIO17`, тобто ESP
+# активно драйвить ту саму лінію, до якої підключається GP4 пробника. Два
+# push-pull виходи на одному вузлі — це зіпсований потік до флешера у
+# найкращому разі.
+#
+# Тут немає ні `uart:`, ні `htram_gd32:`, ні дисплея — отже GPIO16/17
+# лишаються входами, і шиною володіє тільки Pico.
+#
+# Коли потрібен:
+#   * `tools/swd/flash.py` без --ota (заливка GD32 по SWD через міст)
+#   * `tools/swd/run_flash_dump.sh` (знімання заводського образу)
+#   * будь-яка SRAM-проба з tools/bench.py, що читає UART
+#
+# Порядок: залити цей конфіг → зробити роботу пробником → залити назад
+# htram.yaml (або htram-base.yaml).
+#
+# Поки він стоїть, GD32 працює сам по собі: телеметрію нікому приймати, екран
+# нікому малювати. Це нормально й оборотно.
+
+substitutions:
+  name: htram
+  friendly_name: HTRAM
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  # Той самий суфікс, що в решті конфігів — інакше пристрій змінить ім'я,
+  # відв'яжеться від OTA за іменем і зареєструється в Home Assistant заново.
+  name_add_mac_suffix: true
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.0"
+
+logger:
+  baud_rate: 115200
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "HTRAM Setup"
+    password: !secret ap_password
+
+captive_portal:
