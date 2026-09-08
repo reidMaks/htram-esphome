@@ -84,6 +84,8 @@ HOST_FILE = FACTORY_DIR / "current-esp"
 
 OK, NO, HUH = "OK", "НІ", "?"
 
+_UNREAD = object()  # "caller has not read this word" vs a real None
+
 
 # ─────────────────────────── probes: what is true right now ───────────────────
 
@@ -193,17 +195,27 @@ def flash_esp_serial(port: str, image: Path) -> bool:
     return rc == 0
 
 
+_PROBE_SEEN: tuple[str, str] | None = None
+
+
 def probe_attached() -> tuple[str, str]:
+    # Memoised once found: every call is a `pyocd list` process, and read32*
+    # calls this on the way in. A miss is not cached, so plugging the probe in
+    # part-way through a run still takes effect.
+    global _PROBE_SEEN
+    if _PROBE_SEEN:
+        return _PROBE_SEEN
     if not PYOCD.exists():
         return HUH, "нема pyocd"
     rc, out = _run([str(PYOCD), "list"], timeout=SWD_PROBE_TIMEOUT)
     if "No available debug probes" in out or rc != 0:
         return NO, "пробник не видно (Pico під'єднано? debugprobe прошито?)"
     lines = [ln for ln in out.splitlines() if ln.strip() and not ln.startswith("#")]
-    return OK, lines[-1].strip() if lines else "пробник є"
+    _PROBE_SEEN = (OK, lines[-1].strip() if lines else "пробник є")
+    return _PROBE_SEEN
 
 
-def swd_alive() -> tuple[str, str]:
+def swd_alive(val: int | None = _UNREAD) -> tuple[str, str]:
     """Prove the DAP answers, without disturbing the running firmware.
 
     Reads the Cortex-M CPUID -- always present, always readable, and a
@@ -213,7 +225,8 @@ def swd_alive() -> tuple[str, str]:
     """
     if probe_attached()[0] != OK:
         return NO, "пробник не під'єднано"
-    val = read32(SCB_CPUID)
+    if val is _UNREAD:
+        val = read32(SCB_CPUID)
     if val is None:
         return NO, ("DAP не відповідає — плата під живленням? порядок увімкнення? "
                     "або ядро зупинене попередньою сесією (`--resume`), "
@@ -221,7 +234,7 @@ def swd_alive() -> tuple[str, str]:
     return OK, f"DAP відповідає (CPUID=0x{val:08X})"
 
 
-def core_state() -> tuple[str, str]:
+def core_state(val: int | None = _UNREAD) -> tuple[str, str]:
     """Running or halted, read from the target rather than assumed.
 
     Added after a --status on unit 2 left the factory firmware stopped: the
@@ -229,7 +242,8 @@ def core_state() -> tuple[str, str]:
     invisible. Nothing in the output said the core had been touched, so the
     device simply appeared to have died.
     """
-    val = read32(DHCSR)
+    if val is _UNREAD:
+        val = read32(DHCSR)
     if val is None:
         return HUH, "не прочитано (потрібен пробник і жива плата)"
     if val & DHCSR_S_HALT:
@@ -292,9 +306,10 @@ def read32(addr: int) -> int | None:
     return parse_read32(out, addr)
 
 
-def rdp_state() -> tuple[str, str]:
+def rdp_state(val: int | None = _UNREAD) -> tuple[str, str]:
     """RDP on = factory-protected, still convertible. RDP off = already opened."""
-    val = read32(FMC_OBSTAT)
+    if val is _UNREAD:
+        val = read32(FMC_OBSTAT)
     if val is None:
         return HUH, "не прочитано (потрібен пробник і жива плата)"
     if val & (1 << 1):
@@ -328,19 +343,50 @@ def gd32_blank() -> tuple[str, str]:
     return OK, f"запрограмований (SP=0x{val:08X})"
 
 
+def read32_many(addrs: list[int]) -> list[int | None]:
+    """Read several words in ONE pyocd session, still leaving the core running.
+
+    Same `-M attach` contract as read32(); the point of batching is that every
+    extra session is another connect/disconnect against a link this bench has
+    seen drop out (`No ACK`, docs/BENCH.md §"Відновлення GD32"). Three separate
+    reads for one UID tripled that exposure for no gain.
+    """
+    if probe_attached()[0] != OK:
+        return [None] * len(addrs)
+    cmd = [str(PYOCD), "cmd", "-t", "cortex_m", "-f", "100k", "-M", "attach"]
+    for a in addrs:
+        cmd += ["-c", f"read32 0x{a:08X}"]
+    rc, out = _run(cmd, timeout=SWD_PROBE_TIMEOUT)
+    if rc != 0:
+        return [None] * len(addrs)
+    return [parse_read32(out, a) for a in addrs]
+
+
+_UID_SEEN: str | None = None
+
+
 def device_uid() -> str | None:
     """96-bit factory ID of the GD32 currently on the probe, or None.
 
     Best effort: it may be unreadable under RDP1 or with no probe attached, and
     the caller must cope. Never gate safety on its absence alone -- fall back to
     asking the operator which device is on the bench.
+
+    Memoised once it is known. A UID is immutable per chip, so re-reading it
+    only adds SWD sessions; a failed read is NOT cached, so attaching the probe
+    part-way through a run still works. Nothing here caches across the power
+    cycle in stage_unlock, because nothing here changes.
     """
-    words = [read32(GD32_UID_BASE + off) for off in (0, 4, 8)]
+    global _UID_SEEN
+    if _UID_SEEN:
+        return _UID_SEEN
+    words = read32_many([GD32_UID_BASE + off for off in (0, 4, 8)])
     if any(w is None for w in words):
         return None
     if all(w == 0xFFFFFFFF for w in words) or all(w == 0 for w in words):
         return None  # blank read, not a real ID
-    return "".join(f"{w:08x}" for w in words)
+    _UID_SEEN = "".join(f"{w:08x}" for w in words)
+    return _UID_SEEN
 
 
 def dump_sidecar(path: Path) -> Path:
@@ -463,15 +509,41 @@ def remember_esp_host(port: str) -> str | None:
     tail = m.group(1).replace(":", "").lower()[-6:]
     host = f"htram-{tail}.local"
     FACTORY_DIR.mkdir(parents=True, exist_ok=True)
-    HOST_FILE.write_text(host + "\n", encoding="utf-8")
+    # Bound to the GD32 UID, not stored bare: a name on its own cannot say which
+    # unit it came from, and an inherited one silently aims later stages -- and
+    # the `esp` tick itself -- at whatever answered last time.
+    HOST_FILE.write_text(
+        json.dumps({"host": host, "uid": device_uid()}, ensure_ascii=False) + "\n",
+        encoding="utf-8")
     return host
 
 
-def remembered_esp_host() -> str | None:
+def remembered_esp() -> tuple[str, str | None] | None:
+    """(host, uid) out of current-esp, or None if there is nothing usable.
+
+    Files written before the UID binding hold a bare hostname; those come back
+    with uid None, which callers must treat as unconfirmed rather than trusted.
+    """
     try:
-        return HOST_FILE.read_text(encoding="utf-8").strip() or None
+        raw = HOST_FILE.read_text(encoding="utf-8").strip()
     except OSError:
         return None
+    if not raw:
+        return None
+    try:
+        rec = json.loads(raw)
+    except ValueError:
+        return raw, None
+    host = str(rec.get("host") or "").strip()
+    if not host:
+        return None
+    uid = rec.get("uid")
+    return host, (str(uid) if uid else None)
+
+
+def remembered_esp_host() -> str | None:
+    rec = remembered_esp()
+    return rec[0] if rec else None
 
 
 def resolve_local(host: str) -> str | None:
@@ -579,11 +651,27 @@ def stage_prep(args) -> int:
 
 
 def stage_esp(args) -> int:
+    if getattr(args, "esp_recorded", False):
+        say("esp", f"ESP цього пристрою вже прошито — {args.host} записано "
+                   "для його UID; повторювати нічого")
+        return 0
     st, note = esp_online(args.host)
-    if st == OK:
+    if st == OK and getattr(args, "host_trusted", False):
         say("esp", f"ESP уже в мережі: {note}")
         say("esp", "цей етап уже пройдено; далі все йде по OTA")
         return 0
+    if st == OK:
+        # Something answers on that name, but nothing ties it to the unit wired
+        # to the probe -- and a wrong skip here is what walks an unflashed ESP
+        # into the irreversible unlock. Make the operator say which it is.
+        say("esp", f"на {args.host} щось відповідає, але це НЕ підтверджено "
+                   "як ESP пристрою на стенді")
+        say("esp", "звірки по UID немає — ім'я могло лишитися від іншого "
+                   "пристрою (tools/swd/factory/current-esp)")
+        if ask("Це справді ESP пристрою, що зараз на стенді (етап пропустити)?"):
+            say("esp", "гаразд, вважаю етап пройденим")
+            return 0
+        say("esp", "тоді шиємо ESP цього пристрою")
     physical([
         "ТЗ §3.1 — docs/CUSTOM_FIRMWARE_SPEC.md:80. Це UART0 ЕСП, не міжчиповий:",
         "міжчиповий (GPIO16/17) знадобиться пізніше, на етапі probe.",
@@ -975,6 +1063,13 @@ def stage_verify(args) -> int:
     # The dump left the quiet config on the ESP -- no uart, no component, no
     # face. Put the real one back before calling the conversion done, or the
     # device ends up finished but mute.
+    if st == OK and not getattr(args, "host_trusted", False):
+        # An OTA is a write, and this is the last place a stale name can send
+        # one into a device in daily use.
+        say("verify", f"{args.host} не підтверджено як ESP цього пристрою")
+        if not ask(f"Заливати саме в {args.host}?"):
+            say("verify", "передай правильний через --host")
+            return 1
     if st == OK and ask(f"Повернути справжній конфіг ({YAML.name})?"):
         rc, _ = _run_streaming([str(ESPHOME), "run", str(YAML),
                                 "--device", args.host, "--no-logs"])
@@ -1029,9 +1124,13 @@ def cmd_status(args) -> int:
         "dump": dump_state(),
     }
     if snap["probe"][0] == OK:
-        snap["swd"] = swd_alive()
-        snap["core"] = core_state()
-        snap["rdp"] = rdp_state()
+        # One attach for all three words. Each separate session was another
+        # connect/disconnect on a link that has dropped out before, and polling
+        # --status was doing three of them plus a `pyocd list` apiece.
+        cpuid, dhcsr, obstat = read32_many([SCB_CPUID, DHCSR, FMC_OBSTAT])
+        snap["swd"] = swd_alive(cpuid)
+        snap["core"] = core_state(dhcsr)
+        snap["rdp"] = rdp_state(obstat)
         snap["blank"] = (gd32_blank() if snap["rdp"][0] == OK
                          else (HUH, "не читається під RDP — спершу unlock"))
     else:
@@ -1043,8 +1142,20 @@ def cmd_status(args) -> int:
     # An erased GD32 explains an absent ESP completely: no PB3, no rail. Say so
     # rather than reporting it as an unflashed ESP and sending the operator
     # back through `--stage esp`.
-    snap["esp_done"] = snap["esp"][0] == OK
-    if snap["esp"][0] != OK and snap["blank"][0] == NO and remembered_esp_host():
+    trusted = getattr(args, "host_trusted", False)
+    recorded = getattr(args, "esp_recorded", False)
+    snap["esp_done"] = recorded or (snap["esp"][0] == OK and trusted)
+    if snap["esp"][0] != OK and recorded:
+        snap["esp"] = (HUH, f"{args.host} не відповідає з цього хоста, але етап "
+                            "пройдено: ім'я записане для UID саме цього пристрою. "
+                            "mDNS тут не бачить пристрій на пробнику (ede9e33)")
+    if snap["esp"][0] == OK and not trusted:
+        # It answered, but nothing ties it to the unit on the probe. Counting
+        # that as a done `esp` stage is what waves the operator through to the
+        # irreversible unlock with an unflashed ESP on the bench.
+        snap["esp"] = (HUH, f"{args.host} відповідає, але не підтверджено, "
+                            "що це ESP пристрою на стенді (немає звірки по UID)")
+    if snap["esp"][0] != OK and snap["blank"][0] == NO and trusted:
         snap["esp"] = (HUH, "без живлення — GD32 порожній, PB3 не тримається; "
                             "між unlock і flash так і має бути")
         snap["esp_done"] = True
@@ -1113,17 +1224,51 @@ def main() -> int:
                          "обірвана сесія відладчика")
     args = ap.parse_args()
 
+    if args.resume:
+        ok = swd_resume()
+        print("ядро відновлено" if ok else "не вдалося — пробник під'єднано?")
+        return 0 if ok else 1
+    if args.list:
+        for i, (name, title, _) in enumerate(STAGES, 1):
+            print(f"  {i}. {name.ljust(7)} {title}")
+        return 0
+
+    # An explicit --host is the operator asserting which unit this is; anything
+    # we work out ourselves is only trusted when the UID backs it up.
+    args.host_trusted = args.host is not None
     if args.host is None:
-        args.host = remembered_esp_host()
-        if args.host:
-            print(f"  пристрій у роботі: {args.host} "
-                  f"({HOST_FILE.relative_to(REPO_ROOT)})", flush=True)
+        rec = remembered_esp()
+        if rec:
+            known_host, known_uid = rec
+            where = HOST_FILE.relative_to(REPO_ROOT)
+            here = device_uid() if known_uid else None
+            if known_uid and here and known_uid == here:
+                args.host, args.host_trusted = known_host, True
+                # We flashed this exact chip's ESP and wrote the name down. That
+                # is stronger evidence than a ping: mDNS on this host does not
+                # answer for the unit on the probe, though the rest of the
+                # network resolves it fine (commit ede9e33).
+                args.esp_recorded = True
+                print(f"  пристрій у роботі: {known_host} ({where})", flush=True)
+            elif known_uid and here:
+                # Same trap stage_dump already guards against, one file over.
+                print(f"  {where} називає {known_host}, але це ім'я належить "
+                      f"іншому пристрою", flush=True)
+                print(f"    записаний UID: {known_uid}", flush=True)
+                print(f"    UID на стенді: {here}", flush=True)
+                print("  ім'я не успадковую — інакше етапи пішли б не на той "
+                      "пристрій", flush=True)
+            else:
+                args.host = known_host
+                print(f"  {where} називає {known_host}, звірити з UID не вдалося "
+                      "(потрібен пробник) — беру як неперевірене", flush=True)
 
     if args.host is None:
         hosts = discover_esp()
         if len(hosts) == 1:
             args.host = hosts[0]
-            print(f"  ESP знайдено по mDNS: {args.host}", flush=True)
+            print(f"  ESP знайдено по mDNS: {args.host} — неперевірене, "
+                  "звірки з UID немає", flush=True)
         elif len(hosts) > 1:
             # More than one HTRAM answers, and nothing here can tell which of
             # them sits on the probe. Guessing would aim a flash at a device in
@@ -1138,14 +1283,6 @@ def main() -> int:
             print("  ESP по mDNS не знайдено — поки вона заводська, так і має бути",
                   flush=True)
 
-    if args.resume:
-        ok = swd_resume()
-        print("ядро відновлено" if ok else "не вдалося — пробник під'єднано?")
-        return 0 if ok else 1
-    if args.list:
-        for i, (name, title, _) in enumerate(STAGES, 1):
-            print(f"  {i}. {name.ljust(7)} {title}")
-        return 0
     if args.stage:
         fn = dict((n, f) for n, _, f in STAGES)[args.stage]
         return fn(args)
