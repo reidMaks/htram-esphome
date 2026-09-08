@@ -76,6 +76,14 @@ api:
 ota:
   - platform: esphome
     password: !secret ota_password
+    # Eight seconds of frozen panel while the ESP takes its own update, and
+    # nothing on the device says why. All three LEDs at once is a state the
+    # CO2 logic never produces, so it cannot be misread as a measurement.
+    # No restore needed: the ESP reboots and refresh_leds puts the real colour
+    # back.
+    on_begin:
+      then:
+        - lambda: "id(htram_core)->send_leds(1, 1, 1, 1);"
 
 wifi:
   ssid: !secret wifi_ssid

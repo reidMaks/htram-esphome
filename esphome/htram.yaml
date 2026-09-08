@@ -147,6 +147,18 @@ api:
 ota:
   - platform: esphome
     password: !secret ota_password
+    # The ESP's own update is the longer of the two blackouts: about eight
+    # seconds during which the panel keeps its last frame, because the GD32
+    # gets nothing to draw. The GD32 update signals itself from firmware, but
+    # nothing covered this one -- and a person watching a frozen screen for
+    # eight seconds is exactly who reaches for the cable.
+    #
+    # All three at once is a combination the CO2 logic never produces. No
+    # restore needed: the ESP reboots into a fresh state and refresh_leds puts
+    # the real colour back.
+    on_begin:
+      then:
+        - lambda: "id(htram_core)->send_leds(1, 1, 1, 1);"
 
 wifi:
   ssid: !secret wifi_ssid
