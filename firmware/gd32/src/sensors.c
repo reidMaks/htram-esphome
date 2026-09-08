@@ -286,12 +286,22 @@ int sensors_poll_co2(uint16_t *co2_ppm, uint8_t *warmup_flag)
 
 void sensors_init(void)
 {
-    /* 1. SHT30 Pins (PB6 SCL, PB7 SDA). PA8 is intentionally left as INPUT.
-     * We used to treat PA8 as the SHT30 hardware nRESET and pulse it low here,
-     * but the factory never drives PA8, the SHT3x nRESET has an internal
-     * pull-up, and we reset the sensor over I2C anyway. Bench evidence points to
-     * PA8 being the ESP32 enable/reset line: our boot pulse reset the ESP on
-     * every GD32 start ("came up, then dropped"). Leave it alone. */
+    /* 1. SHT30 Pins (PB6 SCL, PB7 SDA). PA8 is the sensor's hardware nRESET
+     * and is left as INPUT here -- but not for the reason this comment used to
+     * give.
+     *
+     * It claimed PA8 was the ESP32 enable line and that the factory never
+     * drove it. Both are wrong, and both were checked on hardware 2026-09-07:
+     * holding PA8 low removed temperature and humidity from telemetry entirely
+     * while CO2 kept publishing, and pulsing it never once restarted the ESP.
+     * The factory does drive PA8 -- only inside its SHT30 read-failure path,
+     * which a snapshot of live GPIO never catches.
+     *
+     * Leaving it INPUT is still correct: the SHT3x nRESET has an internal
+     * pull-up and the I2C soft reset below is enough for every fault seen so
+     * far. What we give up is the recovery the factory keeps for the case the
+     * sensor stops answering I2C at all -- see docs/GD32_HARDWARE_MAP.md
+     * "PA8" for the pulse it uses (low 3 ms, then 3 s before retrying). */
     gpio_cfg_in(GPIOA_BASE, 8, 1); /* input, pull-up (matches factory idle) */
 
     /* SCL (PB6) and SDA (PB7): Open-Drain, 50MHz, Pull-up */
