@@ -129,9 +129,10 @@ external_components:
   - source:
       type: git
       url: https://github.com/reidMaks/htram-esphome
-      # Гілка, поки нема теґа. Перед тим як давати конфіг комусь іще —
-      # закріпити на теґ, щоб чужий коміт не доїжджав у чужі пристрої.
-      ref: main
+      # Теґ, а не гілка. Цей файл кладуть на чужі сервери, і рухома гілка
+      # означала б, що наступний коміт автора доїжджає в чужі пристрої сам,
+      # без чийогось рішення. Оновлення має лишатись вибором: підняти теґ тут.
+      ref: v1.1.0
       path: esphome/custom_components
     components: [htram_gd32]
 
@@ -158,7 +159,10 @@ font:
   #
   # Гліфи скрізь переліком, а не glyphsets: GF_Cyrillic_Core коштував би ~200
   # гліфів на кожен кегль, а тут реально вжито сім літер.
-  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+  #
+  # URL закріплені на теґ з тієї ж причини, що й компонент: інакше правка
+  # шрифту в main мовчки змінила б вигляд уже розгорнутих пристроїв.
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/v1.1.0/esphome/fonts/NotoSans-Regular.ttf"
     id: font_big
     size: 48
     bpp: 4
@@ -166,19 +170,19 @@ font:
     # бо «нема часу» на 48 px — це ~230 px, ширше за екран.
     glyphs: "0123456789:"
 
-  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/v1.1.0/esphome/fonts/NotoSans-Regular.ttf"
     id: font_mid
     size: 28
     bpp: 4
     glyphs: " -0123456789mp"
 
-  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/v1.1.0/esphome/fonts/NotoSans-Regular.ttf"
     id: font_small
     size: 16
     bpp: 4
     glyphs: " %-.0123456789Cанемсуч"
 
-  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/v1.1.0/esphome/fonts/NotoSans-Regular.ttf"
     id: font_tiny
     size: 14
     bpp: 4
