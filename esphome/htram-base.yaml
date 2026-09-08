@@ -1,0 +1,351 @@
+# HTRAM — базова прошивка
+#
+# Це те, що заливається під час конверсії (docs/CONVERSION.md, етап `esp`), і
+# те, що можна просто покласти на власний сервер ESPHome чи в аддон Home
+# Assistant — пристрій там з'явиться сам.
+#
+# Принцип: копіювати не треба НІЧОГО. Усе, що конфігу потрібно, він дістає сам.
+#   * компонент GD32 — з цього ж репозиторію по HTTPS, анонімно;
+#   * шрифт — звідти ж, по URL; ESPHome качає й кешує його сам;
+#   * іконок немає взагалі;
+#   * час — з SNTP, не з Home Assistant;
+#   * жодної сутності HA, якої може не існувати (погода, будильники тощо).
+#
+# Ціна: перша збірка потребує мережі. Далі все з кешу.
+#
+# Пристрій віддає всю телеметрію, події кнопки й керування зумером і
+# світлодіодами — далі кожен ліпить своє. Багате «обличчя» автора живе в
+# htram.yaml поруч; воно спирається на речі, яких у чужому домі немає, тому
+# на конверсії шиється не воно.
+
+substitutions:
+  name: htram
+  friendly_name: HTRAM
+  # Пороги CO₂ для світлофора над екраном, ppm.
+  co2_warn: "800"
+  co2_high: "1200"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    - priority: -100
+      then:
+        - script.execute: refresh_leds
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.0"
+      sram1_as_iram: true
+
+logger:
+  # Той самий baud, що в заводському завантажувачі — зручно при першій заливці.
+  baud_rate: 115200
+
+api:
+  encryption:
+    key: !secret api_key
+  actions:
+    # Керування зумером із Home Assistant. RTTTL, а не голі частоти: рядок
+    # можна скласти в автоматизації, не чіпаючи прошивку.
+    - action: play_rtttl
+      variables:
+        song: string
+      then:
+        - lambda: "id(htram_core)->play_rtttl(song);"
+    - action: beep
+      variables:
+        freq: int
+        duration: int
+      then:
+        # 1760..2093 Гц — виміряний пік цього динаміка; вище 2200 він
+        # провалюється на 12 дБ (див. коментар у htram.yaml).
+        - lambda: "id(htram_core)->send_beep(freq, duration);"
+    - action: stop_sound
+      then:
+        - lambda: "id(htram_core)->send_stop();"
+    - action: set_backlight
+      variables:
+        brightness: int
+      then:
+        - lambda: "id(htram_core)->send_backlight(brightness);"
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "HTRAM Setup"
+    password: !secret ap_password
+
+captive_portal:
+
+web_server:
+  port: 80
+  # Тут же живе ендпоінт /gd32_ota, який заливає довільний образ у GD32, —
+  # єдина причина, чому автентифікація тут обов'язкова, а не бажана.
+  auth:
+    # Digest, не basic: за цим паролем стоїть /gd32_ota, який заливає довільний
+    # образ у GD32, тож пароль не має ходити мережею в оборотному вигляді.
+    type: digest
+    username: !secret web_username
+    password: !secret web_password
+
+time:
+  # SNTP, а не Home Assistant: годинник не має залежати від сервера, який
+  # може саме перезавантажуватись.
+  - platform: sntp
+    id: sntp_time
+    on_time_sync:
+      then:
+        - script.execute: refresh_clock
+    on_time:
+      - seconds: 0
+        then:
+          - script.execute: refresh_clock
+
+external_components:
+  # Компонент лежить поруч із прошивкою GD32, з якою він розмовляє, — вони
+  # безсенсовні окремо. Тягнеться анонімно по HTTPS, тож збирати цей конфіг
+  # може будь-хто й будь-де: власний сервер ESPHome, аддон Home Assistant,
+  # чужа машина. Нічого копіювати й жодних ключів не треба.
+  #
+  # `path` обов'язковий: ESPHome сам шукає компоненти в `components/` або
+  # `esphome/components/`, а тут вони в `esphome/custom_components/`.
+  - source:
+      type: git
+      url: https://github.com/reidMaks/htram-esphome
+      # Гілка, поки нема теґа. Перед тим як давати конфіг комусь іще —
+      # закріпити на теґ, щоб чужий коміт не доїжджав у чужі пристрої.
+      ref: main
+      path: esphome/custom_components
+    components: [htram_gd32]
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 921600
+  rx_buffer_size: 2048
+
+htram_gd32:
+  id: htram_core
+  uart_id: uart_bus
+
+display:
+  - platform: htram_gd32
+    id: htram_screen
+    auto_clear_enabled: false
+
+font:
+  # Вбудовані montserrat_* кирилиці не мають, тож Noto тягнеться з цього ж
+  # репозиторію по URL. Копіювати файл нікуди не треба — ESPHome качає й кешує
+  # його сам, тож конфіг лишається самодостатнім.
+  #
+  # Гліфи скрізь переліком, а не glyphsets: GF_Cyrillic_Core коштував би ~200
+  # гліфів на кожен кегль, а тут реально вжито сім літер.
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+    id: font_big
+    size: 48
+    bpp: 4
+    # Тільки цифри й двокрапка: кирилиця живе в окремій мітці меншим кеглем,
+    # бо «нема часу» на 48 px — це ~230 px, ширше за екран.
+    glyphs: "0123456789:"
+
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+    id: font_mid
+    size: 28
+    bpp: 4
+    glyphs: " -0123456789mp"
+
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+    id: font_small
+    size: 16
+    bpp: 4
+    glyphs: " %-.0123456789Cанемсуч"
+
+  - file: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome/fonts/NotoSans-Regular.ttf"
+    id: font_tiny
+    size: 14
+    bpp: 4
+    glyphs: "%-0123456789"
+
+lvgl:
+  displays: [htram_screen]
+  # Чорне тло не з економії: матриця квадратна, а рамка навколо скла кругла,
+  # і будь-яка суцільна заливка проявляє квадрат посеред кола.
+  disp_bg_color: 0x000000
+  pages:
+    - id: main_page
+      widgets:
+        - label:
+            id: ui_clock
+            align: CENTER
+            y: -52
+            text_font: font_big
+            text_color: 0xFFFFFF
+            hidden: true
+            text: "00:00"
+        # Не прочерки: поки часу нема, так і сказано. Окрема мітка, а не текст
+        # у годиннику, бо кегль інший.
+        - label:
+            id: ui_notime
+            align: CENTER
+            y: -44
+            text_font: font_small
+            text_color: 0x9A9A9A
+            text: "нема часу"
+        - label:
+            id: ui_co2
+            align: CENTER
+            y: 8
+            text_font: font_mid
+            text_color: 0xFFFFFF
+            text: "--- ppm"
+        - label:
+            id: ui_th
+            align: CENTER
+            y: 46
+            text_font: font_small
+            text_color: 0x9A9A9A
+            text: "--.- C   --%"
+        - label:
+            id: ui_batt
+            align: CENTER
+            y: 76
+            text_font: font_tiny
+            text_color: 0x6E6E6E
+            text: "--%"
+
+script:
+  - id: refresh_clock
+    then:
+      - if:
+          condition:
+            lambda: "return id(sntp_time).now().is_valid();"
+          then:
+            - lvgl.label.update:
+                id: ui_clock
+                text: !lambda |-
+                  auto now = id(sntp_time).now();
+                  char buf[8];
+                  snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
+                  return std::string(buf);
+            - lvgl.widget.hide: ui_notime
+            - lvgl.widget.show: ui_clock
+          else:
+            - lvgl.widget.hide: ui_clock
+            - lvgl.widget.show: ui_notime
+
+  # Температура й вологість в одному рядку, тож оновлюються разом: інакше два
+  # сенсори перемальовували б той самий прямокутник двічі поспіль.
+  - id: refresh_th
+    then:
+      - lvgl.label.update:
+          id: ui_th
+          text: !lambda |-
+            char buf[24];
+            const float t = id(temp_sensor).has_state() ? id(temp_sensor).state : NAN;
+            const float h = id(hum_sensor).has_state() ? id(hum_sensor).state : NAN;
+            if (isnan(t) && isnan(h)) return std::string("--.- C   --%");
+            if (isnan(h)) { snprintf(buf, sizeof(buf), "%.1f C", t); return std::string(buf); }
+            if (isnan(t)) { snprintf(buf, sizeof(buf), "%.0f%%", h); return std::string(buf); }
+            snprintf(buf, sizeof(buf), "%.1f C   %.0f%%", t, h);
+            return std::string(buf);
+
+  # Світлофор над екраном покриває стан повітря периферійним зором — читати
+  # число не треба. Поки реального виміру нема, світлодіоди не світяться:
+  # зелений «усе добре» без даних — брехня.
+  - id: refresh_leds
+    then:
+      - lambda: |-
+          if (!id(co2_sensor).has_state()) {
+            id(htram_core)->send_leds(0, 0, 0, 1);
+            return;
+          }
+          const float ppm = id(co2_sensor).state;
+          const bool high = ppm >= ${co2_high};
+          const bool warn = !high && ppm >= ${co2_warn};
+          id(htram_core)->send_leds(high, warn, !high && !warn, 1);
+
+sensor:
+  - platform: htram_gd32
+    htram_gd32_id: htram_core
+    co2:
+      name: "CO2"
+      id: co2_sensor
+      on_value:
+        - lvgl.label.update:
+            id: ui_co2
+            text: !lambda |-
+              char buf[16];
+              snprintf(buf, sizeof(buf), "%.0f ppm", x);
+              return std::string(buf);
+        - script.execute: refresh_leds
+    temperature:
+      name: "Temperature"
+      id: temp_sensor
+      on_value:
+        - script.execute: refresh_th
+    humidity:
+      name: "Humidity"
+      id: hum_sensor
+      on_value:
+        - script.execute: refresh_th
+    battery:
+      name: "Battery Voltage"
+    battery_level:
+      name: "Battery"
+      id: batt_sensor
+      on_value:
+        - lvgl.label.update:
+            id: ui_batt
+            text: !lambda |-
+              char buf[8];
+              snprintf(buf, sizeof(buf), "%.0f%%", x);
+              return std::string(buf);
+
+binary_sensor:
+  - platform: htram_gd32
+    htram_gd32_id: htram_core
+    usb:
+      name: "USB power"
+    charging:
+      name: "Charging"
+    button:
+      name: "Button"
+
+text_sensor:
+  - platform: htram_gd32
+    htram_gd32_id: htram_core
+    firmware_version:
+      name: "GD32 firmware"
+    # Короткий / довгий / дуже довгий натиск приїздить сюди рядком —
+    # автоматизації в HA чіпляються за нього.
+    button_action:
+      name: "Button action"
+
+switch:
+  # Ручне керування світлофором. Автоматика вище перепише його при наступному
+  # вимірі — це навмисно: базова прошивка не робить вигляд, що вона розумніша.
+  - platform: htram_gd32
+    htram_gd32_id: htram_core
+    red:
+      name: "LED red"
+    yellow:
+      name: "LED yellow"
+    green:
+      name: "LED green"
+
+button:
+  - platform: template
+    name: "Beep"
+    icon: mdi:volume-high
+    on_press:
+      - lambda: "id(htram_core)->send_beep(2093, 200);"
