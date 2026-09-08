@@ -28,6 +28,12 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  # Several of these can end up on one network, and they are all flashed from
+  # this one file -- that is the whole point of it. The MAC suffix keeps their
+  # hostnames and entity ids apart without anyone editing anything, so the
+  # config stays copy-and-go. Drop this line if you would rather name each
+  # device yourself, but then give each one its own `name`.
+  name_add_mac_suffix: true
   on_boot:
     - priority: -100
       then:
@@ -150,7 +156,8 @@ htram_gd32:
 display:
   - platform: htram_gd32
     id: htram_screen
-    auto_clear_enabled: false
+    # LVGL drives the updates; the display must not also poll on its own.
+    update_interval: never
 
 font:
   # Вбудовані montserrat_* кирилиці не мають, тож Noto тягнеться з цього ж
@@ -190,50 +197,70 @@ font:
 
 lvgl:
   displays: [htram_screen]
-  # Чорне тло не з економії: матриця квадратна, а рамка навколо скла кругла,
-  # і будь-яка суцільна заливка проявляє квадрат посеред кола.
-  disp_bg_color: 0x000000
-  pages:
-    - id: main_page
-      widgets:
-        - label:
-            id: ui_clock
-            align: CENTER
-            y: -52
-            text_font: font_big
-            text_color: 0xFFFFFF
-            hidden: true
-            text: "00:00"
-        # Не прочерки: поки часу нема, так і сказано. Окрема мітка, а не текст
-        # у годиннику, бо кегль інший.
-        - label:
-            id: ui_notime
-            align: CENTER
-            y: -44
-            text_font: font_small
-            text_color: 0x9A9A9A
-            text: "нема часу"
-        - label:
-            id: ui_co2
-            align: CENTER
-            y: 8
-            text_font: font_mid
-            text_color: 0xFFFFFF
-            text: "--- ppm"
-        - label:
-            id: ui_th
-            align: CENTER
-            y: 46
-            text_font: font_small
-            text_color: 0x9A9A9A
-            text: "--.- C   --%"
-        - label:
-            id: ui_batt
-            align: CENTER
-            y: 76
-            text_font: font_tiny
-            text_color: 0x6E6E6E
-            text: "--%"
+  # RGB565 goes out most-significant byte first. Without this the red and blue
+  # halves swap and everything comes out in the wrong colour -- which, on a
+  # screen that is meant to be black, shows up as a bright background.
+  byte_order: big_endian
+  buffer_size: 12.5%
+  refresh_interval: 200ms
+  bg_color: 0x000000
+  widgets:
+    # Everything hangs off one opaque black object covering the whole panel.
+    # Setting bg_color on lvgl alone does not paint anything: nothing owns
+    # those pixels, so the panel keeps whatever it powered up with -- white,
+    # in this case, with white text invisible on top of it.
+    #
+    # Black is not for economy. The matrix is square and the bezel around the
+    # glass is round, so any solid fill shows a square sitting inside a circle.
+    # Black merges with the bezel and only the lit pixels are seen.
+    - obj:
+        id: ui_root
+        width: 240
+        height: 240
+        pad_all: 0
+        border_width: 0
+        outline_width: 0
+        bg_color: 0x000000
+        bg_opa: cover
+        scrollable: false
+        widgets:
+          - label:
+              id: ui_clock
+              align: CENTER
+              y: -52
+              text_font: font_big
+              text_color: 0xFFFFFF
+              hidden: true
+              text: "00:00"
+          # Not dashes: when there is no time, it says so.
+          - label:
+              id: ui_notime
+              align: CENTER
+              y: -44
+              text_font: font_small
+              text_color: 0x9A9A9A
+              text: "нема часу"
+          - label:
+              id: ui_co2
+              align: CENTER
+              y: 8
+              text_font: font_mid
+              text_color: 0xFFFFFF
+              text: "--- ppm"
+          - label:
+              id: ui_th
+              align: CENTER
+              y: 46
+              text_font: font_small
+              text_color: 0x9A9A9A
+              text: "--.- C   --%"
+          - label:
+              id: ui_batt
+              align: CENTER
+              y: 76
+              text_font: font_tiny
+              text_color: 0x6E6E6E
+              text: "--%"
 
 script:
   - id: refresh_clock
