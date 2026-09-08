@@ -13,6 +13,7 @@ MAC suffix -- "htram-9436b0.local" for the unit this was developed on, never a
 plain "htram.local".
 """
 import argparse
+import os
 import struct
 import subprocess
 import sys
@@ -20,11 +21,23 @@ import time
 import json
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parents[2]
+VENV_PYTHON = REPO / ".venv" / "bin" / "python3"
+
+# Re-exec under the repo's venv, whatever invoked us. pyserial and requests
+# live there and not in the system interpreter, while the shebang picks the
+# system one -- so running this by path died on `import serial` even though
+# `.venv/bin/python tools/swd/flash.py` worked. tools/bench.py has carried the
+# same guard since the repo moved; this one was missed, and it surfaced mid
+# conversion with the GD32 already blank. Must sit above the third-party
+# imports, which is why REPO is defined this early.
+if not sys.prefix.startswith(str(REPO / ".venv")) and VENV_PYTHON.exists():
+    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), os.path.abspath(__file__)] + sys.argv[1:])
+
 import serial
 import requests
 from requests.auth import HTTPDigestAuth
 
-REPO = Path(__file__).resolve().parents[2]
 SWD = REPO / "tools/swd"
 PYOCD = REPO / ".venv/bin/pyocd"
 FW_IMAGE = REPO / "firmware/gd32/build/gd32_firmware.bin"
@@ -354,7 +367,16 @@ def main() -> int:
     if args.swd_mem:
         return flash_via_swd_mem(img, args.no_reset, host_crc)
 
-    # Legacy SWD + UART path below
+    # Legacy SWD + UART path below.
+    #
+    # Unusable during a conversion, and not by accident: it needs the inter-chip
+    # UART, which needs the ESP powered, which needs the GD32 to be driving PB3
+    # -- and at flash time the GD32 is blank. An unpowered ESP32 clamps the
+    # shared GPIO17 node through its ESD diodes, the GD32's RX sees a permanent
+    # break, and the writer stub reads chunk lengths out of the resulting stream
+    # of 0x00. Verified on unit 2 (2026-09-08): DONE bytes=0x0200 arrived before
+    # the host sent anything. Use --swd-mem there; this path is for a device
+    # whose ESP is already alive.
     binf, pc = build_writer()
 
     print("[pyocd] reset halt")

@@ -38,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -45,6 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python3"
 PYOCD = REPO_ROOT / ".venv" / "bin" / "pyocd"
 ESPHOME = REPO_ROOT / ".venv" / "bin" / "esphome"
+ESPTOOL = REPO_ROOT / ".venv" / "bin" / "esptool"
 SWD_DIR = REPO_ROOT / "tools" / "swd"
 FACTORY_IMAGE = SWD_DIR / "gd32_flash.bin"
 FW_IMAGE = REPO_ROOT / "firmware" / "gd32" / "build" / "gd32_firmware.bin"
@@ -68,9 +70,17 @@ FMC_OBSTAT = 0x4002201C  # bit 1 = SPC: main flash is read-protected
 # from being mistaken for another's when converting more than one unit.
 GD32_UID_BASE = 0x1FFFF7AC
 SCB_CPUID = 0xE000ED00  # Cortex-M ID; a benign read that proves the DAP works
+# Debug Halting Control and Status. Bit 17 (S_HALT) says whether the core is
+# stopped -- the one thing a status line must never leave the operator guessing
+# about, because a halted GD32 looks exactly like a dead one from outside.
+DHCSR = 0xE000EDF0
+DHCSR_S_HALT = 1 << 17
 GD32_FLASH_SIZE = 64 * 1024
 
 FACTORY_DIR = SWD_DIR / "factory"  # per-device archive; gitignored
+# Hostname of the unit currently being converted, derived from the MAC that
+# esptool reads off it. See remember_esp_host().
+HOST_FILE = FACTORY_DIR / "current-esp"
 
 OK, NO, HUH = "OK", "НІ", "?"
 
@@ -132,6 +142,57 @@ def serial_ports() -> list[str]:
     return sorted(glob.glob("/dev/ttyACM*"))
 
 
+def pick_serial_port(explicit: str | None) -> str | None:
+    if explicit:
+        return explicit
+    ports = serial_ports()
+    return ports[0] if len(ports) == 1 else None
+
+
+def esp_factory_image(started: float) -> Path | None:
+    """The image `esphome compile` just produced.
+
+    Both configs in this repo are named `htram`, so they share
+    .esphome/build/htram and the path alone cannot say which one is sitting
+    there. Matching on mtime does: anything older than the compile we just ran
+    is a different config's leftovers, and flashing those onto a stock device
+    is exactly the mix-up worth refusing.
+    """
+    fresh = [c for c in REPO_ROOT.glob("esphome/.esphome/build/*/build/firmware.factory.bin")
+             if c.stat().st_mtime >= started - 5]
+    if len(fresh) == 1:
+        return fresh[0]
+    return None
+
+
+def flash_esp_serial(port: str, image: Path) -> bool:
+    """Wait for the bootloader and write the image -- in ONE esptool session.
+
+    Splitting the two is what broke the first attempt on unit 2. The wait
+    succeeded, then `esphome run` opened the port again on its own terms:
+    `--before default-reset` at 460800. Neither holds here. DTR/RTS are not
+    soldered, so esptool cannot reset the part; and 460800 through the
+    debugprobe's CDC bridge gave `Write timeout`. Its own fallback to 115200
+    then failed with `Resource temporarily unavailable`, the previous process
+    not having let go of the port yet.
+
+    So: one invocation. `--connect-attempts 0` applies to write-flash just as
+    it does to chip-id, so esptool prints its dots until the chip appears and
+    then writes immediately -- no reopen, no baud change, no reset attempt.
+    115200 because that is the speed this bridge is known to carry; the image
+    compresses, so it is a couple of minutes, not more.
+    """
+    say("esp", f"чекаю на завантажувач ESP на {port} — Ctrl-C, щоб урвати")
+    say("esp", "крапки = спроба з'єднатись; щойно ESP відповість, запис піде одразу")
+    rc, _ = _run_streaming([
+        str(ESPTOOL), "--port", port, "--baud", "115200",
+        "--before", "no-reset", "--after", "no-reset",
+        "--connect-attempts", "0", "--chip", "esp32",
+        "write-flash", "-z", "--flash-size", "detect", "0x0", str(image),
+    ])
+    return rc == 0
+
+
 def probe_attached() -> tuple[str, str]:
     if not PYOCD.exists():
         return HUH, "нема pyocd"
@@ -160,6 +221,22 @@ def swd_alive() -> tuple[str, str]:
     return OK, f"DAP відповідає (CPUID=0x{val:08X})"
 
 
+def core_state() -> tuple[str, str]:
+    """Running or halted, read from the target rather than assumed.
+
+    Added after a --status on unit 2 left the factory firmware stopped: the
+    cause was pyocd's default connect mode (see read32), but the symptom was
+    invisible. Nothing in the output said the core had been touched, so the
+    device simply appeared to have died.
+    """
+    val = read32(DHCSR)
+    if val is None:
+        return HUH, "не прочитано (потрібен пробник і жива плата)"
+    if val & DHCSR_S_HALT:
+        return NO, f"ЗУПИНЕНЕ (DHCSR=0x{val:08X}) — зняти: tools/convert.py --resume"
+    return OK, f"працює (DHCSR=0x{val:08X})"
+
+
 def parse_read32(out: str, addr: int) -> int | None:
     """Pull one word out of pyocd's canonical hex dump.
 
@@ -184,8 +261,8 @@ def swd_resume() -> bool:
     freezes and telemetry stops, while the ESP stays up because GPIO state
     (PB3) survives a halt.
     """
-    rc, _ = _run([str(PYOCD), "cmd", "-t", "cortex_m", "-f", "100k", "-c", "go"],
-                 timeout=SWD_PROBE_TIMEOUT)
+    rc, _ = _run([str(PYOCD), "cmd", "-t", "cortex_m", "-f", "100k",
+                  "-M", "attach", "-c", "go"], timeout=SWD_PROBE_TIMEOUT)
     return rc == 0
 
 
@@ -198,11 +275,18 @@ def read32(addr: int) -> int | None:
     "halt; read32; go" chain whose read fails leaves the target STOPPED with
     nothing in the output saying so. Verified on hardware 2026-09-07 -- reads
     of FMC_OBSTAT and the UID all succeed against a running device.
+
+    `-M attach` is not decoration. Dropping the explicit `halt` from the
+    command was not enough: pyocd's DEFAULT connect mode is `halt`, so merely
+    connecting stopped the core, and `cmd` exits without resuming it. On unit 2
+    a plain `--status` against the factory firmware left the GD32 dead until a
+    power cycle. `attach` connects to the running core and touches nothing.
     """
     if probe_attached()[0] != OK:
         return None
     rc, out = _run([str(PYOCD), "cmd", "-t", "cortex_m", "-f", "100k",
-                    "-c", f"read32 0x{addr:08X}"], timeout=SWD_PROBE_TIMEOUT)
+                    "-M", "attach", "-c", f"read32 0x{addr:08X}"],
+                   timeout=SWD_PROBE_TIMEOUT)
     if rc != 0:
         return None
     return parse_read32(out, addr)
@@ -216,6 +300,32 @@ def rdp_state() -> tuple[str, str]:
     if val & (1 << 1):
         return NO, f"RDP УВІМКНЕНО (OBSTAT=0x{val:08X}) — заводський захист на місці"
     return OK, f"RDP знято (OBSTAT=0x{val:08X})"
+
+
+def gd32_blank() -> tuple[str, str]:
+    """Whether main flash holds anything, read from the reset vector.
+
+    This is what tells "the ESP was never flashed" apart from "the ESP is
+    flashed but dark". Between unlock and flash the GD32 is erased, so it
+    drives no PB3, so the ESP has no power and vanishes from the network --
+    and --status used to read that as a missing `esp` stage and send the
+    operator back to redo work already done.
+
+    Only ask while RDP is off. Under RDP1 the debugger cannot read main flash
+    at all -- that is the whole reason the dump goes through an SRAM stub -- so
+    whatever comes back is the protection answering, not the image. Reading it
+    anyway risked calling a factory-protected chip empty, which would then have
+    been taken as evidence that the ESP is merely dark. The caller decides;
+    this refuses to guess.
+    """
+    if rdp_state()[0] != OK:
+        return HUH, "не читається під RDP — спершу unlock"
+    val = read32(0x08000000)
+    if val is None:
+        return HUH, "не прочитано (потрібен пробник і жива плата)"
+    if val == 0xFFFFFFFF:
+        return NO, "порожній — прошивки ще немає"
+    return OK, f"запрограмований (SP=0x{val:08X})"
 
 
 def device_uid() -> str | None:
@@ -276,13 +386,147 @@ def dump_state() -> tuple[str, str]:
                 "(без запису про походження — з якого пристрою, невідомо)")
 
 
+def discover_esp(timeout: float = 6.0) -> list[str]:
+    """Every HTRAM the network will admit to, never a guess at which one.
+
+    Configs here set name_add_mac_suffix, so the hostname carries the last
+    three bytes of the MAC -- htram-c1da24.local, never plain htram.local. That
+    name cannot be known before the first flash, and the hardcoded default made
+    --status report a healthy device as missing.
+
+    Returning a list rather than a winner is the point. On this bench the
+    browse turned up htram-9436b0 -- the already-converted unit in daily use --
+    while the device actually on the probe did not answer at all. Auto-picking
+    would have aimed `--stage dump` at the wrong ESP and flashed the quiet
+    config over a working one. Ambiguity is the caller's problem to refuse.
+    """
+    try:
+        from zeroconf import ServiceBrowser, Zeroconf
+    except ImportError:
+        return []
+
+    found: set[str] = set()
+
+    class _Listener:
+        def add_service(self, zc, type_, name):
+            if name.lower().startswith("htram"):
+                found.add(name.split(".")[0])
+
+        def update_service(self, zc, type_, name):
+            pass
+
+        def remove_service(self, zc, type_, name):
+            pass
+
+    zc = Zeroconf()
+    try:
+        listener = _Listener()
+        for svc in ("_esphomelib._tcp.local.", "_http._tcp.local."):
+            ServiceBrowser(zc, svc, listener)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.2)
+    finally:
+        zc.close()
+    return sorted(f"{n}.local" for n in found)
+
+
+def remember_esp_host(port: str) -> str | None:
+    """Ask the ESP we just flashed who it is, and write that down.
+
+    Discovery alone is not safe here. On this bench the mDNS browse returned
+    exactly one HTRAM -- htram-9436b0, the converted unit in daily use -- while
+    the device actually on the probe advertised nothing at all. A single answer
+    therefore proves nothing, and auto-picking it would have aimed the quiet
+    config in `--stage dump` at a working device.
+
+    The MAC is the one identity that comes from the unit itself, so it wins.
+    The chip is still in the bootloader at this point (--after no-reset), so
+    this connects immediately; the name follows the configs' name_add_mac_suffix
+    rule, last three bytes, lowercase.
+
+    This is the one thing the tool keeps in a file. It is still a hardware fact
+    -- just one that cannot be re-read once the probe moves on.
+    """
+    rc, out = _run([str(ESPTOOL), "--port", port, "--baud", "115200",
+                    "--before", "no-reset", "--after", "no-reset",
+                    "--connect-attempts", "3", "--chip", "esp32", "read-mac"],
+                   timeout=60)
+    m = re.search(r"MAC:\s*((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})", out)
+    if rc != 0 or not m:
+        return None
+    tail = m.group(1).replace(":", "").lower()[-6:]
+    host = f"htram-{tail}.local"
+    FACTORY_DIR.mkdir(parents=True, exist_ok=True)
+    HOST_FILE.write_text(host + "\n", encoding="utf-8")
+    return host
+
+
+def remembered_esp_host() -> str | None:
+    try:
+        return HOST_FILE.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def resolve_local(host: str) -> str | None:
+    """Turn htram-xxxxxx.local into an address, asking mDNS ourselves.
+
+    glibc resolves .local only when nss-mdns is installed and wired into
+    nsswitch, and on this bench it worked intermittently: curl reached the
+    device by IP while requests raised ConnectionError on the name, so
+    --status called a live, answering device missing. zeroconf is already a
+    dependency and queries the network directly, so use it rather than depend
+    on how the host is configured.
+    """
+    try:
+        from zeroconf import ServiceBrowser, Zeroconf
+    except ImportError:
+        return None
+
+    want = host.lower().rstrip(".")
+    addrs: list[str] = []
+
+    class _Listener:
+        def add_service(self, zc, type_, name):
+            info = zc.get_service_info(type_, name, timeout=1500)
+            if info and (info.server or "").lower().rstrip(".") == want:
+                addrs.extend(info.parsed_addresses())
+
+        def update_service(self, zc, type_, name):
+            pass
+
+        def remove_service(self, zc, type_, name):
+            pass
+
+    zc = Zeroconf()
+    try:
+        listener = _Listener()
+        for svc in ("_esphomelib._tcp.local.", "_http._tcp.local."):
+            ServiceBrowser(zc, svc, listener)
+        deadline = time.time() + 4
+        while time.time() < deadline and not addrs:
+            time.sleep(0.2)
+    finally:
+        zc.close()
+    return addrs[0] if addrs else None
+
+
 def esp_online(host: str) -> tuple[str, str]:
     import requests
     try:
         r = requests.get(f"http://{host}/", timeout=5)
     except requests.RequestException as e:
-        return NO, (f"{host} не відповідає ({type(e).__name__}); "
-                    "ім'я з MAC-суфіксом — htram-<mac6>.local, або передай IP")
+        addr = resolve_local(host) if host.lower().endswith(".local") else None
+        if addr:
+            try:
+                r = requests.get(f"http://{addr}/", timeout=5)
+            except requests.RequestException as e2:
+                return NO, f"{host} ({addr}) не відповідає ({type(e2).__name__})"
+            host = f"{host} → {addr}"
+        else:
+            return NO, (f"{host} не відповідає ({type(e).__name__}); "
+                        "ім'я з MAC-суфіксом — htram-<mac6>.local, або передай IP")
     if r.status_code == 401:
         return OK, f"{host} відповідає (401 — web_server з автентифікацією, як і має бути)"
     if r.status_code == 200:
@@ -352,24 +596,55 @@ def stage_esp(args) -> int:
         "Рейку ESP гейтить PB3 від GD32, а заводське «вимкнено» — це standby,",
         "де утримання кнопки вмикає й вимикає периферію (HARDWARE_MAP §6.9).",
         "",
-        "  1. Подати живлення на плату (заводська піднімається, ESP живиться).",
-        "  2. Затиснути кнопку до входу в standby — ESP гасне.",
-        "  3. Притиснути GPIO0 до GND і тримати.",
-        "",
-        f"Далі скрипт зіб'є образ і запустить: esphome run {YAML.relative_to(REPO_ROOT)}",
-        "  4. ЩОЙНО ПОЧНЕТЬСЯ ЗАЛИВКА — затиснути кнопку ще раз. GD32 підніме",
-        "     PB3, ESP стартує з GPIO0 на землі й потрапить у download mode.",
-        "  5. Відпустити GPIO0, коли заливка пішла.",
+        "Зараз потрібне тільки одне: плата під живленням і заводська працює.",
+        "Танець із кнопкою й GPIO0 буде після збірки.",
     ])
-    if not ask("Дроти підпаяно, ESP у standby, GPIO0 притиснуто?"):
+    if not ask("Дроти підпаяно?"):
         say("esp", "перервано — нічого не зроблено")
         return 1
-    rc, _ = _run_streaming([str(ESPHOME), "run", str(YAML)])
+
+    port = pick_serial_port(args.port)
+    if port is None:
+        say("esp", f"портів {len(serial_ports())} — вкажи потрібний через --port")
+        return 1
+
+    # Build before the hands are busy. The first build of htram-base.yaml pulls
+    # the component and the fonts over the network, and holding GPIO0 down
+    # through that is time spent for nothing.
+    say("esp", "спершу збираю образ — руки поки вільні")
+    started = time.time()
+    rc, _ = _run_streaming([str(ESPHOME), "compile", str(YAML)])
     if rc != 0:
-        say("esp", "esphome run не завершився успішно")
+        say("esp", "збірка не вдалася — до заліза не дійшли")
+        return 1
+    image = esp_factory_image(started)
+    if image is None:
+        say("esp", "не знайшов свіжий firmware.factory.bin після збірки")
+        return 1
+    say("esp", f"образ: {image.relative_to(REPO_ROOT)} ({image.stat().st_size} Б)")
+
+    physical([
+        "Тепер руками, і поспішати не треба — тул чекатиме скільки завгодно:",
+        "",
+        "  1. Затиснути кнопку до входу в standby — ESP гасне.",
+        "  2. Притиснути GPIO0 до GND і тримати.",
+        "  3. Затиснути кнопку ще раз. GD32 підніме PB3, ESP стартує з GPIO0",
+        "     на землі й потрапить у download mode.",
+        "  4. Крапки зміняться на chip id і піде запис — тоді відпустити GPIO0.",
+    ])
+    if not flash_esp_serial(port, image):
+        say("esp", "заливка не вдалася")
+        say("esp", "порядок: standby (ESP гасне) → GPIO0 на GND → кнопка ще раз")
         say("esp", "ESP не піднявся сам? Бачили застряглий brown-out після PB3 — "
                    "допомагає повний power-cycle батареєю (HARDWARE_MAP §6.6)")
         return 1
+    host = remember_esp_host(port)
+    if host:
+        say("esp", f"цей пристрій відтепер відомий як {host} "
+                   f"(записано в {HOST_FILE.relative_to(REPO_ROOT)})")
+    else:
+        say("esp", "MAC прочитати не вдалось — далі доведеться передавати --host вручну")
+
     physical([
         "Зняти перемичку з GPIO0 і перезапустити плату штатно.",
         "Дроти UART НЕ викидати: на етапі probe вони переїдуть",
@@ -455,6 +730,10 @@ def ensure_esp_quiet(args) -> bool:
         f"Зараз буде залито {QUIET_YAML.name} — конфіг без uart, тож піни",
         "лишаться входами. Ваш звичайний конфіг повернеться на етапі verify.",
     ])
+    say("dump", f"ціль: {args.host}")
+    if not ask(f"Це точно той пристрій, що на пробнику ({args.host})?"):
+        say("dump", "передай правильний через --host")
+        return False
     if not ask("Залити тихий конфіг і звільнити лінію?"):
         say("dump", "без цього дамп може вийти пошкодженим")
         return ask("Усе одно продовжити?")
@@ -507,6 +786,25 @@ def stage_dump(args) -> int:
     if len(ports) > 1:
         say("dump", f"портів кілька ({', '.join(ports)}) — скрипт візьме /dev/ttyACM0; "
                     "якщо міст на іншому, дамп прийде порожній")
+    # The wiring gate belongs here, not in `probe`. `probe` counts itself done
+    # on "probe visible + SWD answers", and both are true the moment SWD is
+    # soldered -- which on unit 2 was from the very start, so --status jumped
+    # straight here with the UART still on the ESP's own pads. Software cannot
+    # see where two wires are soldered; the only honest check is to ask.
+    physical([
+        "Дамп читається через МІЖЧИПОВИЙ UART, не через UART0 ESP.",
+        "Якщо дроти ще на парі з етапу esp — перенести:",
+        "",
+        "     Pico GP4 (TX) → пад ESP GPIO17 (28) → GD32 PA3",
+        "     Pico GP5 (RX) → пад ESP GPIO16 (27) → GD32 PA2",
+        "",
+        "  ТУТ НЕ ПЕРЕХРЕЩУВАТИ — на відміну від етапу esp. Pico заміняє собою",
+        "  ESP, а перехрестя вже зроблене на боці GD32 (PA3=RX, PA2=TX).",
+        "  Паяти на знеструмленій платі, Pico від'єднаний.",
+    ])
+    if not ask("Дроти на GPIO17/GPIO16, без перехрестя?"):
+        say("dump", "без цього дамп прийде порожній — переносити й повертатись сюди")
+        return 1
     physical([
         "Читання йде під RDP1 через SRAM-стаб (tools/swd/README.md:63).",
         "Триває близько двох хвилин. Не від'єднувати нічого.",
@@ -584,8 +882,14 @@ def stage_unlock(args) -> int:
         say("unlock", "не підтверджено — нічого не зроблено")
         return 1
     say("unlock", "вантажу rdp_unlock.c у SRAM; він програмує байти опцій і зупиняється")
+    # --duration, or this never returns. bench.py keeps listening to the UART
+    # until Ctrl+C, and the stub goes quiet after a second or two -- so the
+    # stage sat there looking hung with the option bytes already written.
+    # Bounding the LISTEN is safe: the write happens on the target and is over
+    # before the last line arrives. Nothing here times out a write.
     rc, _ = _run_streaming([str(REPO_ROOT / "tools" / "bench.py"), "run",
-                            str(SWD_DIR / "rdp_unlock.c")], cwd=REPO_ROOT)
+                            str(SWD_DIR / "rdp_unlock.c"), "--duration", "30"],
+                           cwd=REPO_ROOT)
     physical([
         "Стаб лише записав байти опцій. Вони застосовуються на",
         "ПОВНОМУ ПЕРЕЗАПУСКУ ЖИВЛЕННЯ (POR), не на звичайному reset.",
@@ -617,7 +921,19 @@ def stage_flash(args) -> int:
     say("flash", "заливка йде без таймауту — обірваний запис цеглить GD32")
     if not ask("Залити прошивку по SWD?"):
         return 1
-    rc, _ = _run_streaming([str(SWD_DIR / "flash.py")], cwd=REPO_ROOT)
+    # --swd-mem, not the UART writer, and this is structural rather than a
+    # preference. At this point in the conversion the GD32 is blank, so it does
+    # not drive PB3, so the ESP has no power -- and an unpowered ESP32 clamps
+    # the shared GPIO17 node through its ESD diodes. The GD32's RX then sits at
+    # a permanent break and manufactures 0x00 bytes: on unit 2 the writer stub
+    # read a length out of that noise, "received" a chunk of nothing and
+    # reported DONE before the host had sent a single byte. The dump never
+    # exposed this because it only ever streams device -> host.
+    #
+    # swd_flash_writer.c talks through a mailbox in SRAM over the AHB-AP, so no
+    # wire between the chips is involved at all.
+    rc, _ = _run_streaming([str(VENV_PYTHON), str(SWD_DIR / "flash.py"),
+                            "--swd-mem"], cwd=REPO_ROOT)
     if rc != 0:
         say("flash", "заливка не вдалася. Якщо SWD відвалився — docs/BENCH.md:121")
         return 1
@@ -625,6 +941,29 @@ def stage_flash(args) -> int:
 
 
 def stage_verify(args) -> int:
+    # Before anything else: get the probe's TX off GPIO17.
+    #
+    # The real config drives GPIO17 as its UART TX, and the probe's GP4 is
+    # soldered to that same pad -- two push-pull outputs on one node, with the
+    # ESP hammering telemetry and pixels into it at 921600. ensure_esp_quiet()
+    # covers this for the dump, but it is skipped when the ESP is dark, which
+    # is exactly what happens on a conversion; and after `flash` the ESP comes
+    # back up with the UART live while the wire is still there. On unit 2 that
+    # left the contention in place for half an hour and the ESP fell off the
+    # network for good.
+    physical([
+        "СПЕРШУ ЗНЯТИ UART-МІСТ. Конфіг, який зараз працює, драйвить GPIO17",
+        "як свій TX, а туди ж припаяний GP4 пробника — теж вихід.",
+        "",
+        "  1. Знеструмити плату.",
+        "  2. Від'єднати Pico від USB.",
+        "  3. Відпаяти дріт з GPIO17 (GP4). GP5 — вхід, але й він тут зайвий.",
+        "  4. Подати живлення назад.",
+        "",
+        "SWD можна лишити: PA13/PA14 нікому не заважають.",
+    ])
+    input("  Enter, коли міст знято й плата ввімкнена… ")
+
     st, note = esp_online(args.host)
     say("verify", f"ESP: {note}")
 
@@ -686,14 +1025,29 @@ def cmd_status(args) -> int:
     }
     if snap["probe"][0] == OK:
         snap["swd"] = swd_alive()
+        snap["core"] = core_state()
         snap["rdp"] = rdp_state()
+        snap["blank"] = (gd32_blank() if snap["rdp"][0] == OK
+                         else (HUH, "не читається під RDP — спершу unlock"))
     else:
         snap["swd"] = (HUH, "потрібен пробник")
+        snap["core"] = (HUH, "потрібен пробник")
         snap["rdp"] = (HUH, "потрібен пробник")
+        snap["blank"] = (HUH, "потрібен пробник")
+
+    # An erased GD32 explains an absent ESP completely: no PB3, no rail. Say so
+    # rather than reporting it as an unflashed ESP and sending the operator
+    # back through `--stage esp`.
+    snap["esp_done"] = snap["esp"][0] == OK
+    if snap["esp"][0] != OK and snap["blank"][0] == NO and remembered_esp_host():
+        snap["esp"] = (HUH, "без живлення — GD32 порожній, PB3 не тримається; "
+                            "між unlock і flash так і має бути")
+        snap["esp_done"] = True
 
     rows = [("тулчейн", "tool"), ("secrets.yaml", "secrets"), ("прошивка GD32", "build"),
             ("ESP у мережі", "esp"), ("SWD-пробник", "probe"), ("SWD-зв'язок", "swd"),
-            ("RDP", "rdp"), ("заводський образ", "dump")]
+            ("ядро GD32", "core"), ("флеш GD32", "blank"), ("RDP", "rdp"),
+            ("заводський образ", "dump")]
     width = max(len(label) for label, _ in rows)
     for label, key in rows:
         state, note = snap[key]
@@ -715,15 +1069,21 @@ def _stage_done(name: str, snap: dict) -> bool:
     if name == "prep":
         return ok("tool") and ok("secrets") and ok("build")
     if name == "esp":
-        return ok("esp")
+        return snap["esp_done"]
     if name == "probe":
+        # Only the electrical half is observable. Whether the UART wires have
+        # been moved to the inter-chip pads is asked for in `dump`, which is
+        # the stage that actually needs them.
         return ok("probe") and ok("swd")
     if name == "dump":
         return ok("dump")
     if name == "unlock":
         return ok("rdp")
-    # "flash" and "verify": nothing on the device reports which build is
-    # running, so they never mark themselves done. HELLO is read by eye.
+    if name == "flash":
+        # Only that main flash is no longer erased. Which build landed there is
+        # not knowable from here -- HELLO says that, and `verify` shows how to
+        # read it, which is why verify stays the terminal step.
+        return snap["blank"][0] == OK
     return False
 
 
@@ -736,14 +1096,42 @@ def main() -> int:
     ap.add_argument("--stage", choices=[n for n, _, _ in STAGES],
                     help="виконати один етап")
     ap.add_argument("--list", action="store_true", help="перелік етапів")
-    ap.add_argument("--host", default="htram.local",
-                    help="адреса ESP. htram.yaml має name_add_mac_suffix, тож "
-                         "ім'я виглядає як htram-<останні 3 байти MAC>.local "
-                         "(напр. htram-9436b0.local); IP теж годиться")
+    ap.add_argument("--host", default=None,
+                    help="адреса ESP. Типово шукається по mDNS: конфіги мають "
+                         "name_add_mac_suffix, тож ім'я виглядає як "
+                         "htram-<останні 3 байти MAC>.local (напр. "
+                         "htram-c1da24.local). IP теж годиться")
+    ap.add_argument("--port", help="послідовний порт пробника (типово єдиний "
+                                   "/dev/ttyACM*)")
     ap.add_argument("--resume", action="store_true",
                     help="зняти GD32 з паузи, якщо його лишила зупиненим "
                          "обірвана сесія відладчика")
     args = ap.parse_args()
+
+    if args.host is None:
+        args.host = remembered_esp_host()
+        if args.host:
+            print(f"  пристрій у роботі: {args.host} "
+                  f"({HOST_FILE.relative_to(REPO_ROOT)})", flush=True)
+
+    if args.host is None:
+        hosts = discover_esp()
+        if len(hosts) == 1:
+            args.host = hosts[0]
+            print(f"  ESP знайдено по mDNS: {args.host}", flush=True)
+        elif len(hosts) > 1:
+            # More than one HTRAM answers, and nothing here can tell which of
+            # them sits on the probe. Guessing would aim a flash at a device in
+            # daily use, so this stops instead.
+            print("  у мережі кілька HTRAM:", flush=True)
+            for h in hosts:
+                print(f"    {h}", flush=True)
+            print("  вкажи потрібний: --host <ім'я або IP>\n", flush=True)
+            return 2
+        else:
+            args.host = "htram-?.local"
+            print("  ESP по mDNS не знайдено — поки вона заводська, так і має бути",
+                  flush=True)
 
     if args.resume:
         ok = swd_resume()
