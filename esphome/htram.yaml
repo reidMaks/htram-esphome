@@ -1657,6 +1657,7 @@ button:
   # tomorrow. Diagnostic rather than a normal control: it is for checking that
   # the thing works, not for holding minutes of silence on demand.
   - platform: template
+    id: test_silence_button
     name: "Хвилина мовчання: перевірка"
     icon: "mdi:candle"
     entity_category: diagnostic
@@ -1664,6 +1665,7 @@ button:
       - script.execute: minute_of_silence
 
   - platform: template
+    id: beep_button
     name: "Beep"
     icon: "mdi:volume-high"
     on_press:
@@ -1671,6 +1673,7 @@ button:
           id(htram_core)->send_beep(2000, 200);
 
   - platform: template
+    id: test_ota_chime_button
     name: "Сигнал оновлення: перевірка"
     icon: "mdi:bell-check"
     entity_category: diagnostic
