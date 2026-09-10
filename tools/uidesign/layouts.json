@@ -47,6 +47,390 @@
  },
  "variants": [
   {
+   "id": "weather-semicircle",
+   "name": "W-Semi · Півколом у нижній половині",
+   "note": "Велика дата зверху, жодних зайвих слів («сьогодні», «ранок/день/вечір»). 3 часові точки (9:00, 14:00, 19:00) розташовані півколом-дугою у нижній половині, повторюючи форму круглого екрана.",
+   "widgets": [
+    {
+     "type": "arc",
+     "align": "center",
+     "d": 228,
+     "width": 2,
+     "start": 270,
+     "end": 270,
+     "color": "$ringfg",
+     "opa": 0.3,
+     "track": "$ring",
+     "value": 1,
+     "rounded": false
+    },
+    {
+     "type": "label",
+     "align": "top_mid",
+     "y": 28,
+     "font": 22,
+     "family": "noto",
+     "color": "$fg",
+     "text": "Чт, {date}"
+    },
+    {
+     "type": "label",
+     "align": "top_mid",
+     "y": 54,
+     "font": 16,
+     "family": "noto",
+     "color": "$slot",
+     "text": "12° ... 23°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -64,
+     "y": -18,
+     "font": 13,
+     "family": "noto",
+     "color": "$slot",
+     "text": "9:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -64,
+     "y": 4,
+     "font": 24,
+     "family": "noto",
+     "color": "$warn",
+     "text": "☀"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -64,
+     "y": 36,
+     "font": 20,
+     "family": "noto",
+     "color": "$time",
+     "text": "15°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 8,
+     "font": 13,
+     "family": "noto",
+     "color": "$slot",
+     "text": "14:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 30,
+     "font": 26,
+     "family": "noto",
+     "color": "$caption",
+     "text": "⛅"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 64,
+     "font": 22,
+     "family": "noto",
+     "color": "$time",
+     "text": "23°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 64,
+     "y": -18,
+     "font": 13,
+     "family": "noto",
+     "color": "$slot",
+     "text": "19:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 64,
+     "y": 4,
+     "font": 24,
+     "family": "noto",
+     "color": "$cyan",
+     "text": "🌧"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 64,
+     "y": 36,
+     "font": 20,
+     "family": "noto",
+     "color": "$time",
+     "text": "18°"
+    }
+   ]
+  },
+  {
+   "id": "weather-big-columns",
+   "name": "W-Columns · 3 великі колонки (9:00, 14:00, 19:00)",
+   "note": "Велика дата 22 px зверху, точний числовий час 9:00, 14:00, 19:00 замість слів, великі іконки та великі температури 22 px в один чіткий горизонтальний ряд.",
+   "widgets": [
+    {
+     "type": "arc",
+     "align": "center",
+     "d": 228,
+     "width": 2,
+     "start": 270,
+     "end": 270,
+     "color": "$ringfg",
+     "opa": 0.3,
+     "track": "$ring",
+     "value": 1,
+     "rounded": false
+    },
+    {
+     "type": "label",
+     "align": "top_mid",
+     "y": 28,
+     "font": 22,
+     "family": "noto",
+     "color": "$fg",
+     "text": "Чт, {date}"
+    },
+    {
+     "type": "label",
+     "align": "top_mid",
+     "y": 54,
+     "font": 16,
+     "family": "noto",
+     "color": "$slot",
+     "text": "12° ... 23°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -64,
+     "y": -14,
+     "font": 13,
+     "family": "noto",
+     "color": "$slot",
+     "text": "9:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -64,
+     "y": 14,
+     "font": 26,
+     "family": "noto",
+     "color": "$warn",
+     "text": "☀"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -64,
+     "y": 48,
+     "font": 22,
+     "family": "noto",
+     "color": "$time",
+     "text": "15°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": -14,
+     "font": 13,
+     "family": "noto",
+     "color": "$slot",
+     "text": "14:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 14,
+     "font": 26,
+     "family": "noto",
+     "color": "$caption",
+     "text": "⛅"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 48,
+     "font": 22,
+     "family": "noto",
+     "color": "$time",
+     "text": "23°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 64,
+     "y": -14,
+     "font": 13,
+     "family": "noto",
+     "color": "$slot",
+     "text": "19:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 64,
+     "y": 14,
+     "font": 26,
+     "family": "noto",
+     "color": "$cyan",
+     "text": "🌧"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 64,
+     "y": 48,
+     "font": 22,
+     "family": "noto",
+     "color": "$time",
+     "text": "18°"
+    }
+   ]
+  },
+  {
+   "id": "weather-dial-day",
+   "name": "W-Dial · Коло як день (прогноз за ходом годинника)",
+   "note": "Коло символізує світловий день: ранок ліворуч (9:00), день угорі-праворуч (14:00), вечір унизу (19:00). У центрі — велика дата та діапазон.",
+   "widgets": [
+    {
+     "type": "arc",
+     "align": "center",
+     "d": 228,
+     "width": 2,
+     "start": 270,
+     "end": 270,
+     "color": "$ringfg",
+     "opa": 0.3,
+     "track": "$ring",
+     "value": 1,
+     "rounded": false
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "y": -14,
+     "font": 24,
+     "family": "noto",
+     "color": "$fg",
+     "text": "Чт, {date}"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "y": 12,
+     "font": 16,
+     "family": "noto",
+     "color": "$slot",
+     "text": "12° ... 23°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -68,
+     "y": -54,
+     "font": 12,
+     "family": "noto",
+     "color": "$slot",
+     "text": "9:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -68,
+     "y": -34,
+     "font": 22,
+     "family": "noto",
+     "color": "$warn",
+     "text": "☀"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": -68,
+     "y": -12,
+     "font": 18,
+     "family": "noto",
+     "color": "$time",
+     "text": "15°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 68,
+     "y": -54,
+     "font": 12,
+     "family": "noto",
+     "color": "$slot",
+     "text": "14:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 68,
+     "y": -34,
+     "font": 22,
+     "family": "noto",
+     "color": "$caption",
+     "text": "⛅"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 68,
+     "y": -12,
+     "font": 18,
+     "family": "noto",
+     "color": "$time",
+     "text": "23°"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 48,
+     "font": 12,
+     "family": "noto",
+     "color": "$slot",
+     "text": "19:00"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 68,
+     "font": 22,
+     "family": "noto",
+     "color": "$cyan",
+     "text": "🌧"
+    },
+    {
+     "type": "label",
+     "align": "center",
+     "x": 0,
+     "y": 90,
+     "font": 18,
+     "family": "noto",
+     "color": "$time",
+     "text": "18°"
+    }
+   ]
+  },
+  {
    "id": "w-shipped",
    "name": "W · Як зараз на пристрої",
    "note": "Дзеркало прошивки: кільце 228, цифри 92 px, підпис Noto Sans 15 px у #C2C8D0, батарея намальована трьома прямокутниками (видима лише без USB), «!» під нею. 92 px — стеля, поки дата всередині кільця: рядок годин потребує 82 px півширини, а коло дає стільки лише від y=44 і нижче.",
@@ -122,7 +506,6 @@
      "color": "$caption",
      "cycle": [
       "{date}",
-      "{out}° {wxword}",
       "{temp}°  {hum}%"
      ]
     },

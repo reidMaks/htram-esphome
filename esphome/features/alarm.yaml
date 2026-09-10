@@ -137,6 +137,7 @@ script:
           id(alarm_ringing) = true;
           id(face_state) = -1;
       - script.execute: refresh_face
+      - script.execute: on_alarm_started
       # 100 × 3 с ≈ п'ять хвилин: будильник, що надривається в порожній
       # кімнаті годину, — це не наполегливість, а несправність.
       - repeat:
@@ -161,6 +162,7 @@ script:
       - script.stop: alarm_snooze
       - lambda: id(alarm_snoozing) = false;
       - script.execute: alarm_stop
+      - script.execute: on_alarm_dismissed
 
   - id: alarm_snooze
     mode: restart
