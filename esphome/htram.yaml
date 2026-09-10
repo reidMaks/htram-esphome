@@ -472,6 +472,14 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: silence_beep_count
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: last_tick_sec
+    type: int
+    restore_value: false
+    initial_value: "-1"
   # The AP face has two pages: 0 = QR to scan, 1 = the same credentials as text.
   - id: ap_page
     type: int
@@ -702,21 +710,28 @@ script:
     then:
       - lambda: |-
           id(silence_active) = true;
+          id(silence_beep_count) = 0;
+          timeval tv;
+          gettimeofday(&tv, nullptr);
+          // If triggered within the first 250ms of an even second (like at 09:00:00),
+          // arm tick immediately for second 0. Otherwise wait for the next even second.
+          if ((tv.tv_sec % 2 == 0) && (tv.tv_usec < 250000)) {
+            id(last_tick_sec) = -1;
+          } else {
+            id(last_tick_sec) = (int) tv.tv_sec;
+          }
           id(silence_ticking) = true;
           id(face_state) = -1;
           id(htram_core)->send_leds(0, 0, 0, 0);
       - script.execute: refresh_face
-      # The ticking itself lives in the 1 s interval below, the same one that
-      # moves the dot: sound and motion then share a clock instead of each
-      # keeping its own. A `repeat` with a delay drifts by however long the
-      # loop took, and only ever ticks after everything else has finished.
-      - delay: 60s
+      # Wait until the 60s ticking completes (30 beeps on atomic even seconds).
+      # At tick 30 completion, silence_ticking is set to false and the anthem starts.
+      - wait_until:
+          condition:
+            lambda: return !id(silence_ticking);
+          timeout: 75s
       # The minute ends, and the anthem closes it -- the face stays as it is
-      # until the melody is done, which is what the delay is for. The metronome
-      # has to stop first: a beep replaces whatever the buzzer is playing.
-      - lambda: |-
-          id(silence_ticking) = false;
-          id(htram_core)->play_rtttl("${anthem_rtttl}");
+      # until the melody is done (~9.8 s), which is what the delay is for.
       - delay: 11s
       - lambda: |-
           id(silence_active) = false;
@@ -969,21 +984,57 @@ script:
           id(htram_core)->send_leds(ppm >= 1500, ppm >= 1000 && ppm < 1500, ppm < 1000, 0);
 
 interval:
-  - interval: 1s
+  # High-frequency tick (20ms) for sub-20ms multi-room audio & LCD second synchronization.
+  - interval: 20ms
     then:
       - lambda: |-
+          timeval tv;
+          gettimeofday(&tv, nullptr);
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) return;
+
+          // 1. Synchronized minute of silence metronome & anthem start
           if (id(silence_ticking)) {
-            static uint32_t sec = 0;
-            if (sec++ % ${silence_tick_seconds} == 0) {
-              id(htram_core)->send_beep(${silence_tick_hz}, ${silence_tick_ms});
+            if (now.second % ${silence_tick_seconds} == 0) {
+              if ((int) tv.tv_sec != id(last_tick_sec)) {
+                id(last_tick_sec) = (int) tv.tv_sec;
+                if (id(silence_beep_count) < 30) {
+                  id(silence_beep_count)++;
+                  id(htram_core)->send_beep(${silence_tick_hz}, ${silence_tick_ms});
+                } else {
+                  // 30 ticks completed (60 seconds). Start anthem exactly on second boundary!
+                  id(silence_ticking) = false;
+                  id(htram_core)->play_rtttl("${anthem_rtttl}");
+                }
+              }
             }
           }
-      # A GD32 that has just restarted spent its first ~700 ms with no USART1,
-      # so the top of our last frame and every command we sent in that window
-      # were dropped on the floor -- which is why a standby wake used to leave
-      # a strip of the GD32's own boot screen across the top of the face, in
-      # the one band LVGL never invalidates again. It tells us when it is ready
-      # now; everything it missed goes out again here.
+
+          // 2. Exact-second LCD updates (orbiting seconds dot & clock minute flip)
+          static int last_ui_sec = -1;
+          if ((int) tv.tv_sec != last_ui_sec) {
+            last_ui_sec = (int) tv.tv_sec;
+            // Moving the dot invalidates only where it was and where it lands.
+            float a = (now.second * 6.0f - 90.0f) * 3.14159265f / 180.0f;
+            lv_obj_set_pos(id(ui_secdot),
+                           (lv_coord_t) lroundf(120.0f + 113.0f * cosf(a) - 3.5f),
+                           (lv_coord_t) lroundf(120.0f + 113.0f * sinf(a) - 3.5f));
+            static int last_min = -1;
+            if (now.minute != last_min) {
+              last_min = now.minute;
+              id(refresh_clock).execute();
+              if (id(slot_idx) == 0) id(refresh_slot).execute();
+            }
+          }
+
+  # A GD32 that has just restarted spent its first ~700 ms with no USART1,
+  # so the top of our last frame and every command we sent in that window
+  # were dropped on the floor -- which is why a standby wake used to leave
+  # a strip of the GD32's own boot screen across the top of the face, in
+  # the one band LVGL never invalidates again. It tells us when it is ready
+  # now; everything it missed goes out again here.
+  - interval: 1s
+    then:
       - lambda: |-
           if (id(htram_core)->consume_gd32_boot()) {
             ESP_LOGI("resync", "GD32 restarted: full repaint + LED/backlight resend");
@@ -993,20 +1044,6 @@ interval:
             id(refresh_face).execute();
             id(refresh_leds).execute();   // auto mode overrides the resend
             lv_obj_invalidate(lv_screen_active());
-          }
-      - lambda: |-
-          auto now = id(ha_time).now();
-          if (!now.is_valid()) return;
-          // Moving the dot invalidates only where it was and where it lands.
-          float a = (now.second * 6.0f - 90.0f) * 3.14159265f / 180.0f;
-          lv_obj_set_pos(id(ui_secdot),
-                         (lv_coord_t) lroundf(120.0f + 113.0f * cosf(a) - 3.5f),
-                         (lv_coord_t) lroundf(120.0f + 113.0f * sinf(a) - 3.5f));
-          static int last_min = -1;
-          if (now.minute != last_min) {
-            last_min = now.minute;
-            id(refresh_clock).execute();
-            if (id(slot_idx) == 0) id(refresh_slot).execute();
           }
 
   - interval: 7s
