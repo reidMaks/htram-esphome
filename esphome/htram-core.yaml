@@ -1344,13 +1344,6 @@ lvgl:
               hidden: true
 
 sensor:
-  - platform: debug
-    free:
-      name: "Free heap"
-    block:
-      name: "Largest free block"
-    loop_time:
-      name: "Loop time"
 
   - platform: wifi_signal
     name: "WiFi RSSI"
@@ -1426,12 +1419,6 @@ binary_sensor:
       id: htram_button
 
 text_sensor:
-  - platform: debug
-    device:
-      name: "Device info"
-    reset_reason:
-      name: "Reset reason"
-
   - platform: wifi_info
     ip_address:
       id: wifi_ip
@@ -1440,6 +1427,7 @@ text_sensor:
     ssid:
       name: "SSID"
       entity_category: diagnostic
+      disabled_by_default: true
 
   - platform: version
     name: "ESPHome Version"
@@ -1478,6 +1466,7 @@ button:
     name: "Show Device ID"
     icon: "mdi:identifier"
     entity_category: diagnostic
+    disabled_by_default: true
     on_press:
       - script.execute: show_device_id
 
@@ -1489,6 +1478,7 @@ button:
     name: "Хвилина мовчання: перевірка"
     icon: "mdi:candle"
     entity_category: diagnostic
+    disabled_by_default: true
     on_press:
       - script.execute: minute_of_silence
 
@@ -1496,6 +1486,7 @@ button:
     id: beep_button
     name: "Beep"
     icon: "mdi:volume-high"
+    disabled_by_default: true
     on_press:
       - lambda: |-
           id(htram_core)->send_beep(2000, 200);
@@ -1505,6 +1496,7 @@ button:
     name: "Сигнал оновлення OTA"
     icon: "mdi:bell-check"
     entity_category: diagnostic
+    disabled_by_default: true
     on_press:
       - lambda: |-
           id(htram_core)->play_rtttl("${ota_done_rtttl}");

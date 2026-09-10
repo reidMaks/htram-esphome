@@ -1,0 +1,23 @@
+# HTRAM Feature: Глибока діагностика (Deep Diagnostics / Debug)
+#
+# Підключається для профілювання, пошуку витоків пам'яті та налагодження:
+# - Вільна пам'ять Heap (Free heap, Largest free block);
+# - Час головного циклу (Loop time);
+# - Детальна інформація про чип та ESP-IDF (Device info);
+# - Причина останнього перезавантаження (Reset reason).
+
+sensor:
+  - platform: debug
+    free:
+      name: "Free heap"
+    block:
+      name: "Largest free block"
+    loop_time:
+      name: "Loop time"
+
+text_sensor:
+  - platform: debug
+    device:
+      name: "Device info"
+    reset_reason:
+      name: "Reset reason"
