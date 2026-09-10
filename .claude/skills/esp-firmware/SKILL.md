@@ -73,3 +73,40 @@ The face also has states other than a clock, and seeing one is not a fault:
 portal is up, and a `немає часу` / `немає мережі` message whenever the clock is
 unset. LEDs stay dark until the first real CO2 reading rather than showing the
 GD32's boot green.
+
+## Home Assistant Action Payloads & BAD_DATA_PACKET (errno=11)
+
+When calling `homeassistant.action` (such as `weather.get_forecasts`), omitting `response_template` causes Home Assistant to transmit the full, unbounded payload (e.g. 15–25 KB for 48h hourly forecasts).
+The ESPHome Noise API frame buffer rejects frames exceeding `MAX_MESSAGE_SIZE`, causing:
+`[W][api.connection:...]: Reading failed BAD_DATA_PACKET errno=11`
+and disconnecting every 10 seconds.
+
+**Fix**: Always supply a Jinja2 `response_template` inside `homeassistant.action` to filter and extract only essential fields on the Home Assistant server before sending data over the wire:
+
+```yaml
+homeassistant.action:
+  action: weather.get_forecasts
+  data:
+    type: hourly
+  target:
+    entity_id: ${weather_entity}
+  response_template: >-
+    {% set fc = response[entity].forecast %}
+    ...
+  on_response:
+    - ...
+```
+
+## Package Substitutions Isolation
+
+ESPHome substitutions (`substitutions:`) do not automatically propagate between sibling package imports.
+If a feature package relies on a substitution (e.g. `${weather_entity}`) that is not defined in the top-level YAML or inside that package, ESPHome will emit the literal string `"${weather_entity}"` at runtime.
+Always define safe defaults inside the package's own `substitutions:` section.
+
+## Multi-Color Composite Icons with 1-Bit Masks
+
+Under strict flash constraints (<40 KB free):
+1. Generate paired 1-bit binary masks with identical bounding dimensions (e.g. 36x36 px) using PIL/Pillow.
+2. In LVGL, place two `image` objects directly at the same coordinates.
+3. Apply `lv_obj_set_style_image_recolor` separately to each layer (e.g. gold sun + white cloud). If the weather state is monochrome (e.g. clear sun), hide the secondary layer (`lv_obj_add_flag(..., LV_OBJ_FLAG_HIDDEN)`).
+
