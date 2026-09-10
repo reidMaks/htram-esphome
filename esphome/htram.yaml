@@ -1674,7 +1674,7 @@ button:
 
   - platform: template
     id: test_ota_chime_button
-    name: "Сигнал оновлення: перевірка"
+    name: "Сигнал оновлення OTA"
     icon: "mdi:bell-check"
     entity_category: diagnostic
     on_press:
