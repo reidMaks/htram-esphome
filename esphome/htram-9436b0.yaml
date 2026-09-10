@@ -1,4 +1,4 @@
-# HTRAM — Кабінет (htram-9436b0)
+# HTRAM — Кабінет (htram-9436b0, без будильника)
 #
 # Локальна збірка / прошивка:
 #   uv run esphome run esphome/htram-9436b0.yaml
@@ -15,12 +15,10 @@
 #     area: ${area}
 #
 #   packages:
-#     base:
+#     core:
 #       url: https://github.com/reidMaks/htram-esphome
 #       ref: main
-#       files:
-#         - esphome/htram-core.yaml
-#         - esphome/features/alarm.yaml
+#       files: [esphome/htram-core.yaml]
 #       refresh: 0s
 #   -------------------------------------------------
 
@@ -35,4 +33,3 @@ esphome:
 
 packages:
   core: !include htram-core.yaml
-  alarm: !include features/alarm.yaml

@@ -1,4 +1,4 @@
-# HTRAM — Спальня (htram-954f48, без будильника)
+# HTRAM — Спальня (htram-954f48)
 #
 # Локальна збірка / прошивка:
 #   uv run esphome run esphome/htram-954f48.yaml
@@ -15,10 +15,12 @@
 #     area: ${area}
 #
 #   packages:
-#     core:
+#     base:
 #       url: https://github.com/reidMaks/htram-esphome
 #       ref: main
-#       files: [esphome/htram-core.yaml]
+#       files:
+#         - esphome/htram-core.yaml
+#         - esphome/features/alarm.yaml
 #       refresh: 0s
 #   -------------------------------------------------
 
@@ -33,3 +35,4 @@ esphome:
 
 packages:
   core: !include htram-core.yaml
+  alarm: !include features/alarm.yaml
