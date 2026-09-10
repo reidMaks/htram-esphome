@@ -8,7 +8,6 @@
 # - Автоматично закривається через 60 с або при будь-якому одинарному кліку.
 
 substitutions:
-  weather_entity: "weather.home"
   weather_update_interval: "30min"
   weather_screen_timeout: "60s"
 
@@ -348,114 +347,94 @@ script:
                   entity_id: ${weather_entity}
                   type: hourly
                 capture_response: true
+                response_template: >-
+                  {%- set fc = (response.values() | list)[0].forecast if (response and (response.values() | list)[0].forecast is defined) else [] -%}
+                  {%- set ns = namespace(
+                      min=999, max=-999,
+                      m_t=none, m_c='', m_h=9, m_diff=99,
+                      d_t=none, d_c='', d_h=14, d_diff=99,
+                      e_t=none, e_c='', e_h=19, e_diff=99
+                  ) -%}
+                  {%- for item in fc[:24] -%}
+                    {%- set t = item.temperature | float -%}
+                    {%- if t < ns.min %}{% set ns.min = t %}{% endif -%}
+                    {%- if t > ns.max %}{% set ns.max = t %}{% endif -%}
+                    {%- set h = (item.datetime[11:13] | int) -%}
+                    {%- set diff9 = (h - 9) | abs -%}
+                    {%- if diff9 < ns.m_diff and h >= 6 and h <= 11 -%}
+                      {%- set ns.m_diff = diff9 %}{% set ns.m_t = t %}{% set ns.m_c = item.condition %}{% set ns.m_h = h -%}
+                    {%- endif -%}
+                    {%- set diff14 = (h - 14) | abs -%}
+                    {%- if diff14 < ns.d_diff and h >= 12 and h <= 16 -%}
+                      {%- set ns.d_diff = diff14 %}{% set ns.d_t = t %}{% set ns.d_c = item.condition %}{% set ns.d_h = h -%}
+                    {%- endif -%}
+                    {%- set diff19 = (h - 19) | abs -%}
+                    {%- if diff19 < ns.e_diff and h >= 17 and h <= 22 -%}
+                      {%- set ns.e_diff = diff19 %}{% set ns.e_t = t %}{% set ns.e_c = item.condition %}{% set ns.e_h = h -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                  {%- if ns.m_t is none and fc | length > 0 -%}
+                    {%- set ns.m_t = fc[0].temperature | float %}{% set ns.m_c = fc[0].condition %}{% set ns.m_h = fc[0].datetime[11:13] | int -%}
+                  {%- endif -%}
+                  {%- if ns.d_t is none and fc | length > 4 -%}
+                    {%- set ns.d_t = fc[4].temperature | float %}{% set ns.d_c = fc[4].condition %}{% set ns.d_h = fc[4].datetime[11:13] | int -%}
+                  {%- endif -%}
+                  {%- if ns.e_t is none and fc | length > 9 -%}
+                    {%- set ns.e_t = fc[9].temperature | float %}{% set ns.e_c = fc[9].condition %}{% set ns.e_h = fc[9].datetime[11:13] | int -%}
+                  {%- endif -%}
+                  {%- if ns.min > 900 and fc | length > 0 %}{% set ns.min = ns.m_t %}{% endif -%}
+                  {%- if ns.max < -900 and fc | length > 0 %}{% set ns.max = ns.m_t %}{% endif -%}
+                  {{ {
+                    'min': ns.min, 'max': ns.max,
+                    'm_t': ns.m_t, 'm_c': ns.m_c, 'm_h': ns.m_h,
+                    'd_t': ns.d_t, 'd_c': ns.d_c, 'd_h': ns.d_h,
+                    'e_t': ns.e_t, 'e_c': ns.e_c, 'e_h': ns.e_h
+                  } | tojson }}
                 on_success:
                   - lambda: |-
-                      JsonArrayConst forecast;
-                      if (response["response"]["${weather_entity}"]["forecast"].is<JsonArrayConst>()) {
-                        forecast = response["response"]["${weather_entity}"]["forecast"].as<JsonArrayConst>();
-                      } else if (response["${weather_entity}"]["forecast"].is<JsonArrayConst>()) {
-                        forecast = response["${weather_entity}"]["forecast"].as<JsonArrayConst>();
-                      } else if (response["forecast"].is<JsonArrayConst>()) {
-                        forecast = response["forecast"].as<JsonArrayConst>();
-                      }
-
-                      if (forecast.isNull() || forecast.size() == 0) {
-                        ESP_LOGW("weather", "No hourly forecast array in HA response");
+                      JsonObjectConst data = response["response"];
+                      if (data.isNull()) {
+                        ESP_LOGW("weather", "Weather response is null or invalid");
                         return;
                       }
 
-                      float min_t = 999.0f;
-                      float max_t = -999.0f;
-                      float m_temp = NAN, d_temp = NAN, e_temp = NAN;
-                      std::string m_cond = "", d_cond = "", e_cond = "";
-                      int m_diff = 99, d_diff = 99, e_diff = 99;
-                      int m_h = 9, d_h = 14, e_h = 19;
-
-                      size_t count = forecast.size();
-                      if (count > 24) count = 24;
-
-                      for (size_t i = 0; i < count; i++) {
-                        JsonObjectConst item = forecast[i];
-                        if (!item["temperature"].is<float>()) continue;
-                        float t = item["temperature"].as<float>();
-                        if (t < min_t) min_t = t;
-                        if (t > max_t) max_t = t;
-
-                        std::string cond = item["condition"].as<std::string>();
-                        const char *dt = item["datetime"].as<const char*>();
-                        int hour = -1;
-                        if (dt != nullptr) {
-                          const char *t_pos = strchr(dt, 'T');
-                          if (t_pos && strlen(t_pos) >= 3 && isdigit(t_pos[1]) && isdigit(t_pos[2])) {
-                            hour = (t_pos[1] - '0') * 10 + (t_pos[2] - '0');
-                          }
-                        }
-
-                        if (hour >= 0) {
-                          int diff9 = std::abs(hour - 9);
-                          if (diff9 < m_diff && hour >= 6 && hour <= 11) {
-                            m_diff = diff9;
-                            m_temp = t;
-                            m_cond = cond;
-                            m_h = hour;
-                          }
-                          int diff14 = std::abs(hour - 14);
-                          if (diff14 < d_diff && hour >= 12 && hour <= 16) {
-                            d_diff = diff14;
-                            d_temp = t;
-                            d_cond = cond;
-                            d_h = hour;
-                          }
-                          int diff19 = std::abs(hour - 19);
-                          if (diff19 < e_diff && hour >= 17 && hour <= 22) {
-                            e_diff = diff19;
-                            e_temp = t;
-                            e_cond = cond;
-                            e_h = hour;
-                          }
-                        }
+                      if (data["min"].is<float>() && data["max"].is<float>()) {
+                        float min_t = data["min"].as<float>();
+                        float max_t = data["max"].as<float>();
+                        if (min_t < 900.0f) id(weather_min_temp) = min_t;
+                        if (max_t > -900.0f) id(weather_max_temp) = max_t;
                       }
 
-                      // Резервний варіант за індексами
-                      if (std::isnan(m_temp) && count > 0) {
-                        m_temp = forecast[0]["temperature"].as<float>();
-                        m_cond = forecast[0]["condition"].as<std::string>();
+                      if (data["m_t"].is<float>()) {
+                        id(weather_morning_temp) = data["m_t"].as<float>();
+                        id(weather_morning_cond) = data["m_c"].as<std::string>();
+                        id(weather_morning_hour) = data["m_h"].as<int>();
                       }
-                      if (std::isnan(d_temp) && count > 4) {
-                        size_t idx = count > 5 ? 5 : count - 1;
-                        d_temp = forecast[idx]["temperature"].as<float>();
-                        d_cond = forecast[idx]["condition"].as<std::string>();
+                      if (data["d_t"].is<float>()) {
+                        id(weather_day_temp) = data["d_t"].as<float>();
+                        id(weather_day_cond) = data["d_c"].as<std::string>();
+                        id(weather_day_hour) = data["d_h"].as<int>();
                       }
-                      if (std::isnan(e_temp) && count > 9) {
-                        size_t idx = count > 10 ? 10 : count - 1;
-                        e_temp = forecast[idx]["temperature"].as<float>();
-                        e_cond = forecast[idx]["condition"].as<std::string>();
+                      if (data["e_t"].is<float>()) {
+                        id(weather_evening_temp) = data["e_t"].as<float>();
+                        id(weather_evening_cond) = data["e_c"].as<std::string>();
+                        id(weather_evening_hour) = data["e_h"].as<int>();
                       }
 
-                      if (min_t < 900.0f) id(weather_min_temp) = min_t;
-                      if (max_t > -900.0f) id(weather_max_temp) = max_t;
-                      id(weather_morning_temp) = m_temp;
-                      id(weather_morning_cond) = m_cond;
-                      id(weather_morning_hour) = m_h;
-                      id(weather_day_temp) = d_temp;
-                      id(weather_day_cond) = d_cond;
-                      id(weather_day_hour) = d_h;
-                      id(weather_evening_temp) = e_temp;
-                      id(weather_evening_cond) = e_cond;
-                      id(weather_evening_hour) = e_h;
                       id(weather_valid) = true;
 
                       ESP_LOGI("weather", "Forecast updated: min=%.0f max=%.0f M=%d:00:%.0f(%s) D=%d:00:%.0f(%s) E=%d:00:%.0f(%s)",
-                               min_t, max_t, m_h, m_temp, m_cond.c_str(), d_h, d_temp, d_cond.c_str(), e_h, e_temp, e_cond.c_str());
+                               id(weather_min_temp), id(weather_max_temp),
+                               id(weather_morning_hour), id(weather_morning_temp), id(weather_morning_cond).c_str(),
+                               id(weather_day_hour), id(weather_day_temp), id(weather_day_cond).c_str(),
+                               id(weather_evening_hour), id(weather_evening_temp), id(weather_evening_cond).c_str());
+
                       if (id(weather_shown)) {
                         id(refresh_weather_ui).execute();
                       }
                 on_error:
-                  - logger.log:
-                      level: WARN
-                      tag: weather
-                      format: "Failed to call weather.get_forecasts for %s"
-                      args: [ '"${weather_entity}"' ]
+                  - lambda: |-
+                      ESP_LOGW("weather", "Failed to fetch weather forecast: %s", error.c_str());
 
   - id: hide_weather_timeout
     mode: restart
