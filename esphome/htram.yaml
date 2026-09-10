@@ -1,5 +1,8 @@
 substitutions:
   name: htram
+  # Якщо назва задається для кожного пристрою окремо (GitOps), суфікс вимикається.
+  # Вмикайте лише якщо всі пристрої шиються з одного конфігу без власного name.
+  name_add_mac_suffix: "false"
   # Мелодія Вербицького (1863) — суспільне надбання. Уривок, що грає в кінці
   # хвилини мовчання; ~9.8 с на b=200.
   # Метроном хвилини мовчання. Значення взяті з прошивки мапи тривог JAAM
@@ -74,7 +77,7 @@ esphome:
   # flashed from this one config. The MAC suffix keeps their hostnames and
   # entity ids apart without a per-device file. Drop this line to go back to a
   # plain "htram".
-  name_add_mac_suffix: true
+  name_add_mac_suffix: ${name_add_mac_suffix}
   on_boot:
     - priority: 600
       then:
