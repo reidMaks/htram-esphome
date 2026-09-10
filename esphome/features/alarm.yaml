@@ -1,0 +1,217 @@
+# HTRAM Feature: Будильник (Alarm Clock)
+#
+# Надає функціонал автономного будильника:
+# - Вибір часу та вмикач у Home Assistant (datetime: alarm_time, switch: alarm_enabled);
+# - Засічка години на циферблаті (ui_alarm_tick);
+# - Піктограма дзвінка у верхньому слоті (ui_bell, img_bell);
+# - Мелодія RTTTL, повтори та відкладення (snooze);
+# - Керування кнопкою: 1 клік — відкласти (snooze), 2 кліки — вимкнути (dismiss).
+
+substitutions:
+  alarm_rtttl: "Alarm:d=4,o=6,b=200:b,c7,b,c7,b,c7,b,c7"
+  alarm_repeat_seconds: "3"
+  alarm_snooze_minutes: "9"
+
+globals:
+  - id: alarm_ringing
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alarm_snoozing
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alarm_ui_sig
+    type: int
+    restore_value: false
+    initial_value: "-1"
+
+image:
+  - platform: file
+    file: "${repo_url}/images/bell_mask.png"
+    id: img_bell
+    type: BINARY
+
+lvgl:
+  widgets:
+    - arc:
+        id: ui_alarm_tick
+        align: center
+        width: 236
+        height: 236
+        arc_width: 12
+        arc_color: 0xFF9E3D
+        arc_rounded: false
+        start_angle: 133
+        end_angle: 137
+        adjustable: false
+        value: 0
+        hidden: true
+        indicator:
+          arc_opa: TRANSP
+        knob:
+          bg_opa: TRANSP
+    - image:
+        id: ui_bell
+        align: center
+        x: 74
+        y: -26
+        src: img_bell
+        hidden: true
+
+datetime:
+  - platform: template
+    id: alarm_time
+    name: "Будильник"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "07:30:00"
+    icon: "mdi:alarm"
+    on_time:
+      - if:
+          condition:
+            switch.is_on: alarm_enabled
+          then:
+            - script.execute: alarm_ring
+    on_value:
+      - script.execute: refresh_alarm_ui
+
+switch:
+  - platform: template
+    name: "Будильник увімкнено"
+    id: alarm_enabled
+    icon: "mdi:alarm-check"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - script.execute: refresh_alarm_ui
+    turn_off_action:
+      - script.execute: alarm_dismiss
+
+script:
+  - id: refresh_alarm_ui
+    then:
+      - lambda: |-
+          const bool armed = id(alarm_enabled).state;
+          const bool alert = id(alert_active);
+          const int sig = (armed ? 1 : 0) | (id(alarm_ringing) ? 2 : 0) |
+                          (id(alarm_snoozing) ? 4 : 0) | (alert ? 8 : 0) |
+                          ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 9);
+          if (sig == id(alarm_ui_sig)) return;
+          id(alarm_ui_sig) = sig;
+
+          if (armed) {
+            // 12-годинне коло; LVGL рахує кути від 3-ї години, тож −90.
+            const float dial = ((id(alarm_time).hour % 12) +
+                                id(alarm_time).minute / 60.0f) * 30.0f;
+            const float lv = dial - 90.0f;
+            auto norm = [](float deg) {
+              int32_t d = (int32_t) lroundf(deg) % 360;
+              return d < 0 ? d + 360 : d;
+            };
+            lv_arc_set_bg_angles(id(ui_alarm_tick), norm(lv - 1.6f), norm(lv + 1.6f));
+            lv_obj_remove_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
+          }
+
+          // Дзвінок лишається на екрані весь епізод, а не лише поки лунає.
+          // Якщо активна тривога, слот віддається тривозі.
+          if (!alert && (id(alarm_ringing) || id(alarm_snoozing))) {
+            lv_obj_set_style_image_recolor(
+                id(ui_bell),
+                lv_color_hex(id(alarm_ringing) ? 0xFF9E3D : 0x707880),
+                LV_PART_MAIN);
+            lv_obj_set_style_image_recolor_opa(id(ui_bell), LV_OPA_COVER,
+                                               LV_PART_MAIN);
+            lv_obj_remove_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
+          }
+
+  - id: alarm_ring
+    mode: single
+    then:
+      - lambda: |-
+          id(alarm_ringing) = true;
+          id(face_state) = -1;
+      - script.execute: refresh_face
+      # 100 × 3 с ≈ п'ять хвилин: будильник, що надривається в порожній
+      # кімнаті годину, — це не наполегливість, а несправність.
+      - repeat:
+          count: 100
+          then:
+            - lambda: id(htram_core)->play_rtttl("${alarm_rtttl}");
+            - delay: ${alarm_repeat_seconds}s
+      - script.execute: alarm_dismiss
+
+  - id: alarm_stop
+    mode: restart
+    then:
+      - script.stop: alarm_ring
+      - lambda: |-
+          id(htram_core)->send_stop();
+          id(alarm_ringing) = false;
+      - script.execute: refresh_alarm_ui
+
+  - id: alarm_dismiss
+    mode: restart
+    then:
+      - script.stop: alarm_snooze
+      - lambda: id(alarm_snoozing) = false;
+      - script.execute: alarm_stop
+
+  - id: alarm_snooze
+    mode: restart
+    then:
+      - lambda: id(alarm_snoozing) = true;
+      - script.execute: alarm_stop
+      - delay: ${alarm_snooze_minutes}min
+      - lambda: id(alarm_snoozing) = false;
+      - if:
+          condition:
+            switch.is_on: alarm_enabled
+          then:
+            - script.execute: alarm_ring
+          else:
+            - script.execute: refresh_alarm_ui
+
+  # Точки інтеграції з ядром
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face != 0) {
+            lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            id(refresh_alarm_ui).execute();
+          }
+
+  - id: !extend on_alert_changed
+    then:
+      - script.execute: refresh_alarm_ui
+
+  - id: !extend handle_feature_button
+    then:
+      - if:
+          condition:
+            lambda: return (id(alarm_ringing) || id(alarm_snoozing)) && action == "single";
+          then:
+            - lambda: id(button_handled) = true;
+            - script.execute: alarm_snooze
+      - if:
+          condition:
+            lambda: return (id(alarm_ringing) || id(alarm_snoozing)) && action == "double";
+          then:
+            - lambda: id(button_handled) = true;
+            - script.execute: alarm_dismiss
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_alarm_tick), id(ui_root));
+            lv_obj_set_parent(id(ui_bell), id(ui_root));
+        - script.execute: refresh_alarm_ui

@@ -14,7 +14,9 @@
 #     base:
 #       url: https://github.com/reidMaks/htram-esphome
 #       ref: main
-#       files: [esphome/htram.yaml]
+#       files:
+#         - esphome/htram-core.yaml
+#         - esphome/features/alarm.yaml
 #       refresh: 0s
 #   -------------------------------------------------
 
@@ -24,4 +26,5 @@ substitutions:
   repo_url: "."
 
 packages:
-  base: !include htram.yaml
+  core: !include htram-core.yaml
+  alarm: !include features/alarm.yaml
