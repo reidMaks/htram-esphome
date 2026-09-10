@@ -8,6 +8,7 @@
 # - Автоматично закривається через 60 с або при будь-якому одинарному кліку.
 
 substitutions:
+  weather_entity: "weather.forecast_home"
   weather_update_interval: "30min"
   weather_screen_timeout: "60s"
 
