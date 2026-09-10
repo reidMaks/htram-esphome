@@ -238,6 +238,7 @@ jaam_ws:
             }
             id(htram_core)->play_rtttl(air ? "${alert_start_rtttl}"
                                            : "${alert_clear_rtttl}");
+          }
       - script.execute: refresh_alert_marks
       - script.execute: refresh_alert_icon
       - script.execute: on_alert_changed
