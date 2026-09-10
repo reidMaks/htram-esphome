@@ -214,8 +214,8 @@ external_components:
       type: git
       url: https://github.com/reidMaks/htram-esphome
       ref: main
-      refresh: 0s
       path: esphome/custom_components
+    refresh: 0s
     components: [htram_gd32]
   # The alert map client never touched this hardware, so it lives on its own
   # and any ESP-IDF device can use it. Pinned to a tag, not main: this config
