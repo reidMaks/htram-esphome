@@ -5,6 +5,10 @@ monitor whose vendor shut its cloud down. The stock firmware is replaced
 entirely: ESPHome on the ESP32, hand-written bare-metal on the GD32F150 that
 owns the sensors, the panel and the buttons.
 
+![The device running this firmware: the clock face on the 240 x 240 panel, with
+the outline ring and its orbiting seconds dot, temperature and humidity under
+the time, and the front LED bar showing CO2 at a glance](docs/device-clock.jpg)
+
 > Looking for the Home Assistant integration that talks to the **stock**
 > firmware over BLE and MQTT? That lives in
 > [reidMaks/ha-htram](https://github.com/reidMaks/ha-htram). This repository
