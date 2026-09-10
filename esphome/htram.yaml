@@ -283,39 +283,47 @@ display:
 image:
   # Знак тривоги: заливний трикутник. Проста геометрична форма, як у каналі
   # Повітряних Сил, — саме такі виживають на 4.5 мм, на відміну від силуетів.
-  - file: "${repo_url}/images/alert_mask.png"
+  - platform: file
+    file: "${repo_url}/images/alert_mask.png"
     id: img_alert
     type: BINARY
 
   # Той самий трикутник, але дрібний: у кутку він означає не тривогу, а те, що
   # про тривогу нічого не відомо — мапа недосяжна. Місце й колір відрізняють
   # його від справжньої, форма каже, про що саме мовчанка.
-  - file: "${repo_url}/images/alert_small_mask.png"
+  - platform: file
+    file: "${repo_url}/images/alert_small_mask.png"
     id: img_nolink
     type: BINARY
 
   # Силуети типів загроз. Обведені з кастомного паку каналу Повітряних Сил
   # (tools/images/trace_mask.py); знімки-джерела лежать у images/src/ і не
   # комітяться. Разом усі шість — 1.3 КБ однобітних масок.
-  - file: "${repo_url}/images/threat_ballistic_mask.png"
+  - platform: file
+    file: "${repo_url}/images/threat_ballistic_mask.png"
     id: img_ballistic
     type: BINARY
-  - file: "${repo_url}/images/threat_kab_mask.png"
+  - platform: file
+    file: "${repo_url}/images/threat_kab_mask.png"
     id: img_kab
     type: BINARY
-  - file: "${repo_url}/images/threat_missile_mask.png"
+  - platform: file
+    file: "${repo_url}/images/threat_missile_mask.png"
     id: img_missile
     type: BINARY
-  - file: "${repo_url}/images/threat_drone_mask.png"
+  - platform: file
+    file: "${repo_url}/images/threat_drone_mask.png"
     id: img_drone
     type: BINARY
-  - file: "${repo_url}/images/threat_recon_mask.png"
+  - platform: file
+    file: "${repo_url}/images/threat_recon_mask.png"
     id: img_recon
     type: BINARY
 
   # Дзвінок для слота: заливний, а не контурний — на 4.5 мм штрих у 0.45 мм не
   # виживає, суцільна форма виживає. 150 Б у вигляді однобітної маски.
-  - file: "${repo_url}/images/bell_mask.png"
+  - platform: file
+    file: "${repo_url}/images/bell_mask.png"
     id: img_bell
     type: BINARY
 
@@ -324,7 +332,8 @@ image:
   # у LVGL вона стає LV_COLOR_FORMAT_A1, тобто силуетом без власного кольору.
   # 2 КБ замість 32 КБ, які коштувало б те саме зображення в RGB565, а колір
   # накладає refresh_face. Державні символи не є об'єктом авторського права.
-  - file: "${repo_url}/images/tryzub_mask.png"
+  - platform: file
+    file: "${repo_url}/images/tryzub_mask.png"
     id: img_tryzub
     type: BINARY
 
