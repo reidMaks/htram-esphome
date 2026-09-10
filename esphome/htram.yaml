@@ -54,6 +54,8 @@ substitutions:
   friendly_name: HTRAM
   # Базовий URL для шрифтів та зображень (GitOps)
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
+  # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
+  ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
   # Home Assistant weather entity the outdoor slot reads from.
   weather_entity: weather.forecast_home
   # Звук тривоги — коротке привертання уваги, а не сигналізація: на вулиці й
@@ -91,6 +93,7 @@ esphome:
         - script.execute: refresh_leds
         - script.execute: refresh_face
         - script.execute: refresh_alarm_ui
+        - script.execute: check_flash_chime
 
 esp32:
   board: esp32dev
@@ -513,8 +516,26 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  # Відстеження перепрошивки: хеш дати/часу збірки зберігається в NVS.
+  # Якщо поточний білд відрізняється — це перше завантаження після прошивки.
+  - id: last_boot_build_hash
+    type: int
+    restore_value: true
+    initial_value: "0"
 
 script:
+  # Сигнал після першого завантаження свіжої прошивки:
+  - id: check_flash_chime
+    then:
+      - delay: 1s
+      - lambda: |-
+          const uint32_t current_hash = esphome::fnv1_hash(__DATE__ " " __TIME__);
+          if (id(last_boot_build_hash) != (int) current_hash) {
+            id(last_boot_build_hash) = (int) current_hash;
+            ESP_LOGI("htram", "First boot after firmware flash (build: %s %s)!", __DATE__, __TIME__);
+            id(htram_core)->play_rtttl("${ota_done_rtttl}");
+          }
+
   # Hours and minutes are separate labels: only the minutes row is dirty most of
   # the time, and staggering them needs independent x offsets anyway.
   - id: refresh_clock
@@ -1648,6 +1669,14 @@ button:
     on_press:
       - lambda: |-
           id(htram_core)->send_beep(2000, 200);
+
+  - platform: template
+    name: "Сигнал оновлення: перевірка"
+    icon: "mdi:bell-check"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_core)->play_rtttl("${ota_done_rtttl}");
 
 number:
   - platform: template
