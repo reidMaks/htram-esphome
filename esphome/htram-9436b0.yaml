@@ -1,0 +1,27 @@
+# HTRAM — Конфігурація для пристрою htram-9436b0
+#
+# Локальна збірка / прошивка:
+#   uv run esphome run esphome/htram-9436b0.yaml
+#
+# На сервері ESPHome (https://esphome.kms-lab.in.ua/):
+#   Вставте наступний вміст у htram-9436b0.yaml:
+#   -------------------------------------------------
+#   substitutions:
+#     name: htram-9436b0
+#     friendly_name: "HTRAM 9436b0"
+#
+#   packages:
+#     base:
+#       url: https://github.com/reidMaks/htram-esphome
+#       ref: main
+#       files: [esphome/htram.yaml]
+#       refresh: 0s
+#   -------------------------------------------------
+
+substitutions:
+  name: htram-9436b0
+  friendly_name: "HTRAM 9436b0"
+  repo_url: "."
+
+packages:
+  base: !include htram.yaml

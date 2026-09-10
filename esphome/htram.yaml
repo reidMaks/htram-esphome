@@ -49,6 +49,8 @@ substitutions:
   silence_tick_ms: "240"
   anthem_rtttl: "UkraineAnthem:d=4,o=5,b=200:2d5,4d5,32p,4d5,32p,4d5,32p,4c5,4d5,4d#5,2f5,32p,4f5,4d#5,2d5,2c5,2a#4,2d5,2a4,2d5,1g4,32p,1g4"
   friendly_name: HTRAM
+  # Базовий URL для шрифтів та зображень (GitOps)
+  repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Home Assistant weather entity the outdoor slot reads from.
   weather_entity: weather.forecast_home
   # Звук тривоги — коротке привертання уваги, а не сигналізація: на вулиці й
@@ -208,7 +210,13 @@ web_server:
 external_components:
   # The GD32 driver is this repository's own -- it is meaningless without the
   # firmware in firmware/gd32/, so it stays beside it.
-  - source: custom_components
+  - source:
+      type: git
+      url: https://github.com/reidMaks/htram-esphome
+      ref: main
+      refresh: 0s
+      path: esphome/custom_components
+    components: [htram_gd32]
   # The alert map client never touched this hardware, so it lives on its own
   # and any ESP-IDF device can use it. Pinned to a tag, not main: this config
   # is flashed to devices that must not break because that repo moved on.
@@ -272,39 +280,39 @@ display:
 image:
   # Знак тривоги: заливний трикутник. Проста геометрична форма, як у каналі
   # Повітряних Сил, — саме такі виживають на 4.5 мм, на відміну від силуетів.
-  - file: "images/alert_mask.png"
+  - file: "${repo_url}/images/alert_mask.png"
     id: img_alert
     type: BINARY
 
   # Той самий трикутник, але дрібний: у кутку він означає не тривогу, а те, що
   # про тривогу нічого не відомо — мапа недосяжна. Місце й колір відрізняють
   # його від справжньої, форма каже, про що саме мовчанка.
-  - file: "images/alert_small_mask.png"
+  - file: "${repo_url}/images/alert_small_mask.png"
     id: img_nolink
     type: BINARY
 
   # Силуети типів загроз. Обведені з кастомного паку каналу Повітряних Сил
   # (tools/images/trace_mask.py); знімки-джерела лежать у images/src/ і не
   # комітяться. Разом усі шість — 1.3 КБ однобітних масок.
-  - file: "images/threat_ballistic_mask.png"
+  - file: "${repo_url}/images/threat_ballistic_mask.png"
     id: img_ballistic
     type: BINARY
-  - file: "images/threat_kab_mask.png"
+  - file: "${repo_url}/images/threat_kab_mask.png"
     id: img_kab
     type: BINARY
-  - file: "images/threat_missile_mask.png"
+  - file: "${repo_url}/images/threat_missile_mask.png"
     id: img_missile
     type: BINARY
-  - file: "images/threat_drone_mask.png"
+  - file: "${repo_url}/images/threat_drone_mask.png"
     id: img_drone
     type: BINARY
-  - file: "images/threat_recon_mask.png"
+  - file: "${repo_url}/images/threat_recon_mask.png"
     id: img_recon
     type: BINARY
 
   # Дзвінок для слота: заливний, а не контурний — на 4.5 мм штрих у 0.45 мм не
   # виживає, суцільна форма виживає. 150 Б у вигляді однобітної маски.
-  - file: "images/bell_mask.png"
+  - file: "${repo_url}/images/bell_mask.png"
     id: img_bell
     type: BINARY
 
@@ -313,7 +321,7 @@ image:
   # у LVGL вона стає LV_COLOR_FORMAT_A1, тобто силуетом без власного кольору.
   # 2 КБ замість 32 КБ, які коштувало б те саме зображення в RGB565, а колір
   # накладає refresh_face. Державні символи не є об'єктом авторського права.
-  - file: "images/tryzub_mask.png"
+  - file: "${repo_url}/images/tryzub_mask.png"
     id: img_tryzub
     type: BINARY
 
@@ -322,7 +330,7 @@ font:
   # LVGL has no shear, so the 12 deg oblique is baked into the file by
   # tools/fonts/make_oblique.py. 4 bpp matters here — the ExtraLight stem is
   # 5 px wide and 1 bpp would shred it.
-  - file: "fonts/DejaVuSans-ExtraLight-Oblique.ttf"
+  - file: "${repo_url}/fonts/DejaVuSans-ExtraLight-Oblique.ttf"
     id: font_clock
     size: 92
     bpp: 4
@@ -330,7 +338,7 @@ font:
 
   # Sixteen glyphs, for the one thing that is read deliberately rather than
   # glanced at: the device id, shown big enough to read across a desk.
-  - file: "fonts/NotoSans-Regular.ttf"
+  - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
     id: font_id
     size: 44
     bpp: 4
@@ -340,7 +348,7 @@ font:
   # ExtraLight has a 1 px stem that never reaches full white (peak 240/255),
   # while Noto Sans gets 2 px at 255. Going bigger does not fix it -- ExtraLight
   # is still 1 px at 17 px -- so this is about weight, not size.
-  - file: "fonts/NotoSans-Regular.ttf"
+  - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
     id: font_slot
     size: 15
     bpp: 4
@@ -358,7 +366,7 @@ font:
   # The punctuation set is what a Wi-Fi password realistically contains; a
   # password using anything outside it renders as a placeholder box, so either
   # keep ap_password alphanumeric or extend this line.
-  - file: "fonts/NotoSans-Regular.ttf"
+  - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
     id: font_msg
     size: 22
     bpp: 4
