@@ -1,4 +1,4 @@
-# HTRAM — Конфігурація для пристрою htram-c1da24
+# HTRAM — Вітальня (htram-c1da24)
 #
 # Локальна збірка / прошивка:
 #   uv run esphome run esphome/htram-c1da24.yaml
@@ -9,6 +9,10 @@
 #   substitutions:
 #     name: htram-c1da24
 #     friendly_name: "HTRAM c1da24"
+#     area: "Вітальня"
+#
+#   esphome:
+#     area: ${area}
 #
 #   packages:
 #     base:
@@ -23,7 +27,11 @@
 substitutions:
   name: htram-c1da24
   friendly_name: "HTRAM c1da24"
+  area: "Вітальня"
   repo_url: "."
+
+esphome:
+  area: ${area}
 
 packages:
   core: !include htram-core.yaml

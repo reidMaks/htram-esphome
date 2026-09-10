@@ -1,4 +1,4 @@
-# HTRAM — Конфігурація для пристрою htram-9436b0
+# HTRAM — Кабінет (htram-9436b0)
 #
 # Локальна збірка / прошивка:
 #   uv run esphome run esphome/htram-9436b0.yaml
@@ -9,6 +9,10 @@
 #   substitutions:
 #     name: htram-9436b0
 #     friendly_name: "HTRAM 9436b0"
+#     area: "Кабінет"
+#
+#   esphome:
+#     area: ${area}
 #
 #   packages:
 #     base:
@@ -23,7 +27,11 @@
 substitutions:
   name: htram-9436b0
   friendly_name: "HTRAM 9436b0"
+  area: "Кабінет"
   repo_url: "."
+
+esphome:
+  area: ${area}
 
 packages:
   core: !include htram-core.yaml

@@ -1,4 +1,4 @@
-# HTRAM — Конфігурація для пристрою htram-954f48 (без будильника)
+# HTRAM — Спальня (htram-954f48, без будильника)
 #
 # Локальна збірка / прошивка:
 #   uv run esphome run esphome/htram-954f48.yaml
@@ -9,6 +9,10 @@
 #   substitutions:
 #     name: htram-954f48
 #     friendly_name: "HTRAM 954f48"
+#     area: "Спальня"
+#
+#   esphome:
+#     area: ${area}
 #
 #   packages:
 #     core:
@@ -21,7 +25,11 @@
 substitutions:
   name: htram-954f48
   friendly_name: "HTRAM 954f48"
+  area: "Спальня"
   repo_url: "."
+
+esphome:
+  area: ${area}
 
 packages:
   core: !include htram-core.yaml
