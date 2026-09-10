@@ -87,24 +87,40 @@ image:
     id: img_weather_sunny
     type: BINARY
   - platform: file
-    file: "${repo_url}/images/weather_partlycloudy_mask.png"
-    id: img_weather_partlycloudy
+    file: "${repo_url}/images/weather_partlycloudy_sun_mask.png"
+    id: img_weather_partlycloudy_sun
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_partlycloudy_cloud_mask.png"
+    id: img_weather_partlycloudy_cloud
     type: BINARY
   - platform: file
     file: "${repo_url}/images/weather_cloudy_mask.png"
     id: img_weather_cloudy
     type: BINARY
   - platform: file
-    file: "${repo_url}/images/weather_rainy_mask.png"
-    id: img_weather_rainy
+    file: "${repo_url}/images/weather_rainy_cloud_mask.png"
+    id: img_weather_rainy_cloud
     type: BINARY
   - platform: file
-    file: "${repo_url}/images/weather_lightning_mask.png"
-    id: img_weather_lightning
+    file: "${repo_url}/images/weather_rainy_drops_mask.png"
+    id: img_weather_rainy_drops
     type: BINARY
   - platform: file
-    file: "${repo_url}/images/weather_snowy_mask.png"
-    id: img_weather_snowy
+    file: "${repo_url}/images/weather_lightning_cloud_mask.png"
+    id: img_weather_lightning_cloud
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_lightning_bolt_mask.png"
+    id: img_weather_lightning_bolt
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_snowy_cloud_mask.png"
+    id: img_weather_snowy_cloud
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_snowy_flakes_mask.png"
+    id: img_weather_snowy_flakes
     type: BINARY
   - platform: file
     file: "${repo_url}/images/weather_fog_mask.png"
@@ -161,6 +177,13 @@ lvgl:
               x: -64
               y: 4
               src: img_weather_sunny
+          - image:
+              id: ui_weather_col1_img2
+              align: center
+              x: -64
+              y: 4
+              src: img_weather_sunny
+              hidden: true
           - label:
               id: ui_weather_col1_temp
               align: center
@@ -184,7 +207,14 @@ lvgl:
               align: center
               x: 0
               y: 30
-              src: img_weather_partlycloudy
+              src: img_weather_sunny
+          - image:
+              id: ui_weather_col2_img2
+              align: center
+              x: 0
+              y: 30
+              src: img_weather_sunny
+              hidden: true
           - label:
               id: ui_weather_col2_temp
               align: center
@@ -209,6 +239,13 @@ lvgl:
               x: 64
               y: 4
               src: img_weather_cloudy
+          - image:
+              id: ui_weather_col3_img2
+              align: center
+              x: 64
+              y: 4
+              src: img_weather_cloudy
+              hidden: true
           - label:
               id: ui_weather_col3_temp
               align: center
@@ -231,39 +268,59 @@ script:
   - id: refresh_weather_ui
     then:
       - lambda: |-
-          auto apply_weather_icon = [](lv_obj_t *img_obj, const std::string &cond) {
-            esphome::image::Image *src = id(img_weather_sunny);
-            uint32_t color = 0xFFB800; // тепле золото / бурштин
+          auto apply_weather_icon = [](lv_obj_t *img1, lv_obj_t *img2, const std::string &cond) {
+            esphome::image::Image *src1 = id(img_weather_sunny);
+            uint32_t color1 = 0xFFB800; // тепле золото / бурштин
+            esphome::image::Image *src2 = nullptr;
+            uint32_t color2 = 0xF0EAE0;
 
             if (cond == "sunny" || cond == "clear-night") {
-              src = id(img_weather_sunny);
-              color = 0xFFB800;
+              src1 = id(img_weather_sunny);
+              color1 = 0xFFB800;
             } else if (cond == "partlycloudy") {
-              src = id(img_weather_partlycloudy);
-              color = 0xF0EAE0;
+              src1 = id(img_weather_partlycloudy_sun);
+              color1 = 0xFFB800; // сонце - тепле золото
+              src2 = id(img_weather_partlycloudy_cloud);
+              color2 = 0xF0EAE0; // хмара - м'який білий
             } else if (cond == "cloudy" || cond == "exceptional") {
-              src = id(img_weather_cloudy);
-              color = 0xA0A8B0;
+              src1 = id(img_weather_cloudy);
+              color1 = 0xA0A8B0;
             } else if (cond == "rainy" || cond == "pouring") {
-              src = id(img_weather_rainy);
-              color = 0x38BDF8;
+              src1 = id(img_weather_rainy_cloud);
+              color1 = 0xA0A8B0;
+              src2 = id(img_weather_rainy_drops);
+              color2 = 0x38BDF8; // дощ - блакитний
             } else if (cond == "lightning" || cond == "lightning-rainy") {
-              src = id(img_weather_lightning);
-              color = 0xFACC15;
+              src1 = id(img_weather_lightning_cloud);
+              color1 = 0x8A929A;
+              src2 = id(img_weather_lightning_bolt);
+              color2 = 0xFACC15; // блискавка - жовта
             } else if (cond == "snowy" || cond == "snowy-rainy" || cond == "hail") {
-              src = id(img_weather_snowy);
-              color = 0xEEF2F6;
+              src1 = id(img_weather_snowy_cloud);
+              color1 = 0xA0A8B0;
+              src2 = id(img_weather_snowy_flakes);
+              color2 = 0xEEF2F6; // сніг - білий
             } else if (cond == "fog") {
-              src = id(img_weather_fog);
-              color = 0x94A3B8;
+              src1 = id(img_weather_fog);
+              color1 = 0x94A3B8;
             } else if (cond == "windy" || cond == "windy-variant") {
-              src = id(img_weather_windy);
-              color = 0x38BDF8;
+              src1 = id(img_weather_windy);
+              color1 = 0x38BDF8;
             }
 
-            lv_image_set_src(img_obj, src->get_lv_image_dsc());
-            lv_obj_set_style_image_recolor(img_obj, lv_color_hex(color), LV_PART_MAIN);
-            lv_obj_set_style_image_recolor_opa(img_obj, LV_OPA_COVER, LV_PART_MAIN);
+            lv_image_set_src(img1, src1->get_lv_image_dsc());
+            lv_obj_set_style_image_recolor(img1, lv_color_hex(color1), LV_PART_MAIN);
+            lv_obj_set_style_image_recolor_opa(img1, LV_OPA_COVER, LV_PART_MAIN);
+            lv_obj_remove_flag(img1, LV_OBJ_FLAG_HIDDEN);
+
+            if (src2 != nullptr) {
+              lv_image_set_src(img2, src2->get_lv_image_dsc());
+              lv_obj_set_style_image_recolor(img2, lv_color_hex(color2), LV_PART_MAIN);
+              lv_obj_set_style_image_recolor_opa(img2, LV_OPA_COVER, LV_PART_MAIN);
+              lv_obj_remove_flag(img2, LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(img2, LV_OBJ_FLAG_HIDDEN);
+            }
           };
 
           auto now = id(ha_time).now();
@@ -304,7 +361,7 @@ script:
             snprintf(buf, sizeof(buf), "--°");
           }
           lv_label_set_text(id(ui_weather_col1_temp), buf);
-          apply_weather_icon(id(ui_weather_col1_img), id(weather_morning_cond));
+          apply_weather_icon(id(ui_weather_col1_img), id(ui_weather_col1_img2), id(weather_morning_cond));
 
           // Колонка 2 (День)
           snprintf(buf, sizeof(buf), "%d:00", id(weather_day_hour));
@@ -315,7 +372,7 @@ script:
             snprintf(buf, sizeof(buf), "--°");
           }
           lv_label_set_text(id(ui_weather_col2_temp), buf);
-          apply_weather_icon(id(ui_weather_col2_img), id(weather_day_cond));
+          apply_weather_icon(id(ui_weather_col2_img), id(ui_weather_col2_img2), id(weather_day_cond));
 
           // Колонка 3 (Вечір)
           snprintf(buf, sizeof(buf), "%d:00", id(weather_evening_hour));
@@ -326,7 +383,7 @@ script:
             snprintf(buf, sizeof(buf), "--°");
           }
           lv_label_set_text(id(ui_weather_col3_temp), buf);
-          apply_weather_icon(id(ui_weather_col3_img), id(weather_evening_cond));
+          apply_weather_icon(id(ui_weather_col3_img), id(ui_weather_col3_img2), id(weather_evening_cond));
 
           if (!id(weather_valid)) {
             lv_label_set_text(id(ui_weather_status), "оновлення...");
