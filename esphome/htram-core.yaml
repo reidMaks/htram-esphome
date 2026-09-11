@@ -605,11 +605,15 @@ script:
           if (want == 4) {
             // The emblem carries no colour of its own -- A1 is a silhouette --
             // so it is tinted here rather than baked into the asset.
+            lv_image_set_src(id(ui_tryzub), id(img_tryzub)->get_lv_image_dsc());
             lv_obj_set_style_image_recolor(id(ui_tryzub), lv_color_hex(${silence_fg}),
                                            LV_PART_MAIN);
             lv_obj_set_style_image_recolor_opa(id(ui_tryzub), LV_OPA_COVER,
                                                LV_PART_MAIN);
+            lv_obj_align(id(ui_tryzub), LV_ALIGN_CENTER, 0, 0);
+            lv_obj_move_foreground(id(ui_tryzub));
             lv_obj_remove_flag(id(ui_tryzub), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_invalidate(id(ui_tryzub));
             // Nothing else is shown. The seconds dot is already circling, and
             // starting at 09:00:00 it completes exactly one revolution as the
             // minute runs out -- motion that costs nothing and means the right
@@ -934,6 +938,17 @@ interval:
           }
           if (!now.is_valid()) return;
 
+          // 0. Automatic 09:00:00 minute of silence trigger (device-clock driven, resilient to HA downtime)
+          if (now.hour == 9 && now.minute == 0 && now.second == 0) {
+            static int last_auto_silence_day = -1;
+            if (now.day_of_year != last_auto_silence_day) {
+              last_auto_silence_day = now.day_of_year;
+              if (id(silence_enabled).state && !id(silence_active)) {
+                id(minute_of_silence).execute();
+              }
+            }
+          }
+
           // 1. Synchronized minute of silence metronome & anthem start
           if (id(silence_ticking)) {
             if (now.second % ${silence_tick_seconds} == 0) {
@@ -1240,6 +1255,8 @@ lvgl:
           - image:
               id: ui_tryzub
               align: center
+              x: 0
+              y: 0
               src: img_tryzub
               hidden: true
 

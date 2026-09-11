@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Generate 1-bit weather icon masks (36px height) for HTRAM."""
+
 import math
 import os
+
 from PIL import Image, ImageDraw
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "../../esphome/images")
@@ -12,7 +14,9 @@ SIZE = 40 * SCALE
 def draw_cloud(d, cx, cy, rx, ry, fill=255):
     """Draw a puffy cloud centered roughly at cx, cy."""
     # Base pill / bottom ellipse
-    d.rounded_rectangle([cx - rx, cy + ry * 0.1, cx + rx, cy + ry * 0.8], radius=ry * 0.35, fill=fill)
+    d.rounded_rectangle(
+        [cx - rx, cy + ry * 0.1, cx + rx, cy + ry * 0.8], radius=ry * 0.35, fill=fill
+    )
     # Main puffs
     d.ellipse([cx - rx * 0.8, cy - ry * 0.3, cx - rx * 0.1, cy + ry * 0.7], fill=fill)
     d.ellipse([cx - rx * 0.35, cy - ry * 0.85, cx + rx * 0.45, cy + ry * 0.65], fill=fill)
@@ -161,15 +165,33 @@ def make_windy():
     w = int(SIZE * 0.055)
     y1 = SIZE * 0.34
     d.line([(SIZE * 0.15, y1), (SIZE * 0.65, y1)], fill=255, width=w)
-    d.arc([SIZE * 0.55, y1 - SIZE * 0.15, SIZE * 0.85, y1 + SIZE * 0.15], start=270, end=90, fill=255, width=w)
+    d.arc(
+        [SIZE * 0.55, y1 - SIZE * 0.15, SIZE * 0.85, y1 + SIZE * 0.15],
+        start=270,
+        end=90,
+        fill=255,
+        width=w,
+    )
 
     y2 = SIZE * 0.54
     d.line([(SIZE * 0.10, y2), (SIZE * 0.75, y2)], fill=255, width=w)
-    d.arc([SIZE * 0.65, y2 - SIZE * 0.15, SIZE * 0.92, y2 + SIZE * 0.15], start=270, end=90, fill=255, width=w)
+    d.arc(
+        [SIZE * 0.65, y2 - SIZE * 0.15, SIZE * 0.92, y2 + SIZE * 0.15],
+        start=270,
+        end=90,
+        fill=255,
+        width=w,
+    )
 
     y3 = SIZE * 0.74
     d.line([(SIZE * 0.22, y3), (SIZE * 0.60, y3)], fill=255, width=w)
-    d.arc([SIZE * 0.50, y3 - SIZE * 0.12, SIZE * 0.74, y3 + SIZE * 0.12], start=270, end=90, fill=255, width=w)
+    d.arc(
+        [SIZE * 0.50, y3 - SIZE * 0.12, SIZE * 0.74, y3 + SIZE * 0.12],
+        start=270,
+        end=90,
+        fill=255,
+        width=w,
+    )
     return im
 
 

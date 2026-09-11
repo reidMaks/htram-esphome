@@ -75,11 +75,6 @@ font:
     glyphsets:
       - GF_Cyrillic_Core
     glyphs: "0123456789.,:%-+ °"
-  - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
-    id: font_weather_temp
-    size: 22
-    bpp: 4
-    glyphs: "0123456789.,:%-+ °"
 
 image:
   - platform: file
@@ -189,7 +184,7 @@ lvgl:
               align: center
               x: -64
               y: 36
-              text_font: font_weather_temp
+              text_font: font_weather_date
               text_color: 0xF0EAE0
               text: "--°"
 
@@ -220,7 +215,7 @@ lvgl:
               align: center
               x: 0
               y: 64
-              text_font: font_weather_temp
+              text_font: font_weather_date
               text_color: 0xF0EAE0
               text: "--°"
 
@@ -251,7 +246,7 @@ lvgl:
               align: center
               x: 64
               y: 36
-              text_font: font_weather_temp
+              text_font: font_weather_date
               text_color: 0xF0EAE0
               text: "--°"
 
