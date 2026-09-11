@@ -393,46 +393,47 @@ script:
                 capture_response: true
                 response_template: >-
                   {%- set fc = (response.values() | list)[0].forecast if (response and (response.values() | list)[0].forecast is defined) else [] -%}
-                  {%- set ns = namespace(
-                      min=999, max=-999,
-                      m_t=none, m_c='', m_h=9, m_diff=99,
-                      d_t=none, d_c='', d_h=14, d_diff=99,
-                      e_t=none, e_c='', e_h=19, e_diff=99
-                  ) -%}
+                  {%- set ns = namespace(min=999, max=-999) -%}
                   {%- for item in fc[:24] -%}
                     {%- set t = item.temperature | float -%}
                     {%- if t < ns.min %}{% set ns.min = t %}{% endif -%}
                     {%- if t > ns.max %}{% set ns.max = t %}{% endif -%}
-                    {%- set h = (item.datetime[11:13] | int) -%}
-                    {%- set diff9 = (h - 9) | abs -%}
-                    {%- if diff9 < ns.m_diff and h >= 6 and h <= 11 -%}
-                      {%- set ns.m_diff = diff9 %}{% set ns.m_t = t %}{% set ns.m_c = item.condition %}{% set ns.m_h = h -%}
-                    {%- endif -%}
-                    {%- set diff14 = (h - 14) | abs -%}
-                    {%- if diff14 < ns.d_diff and h >= 12 and h <= 16 -%}
-                      {%- set ns.d_diff = diff14 %}{% set ns.d_t = t %}{% set ns.d_c = item.condition %}{% set ns.d_h = h -%}
-                    {%- endif -%}
-                    {%- set diff19 = (h - 19) | abs -%}
-                    {%- if diff19 < ns.e_diff and h >= 17 and h <= 22 -%}
-                      {%- set ns.e_diff = diff19 %}{% set ns.e_t = t %}{% set ns.e_c = item.condition %}{% set ns.e_h = h -%}
-                    {%- endif -%}
                   {%- endfor -%}
-                  {%- if ns.m_t is none and fc | length > 0 -%}
-                    {%- set ns.m_t = fc[0].temperature | float %}{% set ns.m_c = fc[0].condition %}{% set ns.m_h = fc[0].datetime[11:13] | int -%}
+                  {%- set flen = fc | length -%}
+                  {%- set cur_h = (fc[0].datetime[11:13] | int) if flen > 0 else 12 -%}
+                  {%- if cur_h < 12 -%}
+                    {%- set o1 = [[cur_h + 1, 9] | max - cur_h, flen - 1] | min -%}
+                    {%- set o2 = [14 - cur_h, flen - 1] | min -%}
+                    {%- set o3 = [19 - cur_h, flen - 1] | min -%}
+                  {%- elif cur_h < 17 -%}
+                    {%- set o1 = [[cur_h + 1, 14] | max - cur_h, flen - 1] | min -%}
+                    {%- set o2 = [19 - cur_h, flen - 1] | min -%}
+                    {%- set o3 = [32 - cur_h, flen - 1] | min -%}
+                  {%- else -%}
+                    {%- set p1_target = 23 if cur_h >= 23 else ([cur_h + 1, 19] | max) -%}
+                    {%- set o1 = [[[p1_target - cur_h, 1] | max, flen - 1] | min, 0] | max -%}
+                    {%- set o2 = [[32 - cur_h, flen - 1] | min, 0] | max -%}
+                    {%- set o3 = [[38 - cur_h, flen - 1] | min, 0] | max -%}
                   {%- endif -%}
-                  {%- if ns.d_t is none and fc | length > 4 -%}
-                    {%- set ns.d_t = fc[4].temperature | float %}{% set ns.d_c = fc[4].condition %}{% set ns.d_h = fc[4].datetime[11:13] | int -%}
-                  {%- endif -%}
-                  {%- if ns.e_t is none and fc | length > 9 -%}
-                    {%- set ns.e_t = fc[9].temperature | float %}{% set ns.e_c = fc[9].condition %}{% set ns.e_h = fc[9].datetime[11:13] | int -%}
-                  {%- endif -%}
-                  {%- if ns.min > 900 and fc | length > 0 %}{% set ns.min = ns.m_t %}{% endif -%}
-                  {%- if ns.max < -900 and fc | length > 0 %}{% set ns.max = ns.m_t %}{% endif -%}
+                  {%- set o1 = [o1, 0] | max -%}
+                  {%- set o2 = [o2, 0] | max -%}
+                  {%- set o3 = [o3, 0] | max -%}
+                  {%- set pt1 = fc[o1] if flen > o1 else none -%}
+                  {%- set pt2 = fc[o2] if flen > o2 else none -%}
+                  {%- set pt3 = fc[o3] if flen > o3 else none -%}
+                  {%- if ns.min > 900 and flen > 0 %}{% set ns.min = fc[0].temperature | float %}{% endif -%}
+                  {%- if ns.max < -900 and flen > 0 %}{% set ns.max = fc[0].temperature | float %}{% endif -%}
                   {{ {
                     'min': ns.min, 'max': ns.max,
-                    'm_t': ns.m_t, 'm_c': ns.m_c, 'm_h': ns.m_h,
-                    'd_t': ns.d_t, 'd_c': ns.d_c, 'd_h': ns.d_h,
-                    'e_t': ns.e_t, 'e_c': ns.e_c, 'e_h': ns.e_h
+                    'm_t': (pt1.temperature | float) if pt1 else none,
+                    'm_c': pt1.condition if pt1 else '',
+                    'm_h': (pt1.datetime[11:13] | int) if pt1 else 9,
+                    'd_t': (pt2.temperature | float) if pt2 else none,
+                    'd_c': pt2.condition if pt2 else '',
+                    'd_h': (pt2.datetime[11:13] | int) if pt2 else 14,
+                    'e_t': (pt3.temperature | float) if pt3 else none,
+                    'e_c': pt3.condition if pt3 else '',
+                    'e_h': (pt3.datetime[11:13] | int) if pt3 else 19
                   } | tojson }}
                 on_success:
                   - lambda: |-

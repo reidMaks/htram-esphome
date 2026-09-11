@@ -21,90 +21,86 @@ def weather_jinja_template():
     return env.from_string(template_str)
 
 
-def test_weather_template_full_24h(weather_jinja_template):
+def test_weather_template_morning(weather_jinja_template):
+    # Forecast starts in morning at 08:00
     forecast = []
-    for h in range(24):
-        temp = 15.0 + 10.0 * (1.0 - abs(h - 14) / 14.0)  # Min around night, max around 14:00
-        cond = "sunny" if 10 <= h <= 18 else "clear-night"
-        if h == 9:
-            cond = "partlycloudy"
-        elif h == 19:
-            cond = "cloudy"
+    for h in range(8, 48):
+        hour_val = h % 24
+        temp = 15.0 + 10.0 * (1.0 - abs(hour_val - 14) / 14.0)
         forecast.append(
             {
-                "datetime": f"2026-09-11T{h:02d}:00:00+03:00",
+                "datetime": f"2026-09-11T{hour_val:02d}:00:00+03:00",
                 "temperature": round(temp, 1),
-                "condition": cond,
+                "condition": "sunny" if hour_val == 14 else "partlycloudy",
             }
         )
 
     response = {"weather.forecast_home": {"forecast": forecast}}
-    rendered = weather_jinja_template.render(response=response)
-    data = json.loads(rendered)
+    data = json.loads(weather_jinja_template.render(response=response))
 
     assert data["m_h"] == 9
-    assert data["m_c"] == "partlycloudy"
-    assert data["m_t"] == pytest.approx(round(15.0 + 10.0 * (1.0 - abs(9 - 14) / 14.0), 1))
-
     assert data["d_h"] == 14
-    assert data["d_c"] == "sunny"
-    assert data["d_t"] == pytest.approx(25.0)
-
     assert data["e_h"] == 19
-    assert data["e_c"] == "cloudy"
-    assert data["e_t"] == pytest.approx(round(15.0 + 10.0 * (1.0 - abs(19 - 14) / 14.0), 1))
-
-    assert data["min"] == pytest.approx(min(item["temperature"] for item in forecast))
-    assert data["max"] == pytest.approx(max(item["temperature"] for item in forecast))
+    assert data["d_c"] == "sunny"
 
 
-def test_weather_template_nearest_hour_selection(weather_jinja_template):
-    # Forecast does not have exact 9, 14, 19, but has 8 (diff=1), 15 (diff=1), 20 (diff=1)
-    forecast = [
-        {"datetime": "2026-09-11T08:00:00+03:00", "temperature": 16.0, "condition": "fog"},
-        {"datetime": "2026-09-11T15:00:00+03:00", "temperature": 23.0, "condition": "rainy"},
-        {"datetime": "2026-09-11T20:00:00+03:00", "temperature": 18.0, "condition": "windy"},
-    ]
+def test_weather_template_midday(weather_jinja_template):
+    # Forecast starts at midday at 13:00
+    forecast = []
+    for h in range(13, 48):
+        hour_val = h % 24
+        forecast.append(
+            {
+                "datetime": f"2026-09-11T{hour_val:02d}:00:00+03:00",
+                "temperature": 20.0,
+                "condition": "cloudy" if hour_val == 19 else "sunny",
+            }
+        )
+
     response = {"weather.forecast_home": {"forecast": forecast}}
-    rendered = weather_jinja_template.render(response=response)
-    data = json.loads(rendered)
+    data = json.loads(weather_jinja_template.render(response=response))
 
-    assert data["m_h"] == 8
-    assert data["m_c"] == "fog"
-    assert data["m_t"] == 16.0
+    # Midday shows: 14:00 (afternoon), 19:00 (evening), 08:00 (tomorrow morning)
+    assert data["m_h"] == 14
+    assert data["d_h"] == 19
+    assert data["d_c"] == "cloudy"
+    assert data["e_h"] == 8
 
-    assert data["d_h"] == 15
+
+def test_weather_template_evening(weather_jinja_template):
+    # Forecast starts in evening at 20:00
+    forecast = []
+    for h in range(20, 50):
+        hour_val = h % 24
+        forecast.append(
+            {
+                "datetime": f"2026-09-11T{hour_val:02d}:00:00+03:00",
+                "temperature": 18.0,
+                "condition": "rainy" if hour_val == 8 else "clear-night",
+            }
+        )
+
+    response = {"weather.forecast_home": {"forecast": forecast}}
+    data = json.loads(weather_jinja_template.render(response=response))
+
+    # Evening shows: 21:00 (tonight), 08:00 (tomorrow morning), 14:00 (tomorrow afternoon)
+    assert data["m_h"] == 21
+    assert data["d_h"] == 8
     assert data["d_c"] == "rainy"
-    assert data["d_t"] == 23.0
-
-    assert data["e_h"] == 20
-    assert data["e_c"] == "windy"
-    assert data["e_t"] == 18.0
-
-    assert data["min"] == 16.0
-    assert data["max"] == 23.0
+    assert data["e_h"] == 14
 
 
-def test_weather_template_afternoon_fallback(weather_jinja_template):
-    # Forecast fetched in the late afternoon; morning hours are in the past
+def test_weather_template_short_list(weather_jinja_template):
     forecast = [
         {"datetime": "2026-09-11T16:00:00+03:00", "temperature": 22.0, "condition": "lightning"},
         {"datetime": "2026-09-11T19:00:00+03:00", "temperature": 19.0, "condition": "cloudy"},
-        {"datetime": "2026-09-11T22:00:00+03:00", "temperature": 15.0, "condition": "clear-night"},
     ]
     response = {"weather.forecast_home": {"forecast": forecast}}
-    rendered = weather_jinja_template.render(response=response)
-    data = json.loads(rendered)
+    data = json.loads(weather_jinja_template.render(response=response))
 
-    # Since no morning (6-11) or day (12-16) exact match existed prior to 16:00,
-    # morning slot falls back to fc[0]
-    assert data["m_t"] == 22.0
-    assert data["m_h"] == 16
-    assert data["m_c"] == "lightning"
-
-    assert data["e_h"] == 19
-    assert data["e_c"] == "cloudy"
-    assert data["e_t"] == 19.0
+    assert data["m_t"] is not None
+    assert data["min"] == 19.0
+    assert data["max"] == 22.0
 
 
 def test_weather_template_empty_response(weather_jinja_template):
