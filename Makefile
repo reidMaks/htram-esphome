@@ -35,7 +35,7 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
 .PHONY: all test test-gd32 test-esphome test-tools test-configs \
         lint lint-c lint-py lint-yaml format format-check \
-        coverage coverage-html build-gd32 build-esp install-hooks clean help \
+        coverage coverage-html build-gd32 ota-gd32 status build-esp install-hooks clean help \
         device device-silence device-status device-beep
 
 all: test
@@ -57,6 +57,7 @@ help:
 	@echo "  make coverage-html - Generate HTML coverage report in coverage_html/"
 	@echo "  make install-hooks - Configure git to use repository pre-commit hook"
 	@echo "  make build-gd32    - Build GD32 target firmware via arm-none-eabi-gcc"
+	@echo "  make ota-gd32      - Flash GD32 firmware via OTA (Usage: make ota-gd32 DEVICE=<ip|host>)"
 	@echo "  make build-esp     - Compile ESPHome ESP32 firmware"
 	@echo "  make device        - Control device API: make device DEVICE=<ip|alias> CMD=<cmd>"
 	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<ip|alias>"
@@ -188,6 +189,27 @@ install-hooks:
 build-gd32:
 	@echo "==> Building GD32 bare-metal firmware..."
 	$(MAKE) -C firmware/gd32 flash
+
+TARGET_DEVICE := $(strip $(if $(DEVICE),$(DEVICE),$(if $(HOST),$(HOST),$(IP))))
+ifeq ($(TARGET_DEVICE),кабінет)
+  override TARGET_DEVICE := htram-9436b0.local
+endif
+ifeq ($(TARGET_DEVICE),cabinet)
+  override TARGET_DEVICE := htram-9436b0.local
+endif
+
+ota-gd32: build-gd32
+ifeq ($(strip $(TARGET_DEVICE)),)
+	$(error TARGET_DEVICE is not set. Usage: make ota-gd32 DEVICE=<ip-or-host>, e.g. make ota-gd32 DEVICE=htram-9436b0.local)
+endif
+	@echo "==> Flashing GD32 firmware via OTA to $(TARGET_DEVICE)..."
+	$(PYTHON) tools/swd/flash.py --ota $(TARGET_DEVICE)
+
+status:
+ifeq ($(strip $(TARGET_DEVICE)),)
+	$(error TARGET_DEVICE is not set. Usage: make status DEVICE=<ip-or-host>, e.g. make status DEVICE=кабінет)
+endif
+	@$(PYTHON) tools/swd/flash.py --status $(TARGET_DEVICE)
 
 build-esp:
 	@echo "==> Compiling ESPHome ESP32 firmware..."

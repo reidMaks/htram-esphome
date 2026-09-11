@@ -354,6 +354,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: slot_extra_text
+    type: std::string
+    restore_value: false
+    initial_value: '""'
   - id: led_auto
     type: bool
     restore_value: true
@@ -755,6 +759,12 @@ script:
   - id: on_alarm_dismissed
     then: []
 
+  - id: on_button_press
+    then: []
+
+  - id: on_button_release
+    then: []
+
   - id: on_button_action
     mode: restart
     parameters:
@@ -835,7 +845,10 @@ script:
       - lambda: |-
           if (id(slot_hold)) return;
           char buf[48];
-          switch (id(slot_idx)) {
+          if (!id(slot_extra_text).empty() && id(slot_idx) == 2) {
+            snprintf(buf, sizeof(buf), "%s", id(slot_extra_text).c_str());
+          } else {
+            switch (id(slot_idx)) {
             case 0: {
               auto now = id(ha_time).now();
               if (!now.is_valid()) now = id(net_time).now();
@@ -862,6 +875,7 @@ script:
                        id(sensor_temp).state, id(sensor_hum).state);
               break;
             }
+          }
           }
           lv_label_set_text(id(ui_slot), buf);
 
@@ -999,7 +1013,9 @@ interval:
 
   - interval: 7s
     then:
-      - lambda: id(slot_idx) = (id(slot_idx) + 1) % 2;
+      - lambda: |-
+          int max_slots = id(slot_extra_text).empty() ? 2 : 3;
+          id(slot_idx) = (id(slot_idx) + 1) % max_slots;
       - script.execute: refresh_slot
       # Same rhythm flips the AP face between the QR and the typed credentials,
       # until somebody takes the wheel with the button.
@@ -1433,6 +1449,10 @@ binary_sensor:
     button:
       name: "Button"
       id: htram_button
+      on_press:
+        - script.execute: on_button_press
+      on_release:
+        - script.execute: on_button_release
 
 text_sensor:
   - platform: wifi_info
