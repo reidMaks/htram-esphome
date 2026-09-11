@@ -331,21 +331,15 @@ font:
     glyphsets:
       - GF_Cyrillic_Core
 
-  # Everything the face says when it cannot show a clock: the two failure
-  # messages, the IP address, and -- the reason the Latin alphabet is in here --
-  # the fallback AP's own SSID and password, which are the one thing a user
-  # cannot look up anywhere else at that moment. 22 px = 2.5 mm.
-  #
-  # The Cyrillic part is an explicit list rather than GF_Cyrillic_Core: eleven
-  # letters are actually used, and the glyphset would cost ~200 glyphs at 22 px.
-  # The punctuation set is what a Wi-Fi password realistically contains; a
-  # password using anything outside it renders as a placeholder box, so either
-  # keep ap_password alphanumeric or extend this line.
+  # 22 px UI font: used for failure screens, fallback AP credentials,
+  # weather forecast date & temperatures, and feature titles.
+  # Includes ASCII, Latin, degree symbol, and full Ukrainian alphabet.
   - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
     id: font_msg
     size: 22
     bpp: 4
-    glyphs: " !#$%&()*+,-.:;=?@[]_{}~/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzаежімнрсучє"
+    glyphs: " !#$%&()*+,-.:;=?@[]_{}~/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯабвгґдеєжзиіїйклмнопрстуфхцчшщьюя"
+
 
 globals:
   - id: ha_link
