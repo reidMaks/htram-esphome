@@ -39,7 +39,8 @@ def build(src: str, height: int, supersample: int = 4) -> Image.Image:
 
     mask = mask.crop(mask.getbbox())
     width = round(mask.size[0] * height / mask.size[1])
-    return mask.resize((width, height), Image.LANCZOS).point(
+    resample = getattr(Image, "Resampling", Image).LANCZOS
+    return mask.resize((width, height), resample).point(
         lambda v: 255 if v > 110 else 0
     )
 
