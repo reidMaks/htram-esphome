@@ -15,10 +15,12 @@
 #     area: ${area}
 #
 #   packages:
-#     core:
+#     base:
 #       url: https://github.com/reidMaks/htram-esphome
 #       ref: main
-#       files: [esphome/htram-core.yaml]
+#       files:
+#         - esphome/htram-core.yaml
+#         - esphome/features/weather.yaml
 #       refresh: 0s
 #   -------------------------------------------------
 
@@ -33,5 +35,4 @@ esphome:
 
 packages:
   core: !include htram-core.yaml
-  alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
