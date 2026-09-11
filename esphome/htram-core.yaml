@@ -386,7 +386,7 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
-  # Окремо від silence_active: обличчя лишається синім і на час гімну, а
+  # Окремо від silence_active: екран лишається в режимі хвилини і на час гімну, а
   # метроном на цей час мусить замовкнути. CMD_BEEP на GD32 не додає ноту в
   # чергу, а заміщає її (`mel_count = 1`), тож один тік обриває мелодію —
   # рівно це й сталось на першій перевірці.
@@ -591,13 +591,11 @@ script:
 
           id(on_face_changed).execute(want);
 
-          // The blue only exists during the minute; everything else is drawn on
-          // black, so this is set and unset here rather than per widget.
+          // The background stays black (${silence_bg}) to merge with the round bezel,
+          // while the emblem and seconds dot take the memorial red (${silence_fg}).
           lv_obj_set_style_bg_color(id(ui_root),
                                     lv_color_hex(want == 4 ? ${silence_bg} : 0x000000),
                                     LV_PART_MAIN);
-          // The dot keeps its ordinary job -- it just has to be visible against
-          // the blue, and against the blue it becomes the flag's other colour.
           lv_obj_set_style_bg_color(id(ui_secdot),
                                     lv_color_hex(want == 4 ? ${silence_fg} : 0xB9AFA3),
                                     LV_PART_MAIN);
