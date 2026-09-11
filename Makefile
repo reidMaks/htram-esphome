@@ -35,7 +35,8 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
 .PHONY: all test test-gd32 test-esphome test-tools test-configs \
         lint lint-c lint-py lint-yaml format format-check \
-        coverage coverage-html build-gd32 build-esp install-hooks clean help
+        coverage coverage-html build-gd32 build-esp install-hooks clean help \
+        device device-silence device-status device-beep
 
 all: test
 
@@ -57,6 +58,9 @@ help:
 	@echo "  make install-hooks - Configure git to use repository pre-commit hook"
 	@echo "  make build-gd32    - Build GD32 target firmware via arm-none-eabi-gcc"
 	@echo "  make build-esp     - Compile ESPHome ESP32 firmware"
+	@echo "  make device        - Control device API: make device DEVICE=<ip|alias> CMD=<cmd>"
+	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<ip|alias>"
+	@echo "  make device-silence- Trigger minute of silence test: make device-silence DEVICE=<ip|alias>"
 	@echo "  make clean         - Remove test binaries, coverage counters, and build artifacts"
 
 # ── Test Suite ───────────────────────────────────────────────────────────────
@@ -188,6 +192,19 @@ build-gd32:
 build-esp:
 	@echo "==> Compiling ESPHome ESP32 firmware..."
 	$(ESPHOME) compile esphome/htram.yaml
+
+# ── Device API Management ───────────────────────────────────────────────────
+device:
+	$(PYTHON) tools/device.py $(or $(DEVICE),office) $(or $(CMD),status) $(ARGS)
+
+device-silence:
+	$(PYTHON) tools/device.py $(or $(DEVICE),office) silence
+
+device-status:
+	$(PYTHON) tools/device.py $(or $(DEVICE),office) status
+
+device-beep:
+	$(PYTHON) tools/device.py $(or $(DEVICE),office) beep
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 clean:

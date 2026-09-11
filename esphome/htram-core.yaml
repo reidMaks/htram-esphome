@@ -705,6 +705,9 @@ script:
     mode: single
     then:
       - lambda: |-
+          ESP_LOGI("silence", "Minute of silence: free heap=%u, largest block=%u",
+                   (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                   (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
           id(silence_active) = true;
           id(silence_beep_count) = 0;
           timeval tv;

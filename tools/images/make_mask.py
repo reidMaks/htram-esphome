@@ -15,10 +15,13 @@ Two details this script exists to record, because both cost an attempt:
   * ESPHome's binary encoder converts to mode "1" by brightness unless the
     image is alpha-only, so the mask is written as plain greyscale: emblem
     white, everything else black.
+  * ESP32 internal DRAM has ~12 KB largest free contiguous block under load,
+    so mask height must be <= 100 px (at 100px: 72x100 = 7.2 KB draw buffer;
+    at 150px: 108x150 = 16.8 KB, which fails with lvgl draw buffer OOM).
 
     .venv/bin/python tools/images/make_mask.py \
         esphome/images/Lesser_Coat_of_Arms_of_Ukraine_(bw).svg \
-        esphome/images/tryzub_mask.png --height 150
+        esphome/images/tryzub_mask.png --height 100
 """
 import argparse
 import io
@@ -49,7 +52,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("src")
     ap.add_argument("dst")
-    ap.add_argument("--height", type=int, default=150)
+    ap.add_argument("--height", type=int, default=100)
     args = ap.parse_args()
 
     mask = build(args.src, args.height)
