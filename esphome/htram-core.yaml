@@ -85,7 +85,7 @@ api:
       then:
         - lambda: |-
             id(htram_core)->send_beep(freq, dur);
-            
+
     - service: set_backlight
       variables:
         brightness: int

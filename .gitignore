@@ -75,3 +75,14 @@ esphome/images/src/
 #   scratch/                    уламки з реверсу: бутлоадер, системний код
 docs/datasheets/
 *.pdf
+
+# Test and coverage artifacts
+tests/*_bin
+tests/*.o
+tests/*.gcda
+tests/*.gcno
+tests/*.so
+.coverage
+coverage_html/
+.pytest_cache/
+

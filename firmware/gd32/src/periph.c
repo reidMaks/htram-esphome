@@ -448,6 +448,7 @@ void watchdog_kick(void)
 
 void system_enter_bootloader(void)
 {
+#ifdef __arm__
     /* 1. Disable all interrupts */
     __asm__ volatile("cpsid i");
 
@@ -518,4 +519,7 @@ void system_enter_bootloader(void)
     while (1) {
         /* Should not be reached */
     }
+#else
+    return;
+#endif
 }
