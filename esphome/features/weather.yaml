@@ -1,0 +1,577 @@
+# HTRAM Feature: Прогноз погоди (Weather Forecast Face)
+#
+# Надає окремий під'єднуваний екран прогнозу погоди на день:
+# - Отримує погодинний прогноз через нативну дію weather.get_forecasts;
+# - Відображає 3 пори доби (Ранок, День, Вечір) з піктограмами станів та температурами;
+# - Відображає діапазон мін/макс температур на сьогодні;
+# - Вмикається подвійним кліком у звичайному режимі або після вимкнення будильника;
+# - Автоматично закривається через 60 с або при будь-якому одинарному кліку.
+
+substitutions:
+  weather_entity: "weather.forecast_home"
+  weather_update_interval: "30min"
+  weather_screen_timeout: "60s"
+
+globals:
+  - id: weather_shown
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: weather_valid
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: weather_min_temp
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: weather_max_temp
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: weather_morning_temp
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: weather_day_temp
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: weather_evening_temp
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: weather_morning_cond
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: weather_day_cond
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: weather_evening_cond
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+  - id: weather_morning_hour
+    type: int
+    restore_value: false
+    initial_value: "9"
+  - id: weather_day_hour
+    type: int
+    restore_value: false
+    initial_value: "14"
+  - id: weather_evening_hour
+    type: int
+    restore_value: false
+    initial_value: "19"
+
+image:
+  - platform: file
+    file: "${repo_url}/images/weather_sunny_mask.png"
+    id: img_weather_sunny
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_partlycloudy_sun_mask.png"
+    id: img_weather_partlycloudy_sun
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_partlycloudy_cloud_mask.png"
+    id: img_weather_partlycloudy_cloud
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_cloudy_mask.png"
+    id: img_weather_cloudy
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_rainy_cloud_mask.png"
+    id: img_weather_rainy_cloud
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_rainy_drops_mask.png"
+    id: img_weather_rainy_drops
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_lightning_cloud_mask.png"
+    id: img_weather_lightning_cloud
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_lightning_bolt_mask.png"
+    id: img_weather_lightning_bolt
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_snowy_cloud_mask.png"
+    id: img_weather_snowy_cloud
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_snowy_flakes_mask.png"
+    id: img_weather_snowy_flakes
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_fog_mask.png"
+    id: img_weather_fog
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/weather_windy_mask.png"
+    id: img_weather_windy
+    type: BINARY
+
+lvgl:
+  widgets:
+    - obj:
+        id: ui_weather_face
+        align: center
+        width: 240
+        height: 240
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        scrollable: false
+        clickable: false
+        hidden: true
+        widgets:
+          # Велика дата зверху без слова «сьогодні»
+          - label:
+              id: ui_weather_title
+              align: top_mid
+              y: 28
+              text_font: font_msg
+              text_color: 0xF0EAE0
+              text: "-- вер"
+          - label:
+              id: ui_weather_range
+              align: top_mid
+              y: 54
+              text_font: font_slot
+              text_color: 0x707880
+              text: "--° ... --°"
+
+          # Точки півкола в нижній половині:
+          # Точка 1: Ранок (ліворуч, x = -64, y = -18..36)
+          - label:
+              id: ui_weather_col1_lbl
+              align: center
+              x: -64
+              y: -18
+              text_font: font_slot
+              text_color: 0x707880
+              text: "9:00"
+          - image:
+              id: ui_weather_col1_img
+              align: center
+              x: -64
+              y: 4
+              src: img_weather_sunny
+          - image:
+              id: ui_weather_col1_img2
+              align: center
+              x: -64
+              y: 4
+              src: img_weather_sunny
+              hidden: true
+          - label:
+              id: ui_weather_col1_temp
+              align: center
+              x: -64
+              y: 36
+              text_font: font_msg
+              text_color: 0xF0EAE0
+              text: "--°"
+
+          # Точка 2: День (по центру нижче, x = 0, y = 8..64)
+          - label:
+              id: ui_weather_col2_lbl
+              align: center
+              x: 0
+              y: 8
+              text_font: font_slot
+              text_color: 0x707880
+              text: "14:00"
+          - image:
+              id: ui_weather_col2_img
+              align: center
+              x: 0
+              y: 30
+              src: img_weather_sunny
+          - image:
+              id: ui_weather_col2_img2
+              align: center
+              x: 0
+              y: 30
+              src: img_weather_sunny
+              hidden: true
+          - label:
+              id: ui_weather_col2_temp
+              align: center
+              x: 0
+              y: 64
+              text_font: font_msg
+              text_color: 0xF0EAE0
+              text: "--°"
+
+          # Точка 3: Вечір (праворуч, x = 64, y = -18..36)
+          - label:
+              id: ui_weather_col3_lbl
+              align: center
+              x: 64
+              y: -18
+              text_font: font_slot
+              text_color: 0x707880
+              text: "19:00"
+          - image:
+              id: ui_weather_col3_img
+              align: center
+              x: 64
+              y: 4
+              src: img_weather_cloudy
+          - image:
+              id: ui_weather_col3_img2
+              align: center
+              x: 64
+              y: 4
+              src: img_weather_cloudy
+              hidden: true
+          - label:
+              id: ui_weather_col3_temp
+              align: center
+              x: 64
+              y: 36
+              text_font: font_msg
+              text_color: 0xF0EAE0
+              text: "--°"
+
+          # Статус знизу
+          - label:
+              id: ui_weather_status
+              align: bottom_mid
+              y: -16
+              text_font: font_slot
+              text_color: 0x707880
+              text: ""
+
+script:
+  - id: refresh_weather_ui
+    then:
+      - lambda: |-
+          auto apply_weather_icon = [](lv_obj_t *img1, lv_obj_t *img2, const std::string &cond) {
+            esphome::image::Image *src1 = id(img_weather_sunny);
+            uint32_t color1 = 0xFFB800; // тепле золото / бурштин
+            esphome::image::Image *src2 = nullptr;
+            uint32_t color2 = 0xF0EAE0;
+
+            if (cond == "sunny" || cond == "clear-night") {
+              src1 = id(img_weather_sunny);
+              color1 = 0xFFB800;
+            } else if (cond == "partlycloudy") {
+              src1 = id(img_weather_partlycloudy_sun);
+              color1 = 0xFFB800; // сонце - тепле золото
+              src2 = id(img_weather_partlycloudy_cloud);
+              color2 = 0xF0EAE0; // хмара - м'який білий
+            } else if (cond == "cloudy" || cond == "exceptional") {
+              src1 = id(img_weather_cloudy);
+              color1 = 0xA0A8B0;
+            } else if (cond == "rainy" || cond == "pouring") {
+              src1 = id(img_weather_rainy_cloud);
+              color1 = 0xA0A8B0;
+              src2 = id(img_weather_rainy_drops);
+              color2 = 0x38BDF8; // дощ - блакитний
+            } else if (cond == "lightning" || cond == "lightning-rainy") {
+              src1 = id(img_weather_lightning_cloud);
+              color1 = 0x8A929A;
+              src2 = id(img_weather_lightning_bolt);
+              color2 = 0xFACC15; // блискавка - жовта
+            } else if (cond == "snowy" || cond == "snowy-rainy" || cond == "hail") {
+              src1 = id(img_weather_snowy_cloud);
+              color1 = 0xA0A8B0;
+              src2 = id(img_weather_snowy_flakes);
+              color2 = 0xEEF2F6; // сніг - білий
+            } else if (cond == "fog") {
+              src1 = id(img_weather_fog);
+              color1 = 0x94A3B8;
+            } else if (cond == "windy" || cond == "windy-variant") {
+              src1 = id(img_weather_windy);
+              color1 = 0x38BDF8;
+            }
+
+            lv_image_set_src(img1, src1->get_lv_image_dsc());
+            lv_obj_set_style_image_recolor(img1, lv_color_hex(color1), LV_PART_MAIN);
+            lv_obj_set_style_image_recolor_opa(img1, LV_OPA_COVER, LV_PART_MAIN);
+            lv_obj_remove_flag(img1, LV_OBJ_FLAG_HIDDEN);
+
+            if (src2 != nullptr) {
+              lv_image_set_src(img2, src2->get_lv_image_dsc());
+              lv_obj_set_style_image_recolor(img2, lv_color_hex(color2), LV_PART_MAIN);
+              lv_obj_set_style_image_recolor_opa(img2, LV_OPA_COVER, LV_PART_MAIN);
+              lv_obj_remove_flag(img2, LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(img2, LV_OBJ_FLAG_HIDDEN);
+            }
+          };
+
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) now = id(net_time).now();
+          if (!now.is_valid()) {
+            time_t t = ::time(nullptr);
+            if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+          }
+          char buf[48];
+          if (now.is_valid()) {
+            static const char *const DAYS[] = {"", "Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"};
+            static const char *const MONTHS[] = {
+                "", "січ", "лют", "бер", "кві", "тра", "чер",
+                "лип", "сер", "вер", "жов", "лис", "гру"};
+            snprintf(buf, sizeof(buf), "%s, %d %s",
+                     DAYS[now.day_of_week >= 1 && now.day_of_week <= 7 ? now.day_of_week : 0],
+                     now.day_of_month,
+                     MONTHS[now.month >= 1 && now.month <= 12 ? now.month : 0]);
+          } else {
+            snprintf(buf, sizeof(buf), "прогноз");
+          }
+          lv_label_set_text(id(ui_weather_title), buf);
+
+          if (!isnan(id(weather_min_temp)) && !isnan(id(weather_max_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f° ... %.0f°",
+                     id(weather_min_temp), id(weather_max_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--° ... --°");
+          }
+          lv_label_set_text(id(ui_weather_range), buf);
+
+          // Колонка 1 (Ранок)
+          snprintf(buf, sizeof(buf), "%d:00", id(weather_morning_hour));
+          lv_label_set_text(id(ui_weather_col1_lbl), buf);
+          if (!isnan(id(weather_morning_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f°", id(weather_morning_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--°");
+          }
+          lv_label_set_text(id(ui_weather_col1_temp), buf);
+          apply_weather_icon(id(ui_weather_col1_img), id(ui_weather_col1_img2), id(weather_morning_cond));
+
+          // Колонка 2 (День)
+          snprintf(buf, sizeof(buf), "%d:00", id(weather_day_hour));
+          lv_label_set_text(id(ui_weather_col2_lbl), buf);
+          if (!isnan(id(weather_day_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f°", id(weather_day_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--°");
+          }
+          lv_label_set_text(id(ui_weather_col2_temp), buf);
+          apply_weather_icon(id(ui_weather_col2_img), id(ui_weather_col2_img2), id(weather_day_cond));
+
+          // Колонка 3 (Вечір)
+          snprintf(buf, sizeof(buf), "%d:00", id(weather_evening_hour));
+          lv_label_set_text(id(ui_weather_col3_lbl), buf);
+          if (!isnan(id(weather_evening_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f°", id(weather_evening_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--°");
+          }
+          lv_label_set_text(id(ui_weather_col3_temp), buf);
+          apply_weather_icon(id(ui_weather_col3_img), id(ui_weather_col3_img2), id(weather_evening_cond));
+
+          if (!id(weather_valid)) {
+            lv_label_set_text(id(ui_weather_status), "оновлення...");
+            lv_obj_remove_flag(id(ui_weather_status), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(ui_weather_status), LV_OBJ_FLAG_HIDDEN);
+          }
+
+  - id: fetch_weather_forecast
+    mode: restart
+    then:
+      - if:
+          condition:
+            api.connected:
+          then:
+            - homeassistant.action:
+                action: weather.get_forecasts
+                data:
+                  entity_id: ${weather_entity}
+                  type: hourly
+                capture_response: true
+                response_template: >-
+                  {%- set fc = (response.values() | list)[0].forecast if (response and (response.values() | list)[0].forecast is defined) else [] -%}
+                  {%- set ns = namespace(min=999, max=-999) -%}
+                  {%- for item in fc[:24] -%}
+                    {%- set t = item.temperature | float -%}
+                    {%- if t < ns.min %}{% set ns.min = t %}{% endif -%}
+                    {%- if t > ns.max %}{% set ns.max = t %}{% endif -%}
+                  {%- endfor -%}
+                  {%- set flen = fc | length -%}
+                  {%- set cur_h = (fc[0].datetime[11:13] | int) if flen > 0 else 12 -%}
+                  {%- if cur_h < 12 -%}
+                    {%- set o1 = [[cur_h + 1, 9] | max - cur_h, flen - 1] | min -%}
+                    {%- set o2 = [14 - cur_h, flen - 1] | min -%}
+                    {%- set o3 = [19 - cur_h, flen - 1] | min -%}
+                  {%- elif cur_h < 17 -%}
+                    {%- set o1 = [[cur_h + 1, 14] | max - cur_h, flen - 1] | min -%}
+                    {%- set o2 = [19 - cur_h, flen - 1] | min -%}
+                    {%- set o3 = [32 - cur_h, flen - 1] | min -%}
+                  {%- else -%}
+                    {%- set p1_target = 23 if cur_h >= 23 else ([cur_h + 1, 19] | max) -%}
+                    {%- set o1 = [[[p1_target - cur_h, 1] | max, flen - 1] | min, 0] | max -%}
+                    {%- set o2 = [[32 - cur_h, flen - 1] | min, 0] | max -%}
+                    {%- set o3 = [[38 - cur_h, flen - 1] | min, 0] | max -%}
+                  {%- endif -%}
+                  {%- set o1 = [o1, 0] | max -%}
+                  {%- set o2 = [o2, 0] | max -%}
+                  {%- set o3 = [o3, 0] | max -%}
+                  {%- set pt1 = fc[o1] if flen > o1 else none -%}
+                  {%- set pt2 = fc[o2] if flen > o2 else none -%}
+                  {%- set pt3 = fc[o3] if flen > o3 else none -%}
+                  {%- if ns.min > 900 and flen > 0 %}{% set ns.min = fc[0].temperature | float %}{% endif -%}
+                  {%- if ns.max < -900 and flen > 0 %}{% set ns.max = fc[0].temperature | float %}{% endif -%}
+                  {{ {
+                    'min': ns.min, 'max': ns.max,
+                    'm_t': (pt1.temperature | float) if pt1 else none,
+                    'm_c': pt1.condition if pt1 else '',
+                    'm_h': (pt1.datetime[11:13] | int) if pt1 else 9,
+                    'd_t': (pt2.temperature | float) if pt2 else none,
+                    'd_c': pt2.condition if pt2 else '',
+                    'd_h': (pt2.datetime[11:13] | int) if pt2 else 14,
+                    'e_t': (pt3.temperature | float) if pt3 else none,
+                    'e_c': pt3.condition if pt3 else '',
+                    'e_h': (pt3.datetime[11:13] | int) if pt3 else 19
+                  } | tojson }}
+                on_success:
+                  - lambda: |-
+                      JsonObjectConst data = response["response"];
+                      if (data.isNull()) {
+                        ESP_LOGW("weather", "Weather response is null or invalid");
+                        return;
+                      }
+
+                      if (data["min"].is<float>() && data["max"].is<float>()) {
+                        float min_t = data["min"].as<float>();
+                        float max_t = data["max"].as<float>();
+                        if (min_t < 900.0f) id(weather_min_temp) = min_t;
+                        if (max_t > -900.0f) id(weather_max_temp) = max_t;
+                      }
+
+                      if (data["m_t"].is<float>()) {
+                        id(weather_morning_temp) = data["m_t"].as<float>();
+                        id(weather_morning_cond) = data["m_c"].as<std::string>();
+                        id(weather_morning_hour) = data["m_h"].as<int>();
+                      }
+                      if (data["d_t"].is<float>()) {
+                        id(weather_day_temp) = data["d_t"].as<float>();
+                        id(weather_day_cond) = data["d_c"].as<std::string>();
+                        id(weather_day_hour) = data["d_h"].as<int>();
+                      }
+                      if (data["e_t"].is<float>()) {
+                        id(weather_evening_temp) = data["e_t"].as<float>();
+                        id(weather_evening_cond) = data["e_c"].as<std::string>();
+                        id(weather_evening_hour) = data["e_h"].as<int>();
+                      }
+
+                      id(weather_valid) = true;
+
+                      ESP_LOGI("weather", "Forecast updated: min=%.0f max=%.0f M=%d:00:%.0f(%s) D=%d:00:%.0f(%s) E=%d:00:%.0f(%s)",
+                               id(weather_min_temp), id(weather_max_temp),
+                               id(weather_morning_hour), id(weather_morning_temp), id(weather_morning_cond).c_str(),
+                               id(weather_day_hour), id(weather_day_temp), id(weather_day_cond).c_str(),
+                               id(weather_evening_hour), id(weather_evening_temp), id(weather_evening_cond).c_str());
+
+                      if (id(weather_shown)) {
+                        id(refresh_weather_ui).execute();
+                      }
+                on_error:
+                  - lambda: |-
+                      ESP_LOGW("weather", "Failed to fetch weather forecast: %s", error.c_str());
+
+  - id: hide_weather_timeout
+    mode: restart
+    then:
+      - delay: ${weather_screen_timeout}
+      - script.execute: hide_weather
+
+  - id: show_weather
+    mode: restart
+    then:
+      - script.stop: hide_weather_timeout
+      - if:
+          condition:
+            lambda: return !id(weather_valid);
+          then:
+            - script.execute: fetch_weather_forecast
+      - lambda: |-
+          id(weather_shown) = true;
+          id(slot_hold) = true;
+          id(face_state) = -1;
+          lv_obj_t *const hide[] = {
+              id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
+              id(ui_slot), id(ui_pocket), id(ui_msg),
+              id(ui_msg_sub), id(ui_msg_cap), id(ui_msg2),
+              id(ui_ap_card), id(ui_ap_qr), id(ui_devid), id(ui_devid_cap)
+          };
+          for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
+      - script.execute: refresh_weather_ui
+      - script.execute: hide_weather_timeout
+
+  - id: hide_weather
+    mode: restart
+    then:
+      - script.stop: hide_weather_timeout
+      - lambda: |-
+          id(weather_shown) = false;
+          lv_obj_add_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
+          id(slot_hold) = false;
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
+
+  # Точки інтеграції
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face != 0 && id(weather_shown)) {
+            id(hide_weather).execute();
+          }
+
+  - id: !extend handle_feature_button
+    then:
+      - if:
+          condition:
+            lambda: return id(weather_shown) && action == "single";
+          then:
+            - lambda: id(button_handled) = true;
+            - script.execute: hide_weather
+      - if:
+          condition:
+            lambda: return !id(button_handled) && action == "double" && id(face_state) == 0;
+          then:
+            - lambda: id(button_handled) = true;
+            - script.execute: show_weather
+
+  - id: !extend on_alarm_started
+    then:
+      - script.execute: fetch_weather_forecast
+
+  - id: !extend on_alarm_dismissed
+    then:
+      - script.execute: show_weather
+
+interval:
+  - interval: ${weather_update_interval}
+    then:
+      - script.execute: fetch_weather_forecast
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            lambda: return !id(weather_valid);
+          then:
+            - script.execute: fetch_weather_forecast
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_weather_face), id(ui_root));
+            lv_obj_add_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
+        - script.execute: fetch_weather_forecast

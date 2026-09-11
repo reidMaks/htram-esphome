@@ -87,3 +87,22 @@ a slanted clock needs a slanted file. `tools/fonts/make_oblique.py` bakes it,
 shearing about the middle of the cap height so digits keep their optical centre.
 Licences for all bundled fonts live in `esphome/fonts/`; keep them with the
 files.
+
+## LVGL 9 Mask Recoloring & DRAM Allocation Limit (Out of Memory)
+
+When LVGL 9 recolors a 1-bit binary mask (`type: BINARY` / `LV_COLOR_FORMAT_A1`) via `lv_obj_set_style_image_recolor`, the software renderer dynamically decodes the entire mask into an 8-bit alpha buffer (`LV_COLOR_FORMAT_A8`) in RAM using `heap_caps_aligned_alloc`.
+
+The required contiguous DRAM allocation is:
+$$\text{heap bytes} = \text{stride} \times \text{height}$$
+(where `stride` is width aligned to a byte boundary).
+
+- **ESP32 contiguous DRAM ceiling**: Under normal operation (with Wi-Fi, LwIP TCP stack, web server, and display buffers active), the largest free contiguous DRAM block is **$\approx 12\,288$ bytes**.
+- **OOM Failure**: For a 108×150 px mask, $\text{stride}=112$, requiring $112 \times 150 = \mathbf{16\,800\text{ bytes}}$. This fails with:
+  ```text
+  [W][lvgl:...]: Failed to allocate 16800 bytes for draw buffer
+  [E][lvgl:...]: [Error] decode_alpha_only: Out of memory
+  ```
+  and the image is silently dropped from the screen.
+- **Safe sizing rule**: Keep recolored masks $\le 100\text{ px}$ in height (for Tryzub: $72 \times 100 = 7\,200\text{ bytes}$, leaving a comfortable 5 KB headroom).
+- **Flash vs RAM**: Freeing Flash memory (ROM) does **not** increase available SRAM (DRAM) heap on the ESP32.
+
