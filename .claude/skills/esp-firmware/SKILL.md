@@ -22,11 +22,33 @@ The device is at `192.168.0.78`, and resolves as `htram-9436b0.lan` /
 name, so a plain `htram.local` never resolves. A successful OTA reports around
 1.18 MB uploaded in roughly 5.5 s.
 
-## Reading live state without a log session
+## Interacting with Devices via Device CLI & Makefile
+
+Use the project device tool `tools/device.py` or Makefile targets to inspect status and execute commands without manual curl guessing:
+
+```bash
+# Read live sensor states and telemetry (via SSE /events)
+make device-status DEVICE=living      # or office, bedroom, <ip>
+
+# Trigger minute of silence test
+make device-silence DEVICE=living
+
+# Play a beep sound
+make device-beep DEVICE=office
+
+# Press an arbitrary button via REST API
+make device DEVICE=bedroom CMD=press ARGS="Хвилина мовчання: перевірка"
+```
+
+The script `tools/device.py` automatically:
+1. Reads `web_username` and `web_password` from `esphome/secrets.yaml`.
+2. Resolves aliases (`office`, `bedroom`, `living` / `c1da24`).
+3. Encodes non-ASCII button paths (UTF-8 URL quoting) and sets `Content-Length: 0`.
+
+## Reading live state manually (low-level curl fallback)
 
 The web server exposes a server-sent-event stream that dumps every entity's
-current state on connect. This is the fastest way to answer "what does the
-device think right now":
+current state on connect:
 
 ```bash
 curl -s --max-time 8 -N --digest -u "$(sed -n 's/^web_username: *//p' esphome/secrets.yaml | tr -d '\"')":"$(sed -n 's/^web_password: *//p' esphome/secrets.yaml | tr -d '\"')" http://192.168.0.78/events > /tmp/ev.txt; grep -a "Battery\|CO2\|Charging" /tmp/ev.txt
