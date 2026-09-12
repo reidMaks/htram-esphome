@@ -881,13 +881,41 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
 
     ESP_LOGI(TAG, "[OTA 0/6] Staging new firmware into SPI Flash (0x030000)...");
     uint32_t host_crc32 = crc32_ieee(firmware.data(), firmware.size());
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
     this->send_flash_erase_block(0x00030000);
-    delay(200);
+    this->flush();
+    uint32_t e_start = millis();
+    while (millis() - e_start < 3000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x24)
+        break;
+      delay(10);
+    }
+    if (this->last_flash_ack_cmd_ != 0x24 || this->last_flash_ack_status_ != 0x00) {
+      ESP_LOGE(TAG, "[OTA 0/6] Staging block erase failed: status=0x%02X", this->last_flash_ack_status_);
+      snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_erase\",\"reason\":\"Block erase failed\"}");
+      return buf;
+    }
 
     for (size_t offset = 0; offset < firmware.size(); offset += 256) {
       size_t chunk_len = std::min((size_t)256, firmware.size() - offset);
+      this->last_flash_ack_cmd_ = 0;
+      this->last_flash_ack_status_ = 0xFF;
       this->send_flash_write_chunk(0x00030000 + offset, firmware.data() + offset, chunk_len);
-      delay(5);
+      this->flush();
+      uint32_t w_start = millis();
+      while (millis() - w_start < 500) {
+        this->pump_rx_(false);
+        if (this->last_flash_ack_cmd_ == 0x22)
+          break;
+        delay(2);
+      }
+      if (this->last_flash_ack_cmd_ != 0x22 || this->last_flash_ack_status_ != 0x00) {
+        ESP_LOGE(TAG, "[OTA 0/6] Staging chunk at offset 0x%04X failed: status=0x%02X", (unsigned)offset, this->last_flash_ack_status_);
+        snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_chunk\",\"reason\":\"Chunk write failed\"}");
+        return buf;
+      }
       App.feed_wdt();
     }
 
@@ -896,7 +924,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     this->send_flash_verify_crc(0x00030000, firmware.size(), host_crc32);
     this->flush();
     uint32_t vstart = millis();
-    while (millis() - vstart < 2000) {
+    while (millis() - vstart < 3000) {
       this->pump_rx_(false);
       if (this->last_flash_ack_cmd_ == 0x23)
         break;

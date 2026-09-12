@@ -860,6 +860,12 @@ void test_execute_ota_with_spi_flash_success(void) {
       // Flash backup fw command ack
       auto ack = make_flash_ack_pkt(0x26, 0x00, 0x11223344);
       g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x24) {
+      auto ack = make_flash_ack_pkt(0x24, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x22) {
+      auto ack = make_flash_ack_pkt(0x22, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
     } else if (len >= 3 && data[2] == 0x23) {
       // Flash verify crc command ack
       auto ack = make_flash_ack_pkt(0x23, 0x00, 0x00030000);
@@ -894,6 +900,12 @@ void test_execute_ota_with_spi_flash_staging_failure(void) {
   g_comp->on_write = [](const uint8_t* data, size_t len) {
     if (len >= 3 && data[2] == 0x26) {
       auto ack = make_flash_ack_pkt(0x26, 0x00, 0x11223344);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x24) {
+      auto ack = make_flash_ack_pkt(0x24, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x22) {
+      auto ack = make_flash_ack_pkt(0x22, 0x00, 0x00030000);
       g_comp->mock_push_rx(ack.data(), ack.size());
     } else if (len >= 3 && data[2] == 0x23) {
       // Staging CRC verify fails!
