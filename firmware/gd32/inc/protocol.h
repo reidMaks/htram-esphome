@@ -15,6 +15,7 @@
 #define PKT_TYPE_HELLO              0x02
 #define PKT_TYPE_BUTTON             0x03
 #define PKT_TYPE_FLOW               0x04
+#define PKT_TYPE_FLASH_INFO         0x05
 
 #define CMD_TYPE_DRAW_RECT          0x10
 #define CMD_TYPE_SET_BACKLIGHT      0x11
@@ -22,6 +23,7 @@
 #define CMD_TYPE_BEEP               0x13
 #define CMD_TYPE_PLAY_MELODY        0x14
 #define CMD_TYPE_ENTER_BOOTLOADER   0x1F
+#define CMD_TYPE_GET_FLASH_INFO     0x20
 
 #define BOOTLOADER_MAGIC_KEY        0xDEADBEEFUL
 
@@ -52,6 +54,9 @@ typedef struct {
 
 /* ── HELLO build_flags ── */
 #define HELLO_FLAG_DIRTY            (1 << 0)
+#define HELLO_FLAG_BOOT             (1 << 1)
+#define HELLO_FLAG_FLASH_OK         (1 << 2)
+#define HELLO_FLAG_FLASH_FAIL       (1 << 3)
 /* Set on the one HELLO the GD32 sends after it has finished drawing its own
  * boot screen. The ESP cannot otherwise tell a restart from the keep-alive
  * HELLO that rides every telemetry cycle, and it has to know: while the GD32
@@ -95,6 +100,19 @@ typedef struct {
     uint8_t resume;         /* 0 = hold off, 1 = resume */
     uint16_t crc16;         /* CRC-16-CCITT */
 } pkt_flow_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x05 */
+    uint8_t is_detected;    /* 1 = detected, 0 = fail */
+    uint8_t mfg_id;         /* 0xEF */
+    uint8_t memory_type;    /* 0x40 */
+    uint8_t capacity;       /* 0x16 */
+    uint8_t status_reg1;    /* status register 1 */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} pkt_flash_info_t;
+
 
 typedef struct {
     uint8_t magic0;         /* 0xAA */

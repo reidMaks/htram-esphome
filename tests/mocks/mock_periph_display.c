@@ -111,3 +111,17 @@ void mock_periph_reset(void) {
   mock_periph_melody_count = 0;
   mock_periph_play_melody_called = 0;
 }
+
+/* SPI Flash mocks */
+#include "spi_flash.h"
+static spi_flash_info_t mock_flash_info = {
+    .is_detected = 1,
+    .mfg_id = 0xEF,
+    .memory_type = 0x40,
+    .capacity = 0x16,
+    .status_reg1 = 0x00,
+};
+
+const spi_flash_info_t* spi_flash_get_info(void) {
+  return &mock_flash_info;
+}

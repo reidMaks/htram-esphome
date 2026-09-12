@@ -19,6 +19,7 @@ BUILD_EPOCH := $(if $(SOURCE_DATE_EPOCH),$(SOURCE_DATE_EPOCH),$(shell git log -1
 SRCS    = src/main.c \
           src/display.c \
           src/sensors.c \
+          src/spi_flash.c \
           src/periph.c \
           src/protocol_engine.c \
           src/flasher.c \

@@ -16,16 +16,17 @@ MSB-first. The init value is the detail people get wrong; the usual CCITT
 variant starts at `0xFFFF` and will not validate here.
 
 Uplink (GD32 → ESP): `0x01` telemetry, 14 bytes; `0x02` hello, 17;
-`0x03` button, 8; `0x04` flow control, 6.
+`0x03` button, 8; `0x04` flow control, 6; `0x05` flash info, 10.
 
 Downlink (ESP → GD32): `0x10` draw rect, `0x11` backlight, `0x12` LEDs,
 `0x13` beep, `0x14` melody, `0x1F` enter bootloader (guarded by the key
-`0xDEADBEEF`).
+`0xDEADBEEF`), `0x20` get flash info (5 bytes).
 
 Telemetry status bits: charging `1<<0`, USB present `1<<1`, warm-up `1<<2`,
 sensor error `1<<3`, button `1<<4`, LEDs green/yellow/red `1<<5..7`.
 
-HELLO `build_flags`: dirty tree `1<<0`, **restart announcement `1<<1`**. The
+HELLO `build_flags`: dirty tree `1<<0`, **restart announcement `1<<1`**,
+**SPI flash OK `1<<2`**, **SPI flash FAIL `1<<3`**. The
 GD32 sets the second bit on the first HELLO after a reset, and the ESP answers
 it by repainting the whole screen and re-sending LEDs and backlight. It has to:
 until `protocol_init()` runs, roughly 700 ms in, USART1 does not exist, so

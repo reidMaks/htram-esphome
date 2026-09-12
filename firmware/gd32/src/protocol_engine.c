@@ -3,6 +3,7 @@
 #include "display.h"
 #include "periph.h"
 #include "flasher.h"
+#include "spi_flash.h"
 #include "build_info.h"  /* generated per build: BUILD_EPOCH/BUILD_GIT_HASH/BUILD_DIRTY */
 
 /* ── Low-Level UART1 (PA2=TX, PA3=RX) ── */
@@ -148,7 +149,9 @@ void protocol_send_telemetry(uint16_t co2, int16_t temp, uint16_t hum, uint16_t 
 
 void protocol_send_hello(void)
 {
-    protocol_send_hello_flags(0);
+    const spi_flash_info_t *flash = spi_flash_get_info();
+    uint8_t flags = flash->is_detected ? HELLO_FLAG_FLASH_OK : HELLO_FLAG_FLASH_FAIL;
+    protocol_send_hello_flags(flags);
 }
 
 void protocol_send_hello_flags(uint8_t extra_flags)
@@ -191,6 +194,23 @@ void protocol_send_flow(uint8_t resume)
 
     uart1_write((const uint8_t *)&pkt, sizeof(pkt));
 }
+
+void protocol_send_flash_info(uint8_t is_detected, uint8_t mfg, uint8_t type, uint8_t cap, uint8_t status1)
+{
+    pkt_flash_info_t pkt;
+    pkt.magic0 = PROTOCOL_MAGIC0;
+    pkt.magic1 = PROTOCOL_MAGIC1;
+    pkt.type = PKT_TYPE_FLASH_INFO;
+    pkt.is_detected = is_detected;
+    pkt.mfg_id = mfg;
+    pkt.memory_type = type;
+    pkt.capacity = cap;
+    pkt.status_reg1 = status1;
+    pkt.crc16 = crc16_ccitt(&pkt.type, sizeof(pkt) - 4);
+
+    uart1_write((const uint8_t *)&pkt, sizeof(pkt));
+}
+
 
 /* ── RX Parsing State Machine ── */
 
@@ -294,6 +314,9 @@ void protocol_process_rx(void)
             } else if (current_cmd == CMD_TYPE_ENTER_BOOTLOADER) {
                 cmd_buf_expected = 4; /* Key (4) */
                 rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_GET_FLASH_INFO) {
+                cmd_buf_expected = 0;
+                rx_state = STATE_CRC0;
             } else {
                 /* Unknown command */
                 reset_rx_state();
@@ -421,6 +444,9 @@ void protocol_process_rx(void)
                             ;
                         flasher_run();
                     }
+                } else if (current_cmd == CMD_TYPE_GET_FLASH_INFO) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    protocol_send_flash_info(info->is_detected, info->mfg_id, info->memory_type, info->capacity, info->status_reg1);
                 }
             }
             reset_rx_state();

@@ -7,6 +7,7 @@ from . import HtramGd32Component
 CONF_HTRAM_ID = "htram_gd32_id"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BUTTON_ACTION = "button_action"
+CONF_SPI_FLASH = "spi_flash"
 
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(CONF_HTRAM_ID): cv.use_id(HtramGd32Component),
@@ -15,6 +16,9 @@ CONFIG_SCHEMA = cv.Schema({
     ),
     cv.Optional(CONF_BUTTON_ACTION): text_sensor.text_sensor_schema(
         icon="mdi:gesture-tap-button",
+    ),
+    cv.Optional(CONF_SPI_FLASH): text_sensor.text_sensor_schema(
+        icon="mdi:memory",
     ),
 })
 
@@ -27,3 +31,7 @@ def to_code(config):
     if CONF_BUTTON_ACTION in config:
         ts = yield text_sensor.new_text_sensor(config[CONF_BUTTON_ACTION])
         cg.add(hub.set_button_action_sensor(ts))
+    if CONF_SPI_FLASH in config:
+        ts = yield text_sensor.new_text_sensor(config[CONF_SPI_FLASH])
+        cg.add(hub.set_spi_flash_sensor(ts))
+

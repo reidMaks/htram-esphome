@@ -19,6 +19,10 @@ project's worst bugs were exactly that, and neither announced itself:
   conclusion: the bench proved `PB2` gates neither the SHT30 nor the ADC
   divider, and that got read as "the pin does nothing". Nobody had asked it
   about the charger.
+- Driving `PA6` or leaving `PA4` floating **caused bus contention and brownout
+  on the 3.3 V rail**, rebooting the ESP32. `PA4` (CS) must be driven HIGH
+  *before* configuring it as output push-pull; `PA6` (MISO) must *strictly*
+  remain Input with Pull-Up.
 
 The way to establish a pin is to compare against the factory image running on
 live hardware over SWD, then confirm with an SRAM probe -- see `htram-bench`.
@@ -30,6 +34,7 @@ live hardware over SWD, then confirm with an SRAM probe -- see `htram-bench`.
 | `PA0` | button, active-HIGH, pulled to GND on the board |
 | `PA1` | LED anode rail via P-MOSFET (HIGH = LEDs powered) |
 | `PA2`/`PA3` | USART1 to the ESP32 (TX/RX) |
+| `PA4`..`PA7` | External SPI Flash (Winbond W25Q32, 4 MB): `PA4` CS (assert HIGH before OUT), `PA5` SCK, `PA6` MISO (INPUT pull-up), `PA7` MOSI |
 | `PA8` | **ESP32 RESET/EN** -- leave as INPUT |
 | `PA9`/`PA10` | USART0 to the CO2 sensor, 9600, Modbus |
 | `PA15` | CHRG from the charger, **active LOW**, open-drain |

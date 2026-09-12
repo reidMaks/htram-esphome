@@ -164,11 +164,8 @@ external_components:
   # The GD32 driver is this repository's own -- it is meaningless without the
   # firmware in firmware/gd32/, so it stays beside it.
   - source:
-      type: git
-      url: https://github.com/reidMaks/htram-esphome
-      ref: main
-      path: esphome/custom_components
-    refresh: 0s
+      type: local
+      path: custom_components
     components: [htram_gd32]
   # The alert map client never touched this hardware, so it lives on its own
   # and any ESP-IDF device can use it. Pinned to a tag, not main: this config
@@ -1456,6 +1453,9 @@ text_sensor:
   - platform: htram_gd32
     firmware_version:
       name: "GD32 Firmware"
+      entity_category: diagnostic
+    spi_flash:
+      name: "GD32 SPI Flash"
       entity_category: diagnostic
     button_action:
       name: "Button Action"

@@ -34,12 +34,14 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void set_battery_sensor(sensor::Sensor *s) { batt_sensor_ = s; }
   void set_battery_level_sensor(sensor::Sensor *s) { batt_level_sensor_ = s; }
   void set_fw_version_sensor(text_sensor::TextSensor *s) { fw_version_sensor_ = s; }
+  void set_spi_flash_sensor(text_sensor::TextSensor *s) { spi_flash_sensor_ = s; }
   void set_usb_binary_sensor(binary_sensor::BinarySensor *s) { usb_sensor_ = s; }
   void set_charging_binary_sensor(binary_sensor::BinarySensor *s) { charging_sensor_ = s; }
   void set_led_switch(uint8_t channel, switch_::Switch *s) {
     if (channel < 3) led_switch_[channel] = s;
   }
 
+  void send_get_flash_info();
   void send_beep(uint16_t freq, uint16_t dur);
   void send_backlight(uint8_t brightness);
   void send_leds(uint8_t r, uint8_t y, uint8_t g, uint8_t brightness);
@@ -88,6 +90,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   sensor::Sensor *batt_sensor_{nullptr};
   sensor::Sensor *batt_level_sensor_{nullptr};
   text_sensor::TextSensor *fw_version_sensor_{nullptr};
+  text_sensor::TextSensor *spi_flash_sensor_{nullptr};
   text_sensor::TextSensor *button_action_sensor_{nullptr};
   binary_sensor::BinarySensor *usb_sensor_{nullptr};
   binary_sensor::BinarySensor *charging_sensor_{nullptr};
@@ -96,6 +99,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   switch_::Switch *led_switch_[3]{nullptr, nullptr, nullptr};  // 0=red 1=yellow 2=green
   bool led_state_[3]{false, false, false};
   std::string fw_version_;  // last published, to avoid redundant updates
+  std::string spi_flash_status_;
 
   std::vector<uint8_t> rx_buffer_;
   uint16_t last_batt_mv_{0};

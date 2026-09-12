@@ -334,6 +334,30 @@ void test_cmd_enter_bootloader_invalid_key(void) {
   TEST_ASSERT_EQUAL(0, mock_flasher_run_called);
 }
 
+void test_cmd_get_flash_info(void) {
+  uint8_t pkt[5];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_GET_FLASH_INFO;
+  uint16_t crc = crc16_ccitt(&pkt[2], 1);
+  pkt[3] = (uint8_t)(crc & 0xFF);
+  pkt[4] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  inject_rx_bytes(pkt, 5);
+  protocol_process_rx();
+
+  /* Check PKT_TYPE_FLASH_INFO sent */
+  TEST_ASSERT_EQUAL(10, mock_tx_capture_len);
+  TEST_ASSERT_EQUAL_HEX8(PROTOCOL_MAGIC0, mock_tx_capture[0]);
+  TEST_ASSERT_EQUAL_HEX8(PROTOCOL_MAGIC1, mock_tx_capture[1]);
+  TEST_ASSERT_EQUAL_HEX8(PKT_TYPE_FLASH_INFO, mock_tx_capture[2]);
+  TEST_ASSERT_EQUAL_HEX8(1, mock_tx_capture[3]);
+  TEST_ASSERT_EQUAL_HEX8(0xEF, mock_tx_capture[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x40, mock_tx_capture[5]);
+  TEST_ASSERT_EQUAL_HEX8(0x16, mock_tx_capture[6]);
+}
+
 void test_corrupted_crc_rejected(void) {
   uint8_t pkt[6];
   pkt[0] = PROTOCOL_MAGIC0;
@@ -457,6 +481,7 @@ int main(void) {
   RUN_TEST(test_cmd_draw_rect_zero_dim);
   RUN_TEST(test_cmd_enter_bootloader_valid);
   RUN_TEST(test_cmd_enter_bootloader_invalid_key);
+  RUN_TEST(test_cmd_get_flash_info);
   RUN_TEST(test_corrupted_crc_rejected);
   RUN_TEST(test_rx_consecutive_magic0);
   RUN_TEST(test_rx_invalid_magic_resets);

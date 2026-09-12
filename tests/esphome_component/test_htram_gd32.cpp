@@ -38,6 +38,7 @@ static sensor::Sensor* g_hum_s = nullptr;
 static sensor::Sensor* g_batt_s = nullptr;
 static sensor::Sensor* g_batt_lvl_s = nullptr;
 static text_sensor::TextSensor* g_fw_s = nullptr;
+static text_sensor::TextSensor* g_flash_s = nullptr;
 static text_sensor::TextSensor* g_btn_act_s = nullptr;
 static binary_sensor::BinarySensor* g_usb_s = nullptr;
 static binary_sensor::BinarySensor* g_chrg_s = nullptr;
@@ -54,6 +55,7 @@ void setUp(void) {
   g_batt_s = new sensor::Sensor();
   g_batt_lvl_s = new sensor::Sensor();
   g_fw_s = new text_sensor::TextSensor();
+  g_flash_s = new text_sensor::TextSensor();
   g_btn_act_s = new text_sensor::TextSensor();
   g_usb_s = new binary_sensor::BinarySensor();
   g_chrg_s = new binary_sensor::BinarySensor();
@@ -70,6 +72,7 @@ void setUp(void) {
   g_comp->set_battery_sensor(g_batt_s);
   g_comp->set_battery_level_sensor(g_batt_lvl_s);
   g_comp->set_fw_version_sensor(g_fw_s);
+  g_comp->set_spi_flash_sensor(g_flash_s);
   g_comp->set_button_action_sensor(g_btn_act_s);
   g_comp->set_usb_binary_sensor(g_usb_s);
   g_comp->set_charging_binary_sensor(g_chrg_s);
@@ -84,6 +87,7 @@ void tearDown(void) {
   delete g_batt_s;
   delete g_batt_lvl_s;
   delete g_fw_s;
+  delete g_flash_s;
   delete g_btn_act_s;
   delete g_usb_s;
   delete g_chrg_s;
@@ -152,6 +156,9 @@ void test_head_packet_len_cases(void) {
 
   g_comp->rx_buffer_ = {0xAA, 0x55, 0x04};
   TEST_ASSERT_EQUAL(6, g_comp->head_packet_len_());
+
+  g_comp->rx_buffer_ = {0xAA, 0x55, 0x05};
+  TEST_ASSERT_EQUAL(10, g_comp->head_packet_len_());
 
   g_comp->rx_buffer_ = {0xAA, 0x55, 0x99, 0x01, 0x02};
   TEST_ASSERT_EQUAL(0, g_comp->head_packet_len_());
@@ -275,6 +282,36 @@ void test_hello_packet_parsing(void) {
 
   TEST_ASSERT_TRUE(g_comp->consume_gd32_boot());
   TEST_ASSERT_FALSE(g_comp->consume_gd32_boot());
+}
+
+static std::vector<uint8_t> make_flash_info_pkt(uint8_t is_det, uint8_t mfg, uint8_t type, uint8_t cap,
+                                                uint8_t status1) {
+  std::vector<uint8_t> pkt(10);
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x05;
+  pkt[3] = is_det;
+  pkt[4] = mfg;
+  pkt[5] = type;
+  pkt[6] = cap;
+  pkt[7] = status1;
+  uint16_t crc = crc16_ccitt(pkt.data() + 2, 6);
+  pkt[8] = crc & 0xFF;
+  pkt[9] = crc >> 8;
+  return pkt;
+}
+
+void test_flash_info_packet_parsing(void) {
+  auto pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(pkt.data(), pkt.size());
+
+  TEST_ASSERT_TRUE(g_flash_s->has_state);
+  TEST_ASSERT_NOT_NULL(strstr(g_flash_s->state.c_str(), "W25Q32 4MB"));
+  TEST_ASSERT_NOT_NULL(strstr(g_flash_s->state.c_str(), "EF 40 16"));
+
+  auto pkt_fail = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(pkt_fail.data(), pkt_fail.size());
+  TEST_ASSERT_NOT_NULL(strstr(g_flash_s->state.c_str(), "Not detected"));
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +493,11 @@ void test_outgoing_commands(void) {
   TEST_ASSERT_EQUAL(6, g_comp->mock_tx_bytes.size());
   TEST_ASSERT_EQUAL_HEX8(0x14, g_comp->mock_tx_bytes[2]);
   TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_get_flash_info();
+  TEST_ASSERT_EQUAL(5, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x20, g_comp->mock_tx_bytes[2]);
 
   g_comp->mock_clear_tx();
   g_comp->send_enter_bootloader();
@@ -727,6 +769,7 @@ int main(void) {
   RUN_TEST(test_telemetry_packet_corrupt_crc);
   RUN_TEST(test_telemetry_packet_flags_suppression);
   RUN_TEST(test_hello_packet_parsing);
+  RUN_TEST(test_flash_info_packet_parsing);
   RUN_TEST(test_flow_control_packet);
   RUN_TEST(test_wait_for_flow_unpauses_or_times_out);
   RUN_TEST(test_button_pressed_and_long_press);

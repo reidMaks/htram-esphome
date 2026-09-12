@@ -85,6 +85,9 @@ size_t HtramGd32Component::head_packet_len_() {
     case 0x04:
       // magic(2)+type(1)+resume(1)+crc16(2)
       return 6;
+    case 0x05:
+      // magic(2)+type(1)+is_detected(1)+mfg(1)+type(1)+cap(1)+status1(1)+crc16(2)
+      return 10;
     default:
       ESP_LOGW(TAG, "Unknown packet type: 0x%02X", rx_buffer_[2]);
       rx_buffer_.clear();
@@ -215,6 +218,14 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
       ESP_LOGI(TAG, "GD32 announced a restart; display and LED state need resending");
       this->gd32_booted_ = true;
     }
+    if (flags & 0x04) {
+      ESP_LOGI(TAG, "GD32 reported SPI Flash OK");
+    } else if (flags & 0x08) {
+      ESP_LOGW(TAG, "GD32 reported SPI Flash FAIL");
+    }
+    if (this->spi_flash_status_.empty()) {
+      this->send_get_flash_info();
+    }
   } else if (type == 0x04) {
     // pkt_flow_t: resume(1). 0 = hold off the pixel stream, 1 = carry on.
     this->flow_paused_ = (data[3] == 0);
@@ -270,7 +281,39 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
       ESP_LOGD(TAG, "Button pressed");
       this->cancel_timeout("button_clear");
     }
+  } else if (type == 0x05) {
+    // pkt_flash_info_t: is_detected(1) mfg(1) mem_type(1) cap(1) status1(1)
+    uint8_t is_detected = data[3];
+    uint8_t mfg = data[4];
+    uint8_t mem_type = data[5];
+    uint8_t cap = data[6];
+    uint8_t status1 = data[7];
+
+    char buf[64];
+    if (is_detected) {
+      if (mfg == 0xEF && mem_type == 0x40 && cap == 0x16) {
+        snprintf(buf, sizeof(buf), "W25Q32 4MB [EF 40 16, S=0x%02X]", status1);
+      } else {
+        snprintf(buf, sizeof(buf), "Flash [%02X %02X %02X, S=0x%02X]", mfg, mem_type, cap, status1);
+      }
+      ESP_LOGI(TAG, "GD32 SPI Flash detected: %s", buf);
+    } else {
+      snprintf(buf, sizeof(buf), "Not detected [%02X %02X %02X]", mfg, mem_type, cap);
+      ESP_LOGW(TAG, "GD32 SPI Flash NOT detected: %s", buf);
+    }
+    if (this->spi_flash_sensor_ != nullptr && this->spi_flash_status_ != buf) {
+      this->spi_flash_status_ = buf;
+      this->spi_flash_sensor_->publish_state(buf);
+    }
   }
+}
+
+void HtramGd32Component::send_get_flash_info() {
+  uint8_t pkt[5] = {0xAA, 0x55, 0x20};
+  uint16_t crc = crc16_ccitt(&pkt[2], 1);
+  pkt[3] = crc & 0xFF;
+  pkt[4] = crc >> 8;
+  this->write_array(pkt, 5);
 }
 
 void HtramGd32Component::dump_config() {
