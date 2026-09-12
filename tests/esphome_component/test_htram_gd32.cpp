@@ -160,6 +160,12 @@ void test_head_packet_len_cases(void) {
   g_comp->rx_buffer_ = {0xAA, 0x55, 0x05};
   TEST_ASSERT_EQUAL(10, g_comp->head_packet_len_());
 
+  g_comp->rx_buffer_ = {0xAA, 0x55, 0x06};
+  TEST_ASSERT_EQUAL(11, g_comp->head_packet_len_());
+
+  g_comp->rx_buffer_ = {0xAA, 0x55, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00};
+  TEST_ASSERT_EQUAL(16, g_comp->head_packet_len_());
+
   g_comp->rx_buffer_ = {0xAA, 0x55, 0x99, 0x01, 0x02};
   TEST_ASSERT_EQUAL(0, g_comp->head_packet_len_());
   TEST_ASSERT_EQUAL(0, g_comp->rx_buffer_.size());
@@ -312,6 +318,63 @@ void test_flash_info_packet_parsing(void) {
   auto pkt_fail = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
   g_comp->process_packet_(pkt_fail.data(), pkt_fail.size());
   TEST_ASSERT_NOT_NULL(strstr(g_flash_s->state.c_str(), "Not detected"));
+}
+
+static std::vector<uint8_t> make_flash_ack_pkt(uint8_t cmd, uint8_t status, uint32_t addr) {
+  std::vector<uint8_t> pkt(11);
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x06;
+  pkt[3] = cmd;
+  pkt[4] = status;
+  pkt[5] = addr & 0xFF;
+  pkt[6] = (addr >> 8) & 0xFF;
+  pkt[7] = (addr >> 16) & 0xFF;
+  pkt[8] = (addr >> 24) & 0xFF;
+  uint16_t crc = crc16_ccitt(pkt.data() + 2, 7);
+  pkt[9] = crc & 0xFF;
+  pkt[10] = crc >> 8;
+  return pkt;
+}
+
+void test_flash_ack_packet_parsing(void) {
+  auto pkt = make_flash_ack_pkt(0x21, 0x00, 0x00001000);
+  g_comp->process_packet_(pkt.data(), pkt.size());
+
+  TEST_ASSERT_EQUAL_HEX8(0x21, g_comp->last_flash_ack_cmd());
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->last_flash_ack_status());
+  TEST_ASSERT_EQUAL_HEX32(0x00001000, g_comp->last_flash_ack_addr());
+}
+
+static std::vector<uint8_t> make_flash_data_pkt(uint8_t status, uint32_t addr, const std::vector<uint8_t>& payload) {
+  std::vector<uint8_t> pkt(12 + payload.size());
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x07;
+  pkt[3] = status;
+  pkt[4] = addr & 0xFF;
+  pkt[5] = (addr >> 8) & 0xFF;
+  pkt[6] = (addr >> 16) & 0xFF;
+  pkt[7] = (addr >> 24) & 0xFF;
+  uint16_t len = payload.size();
+  pkt[8] = len & 0xFF;
+  pkt[9] = (len >> 8) & 0xFF;
+  std::copy(payload.begin(), payload.end(), pkt.begin() + 10);
+  uint16_t crc = crc16_ccitt(pkt.data() + 2, 8 + len);
+  pkt[10 + len] = crc & 0xFF;
+  pkt[11 + len] = crc >> 8;
+  return pkt;
+}
+
+void test_flash_data_packet_parsing(void) {
+  std::vector<uint8_t> test_bytes = {0xDE, 0xAD, 0xBE, 0xEF, 0x42};
+  auto pkt = make_flash_data_pkt(0x00, 0x00002000, test_bytes);
+  g_comp->process_packet_(pkt.data(), pkt.size());
+
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->last_flash_read_status());
+  TEST_ASSERT_EQUAL_HEX32(0x00002000, g_comp->last_flash_read_addr());
+  TEST_ASSERT_EQUAL(5, g_comp->last_flash_read_data().size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(test_bytes.data(), g_comp->last_flash_read_data().data(), 5);
 }
 
 // ---------------------------------------------------------------------------
@@ -511,6 +574,68 @@ void test_outgoing_commands(void) {
   TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[2]);
   TEST_ASSERT_EQUAL(10, g_comp->mock_tx_bytes[3]);
   TEST_ASSERT_EQUAL(20, g_comp->mock_tx_bytes[4]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_erase_sector(0x00001000);
+  TEST_ASSERT_EQUAL(9, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x55, g_comp->mock_tx_bytes[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x21, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[6]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_erase_block(0x00010000);
+  TEST_ASSERT_EQUAL(9, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x24, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[6]);
+
+  g_comp->mock_clear_tx();
+  uint8_t wdata[4] = {1, 2, 3, 4};
+  g_comp->send_flash_write_chunk(0x00001000, wdata, 4);
+  TEST_ASSERT_EQUAL(15, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x22, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(4, g_comp->mock_tx_bytes[7]);
+  TEST_ASSERT_EQUAL_HEX8(0, g_comp->mock_tx_bytes[8]);
+  TEST_ASSERT_EQUAL_HEX8(1, g_comp->mock_tx_bytes[9]);
+  TEST_ASSERT_EQUAL_HEX8(4, g_comp->mock_tx_bytes[12]);
+
+  // Zero-length or oversized write chunk ignored
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_write_chunk(0x00001000, wdata, 0);
+  TEST_ASSERT_EQUAL(0, g_comp->mock_tx_bytes.size());
+  uint8_t big_chunk[257];
+  g_comp->send_flash_write_chunk(0x00001000, big_chunk, 257);
+  TEST_ASSERT_EQUAL(0, g_comp->mock_tx_bytes.size());
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_verify_crc(0x00001000, 256, 0x12345678);
+  TEST_ASSERT_EQUAL(17, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x23, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[7]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[8]);
+  TEST_ASSERT_EQUAL_HEX8(0x78, g_comp->mock_tx_bytes[11]);
+  TEST_ASSERT_EQUAL_HEX8(0x56, g_comp->mock_tx_bytes[12]);
+  TEST_ASSERT_EQUAL_HEX8(0x34, g_comp->mock_tx_bytes[13]);
+  TEST_ASSERT_EQUAL_HEX8(0x12, g_comp->mock_tx_bytes[14]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_read(0x00001000, 64);
+  TEST_ASSERT_EQUAL(11, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x25, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(64, g_comp->mock_tx_bytes[7]);
+  TEST_ASSERT_EQUAL_HEX8(0, g_comp->mock_tx_bytes[8]);
 
   class TestableLedSwitch : public HtramLedSwitch {
    public:
@@ -770,6 +895,8 @@ int main(void) {
   RUN_TEST(test_telemetry_packet_flags_suppression);
   RUN_TEST(test_hello_packet_parsing);
   RUN_TEST(test_flash_info_packet_parsing);
+  RUN_TEST(test_flash_ack_packet_parsing);
+  RUN_TEST(test_flash_data_packet_parsing);
   RUN_TEST(test_flow_control_packet);
   RUN_TEST(test_wait_for_flow_unpauses_or_times_out);
   RUN_TEST(test_button_pressed_and_long_press);

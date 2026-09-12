@@ -42,6 +42,19 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   }
 
   void send_get_flash_info();
+  void send_flash_erase_sector(uint32_t addr);
+  void send_flash_erase_block(uint32_t addr);
+  void send_flash_write_chunk(uint32_t addr, const uint8_t *data, size_t len);
+  void send_flash_verify_crc(uint32_t addr, uint32_t len, uint32_t expected_crc32);
+  void send_flash_read(uint32_t addr, uint16_t len);
+
+  uint8_t last_flash_ack_cmd() const { return last_flash_ack_cmd_; }
+  uint8_t last_flash_ack_status() const { return last_flash_ack_status_; }
+  uint32_t last_flash_ack_addr() const { return last_flash_ack_addr_; }
+  uint8_t last_flash_read_status() const { return last_flash_read_status_; }
+  uint32_t last_flash_read_addr() const { return last_flash_read_addr_; }
+  const std::vector<uint8_t> &last_flash_read_data() const { return last_flash_read_data_; }
+
   void send_beep(uint16_t freq, uint16_t dur);
   void send_backlight(uint8_t brightness);
   void send_leds(uint8_t r, uint8_t y, uint8_t g, uint8_t brightness);
@@ -100,6 +113,12 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   bool led_state_[3]{false, false, false};
   std::string fw_version_;  // last published, to avoid redundant updates
   std::string spi_flash_status_;
+  uint8_t last_flash_ack_cmd_{0};
+  uint8_t last_flash_ack_status_{0};
+  uint32_t last_flash_ack_addr_{0};
+  uint8_t last_flash_read_status_{0};
+  uint32_t last_flash_read_addr_{0};
+  std::vector<uint8_t> last_flash_read_data_;
 
   std::vector<uint8_t> rx_buffer_;
   uint16_t last_batt_mv_{0};

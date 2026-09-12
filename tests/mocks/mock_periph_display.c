@@ -98,6 +98,11 @@ void periph_play_melody(const uint8_t* notes4, uint8_t count) {
   mock_periph_melody_count = count;
 }
 
+int mock_watchdog_kick_called = 0;
+void watchdog_kick(void) {
+  mock_watchdog_kick_called++;
+}
+
 void mock_periph_reset(void) {
   mock_periph_millis_val = 1000;
   mock_periph_led_r = 0;
@@ -110,6 +115,7 @@ void mock_periph_reset(void) {
   mock_periph_beep_called = 0;
   mock_periph_melody_count = 0;
   mock_periph_play_melody_called = 0;
+  mock_watchdog_kick_called = 0;
 }
 
 /* SPI Flash mocks */
@@ -122,6 +128,93 @@ static spi_flash_info_t mock_flash_info = {
     .status_reg1 = 0x00,
 };
 
-const spi_flash_info_t* spi_flash_get_info(void) {
+int mock_flash_sector_erase_called = 0;
+uint32_t mock_flash_last_sector_erase_addr = 0;
+int mock_flash_block_erase_called = 0;
+uint32_t mock_flash_last_block_erase_addr = 0;
+int mock_flash_page_program_called = 0;
+uint32_t mock_flash_last_page_program_addr = 0;
+size_t mock_flash_last_page_program_len = 0;
+uint8_t mock_flash_page_program_buf[256];
+int mock_flash_read_data_called = 0;
+uint32_t mock_flash_last_read_addr = 0;
+size_t mock_flash_last_read_len = 0;
+uint8_t mock_flash_read_data_fill = 0xA5;
+int mock_flash_verify_crc32_called = 0;
+uint32_t mock_flash_last_verify_addr = 0;
+uint32_t mock_flash_last_verify_len = 0;
+uint32_t mock_flash_last_verify_exp_crc = 0;
+int mock_flash_verify_crc32_result = 0; /* 0 = match, -2 = mismatch */
+
+void mock_flash_reset(void) {
+  mock_flash_info.is_detected = 1;
+  mock_flash_info.mfg_id = 0xEF;
+  mock_flash_info.memory_type = 0x40;
+  mock_flash_info.capacity = 0x16;
+  mock_flash_info.status_reg1 = 0x00;
+  mock_flash_sector_erase_called = 0;
+  mock_flash_last_sector_erase_addr = 0;
+  mock_flash_block_erase_called = 0;
+  mock_flash_last_block_erase_addr = 0;
+  mock_flash_page_program_called = 0;
+  mock_flash_last_page_program_addr = 0;
+  mock_flash_last_page_program_len = 0;
+  memset(mock_flash_page_program_buf, 0, sizeof(mock_flash_page_program_buf));
+  mock_flash_read_data_called = 0;
+  mock_flash_last_read_addr = 0;
+  mock_flash_last_read_len = 0;
+  mock_flash_read_data_fill = 0xA5;
+  mock_flash_verify_crc32_called = 0;
+  mock_flash_last_verify_addr = 0;
+  mock_flash_last_verify_len = 0;
+  mock_flash_last_verify_exp_crc = 0;
+  mock_flash_verify_crc32_result = 0;
+}
+
+void mock_flash_set_detected(int detected) {
+  mock_flash_info.is_detected = detected ? 1 : 0;
+}
+
+__attribute__((weak)) const spi_flash_info_t* spi_flash_get_info(void) {
   return &mock_flash_info;
+}
+
+__attribute__((weak)) int spi_flash_sector_erase_4k(uint32_t addr) {
+  mock_flash_sector_erase_called++;
+  mock_flash_last_sector_erase_addr = addr;
+  return 0;
+}
+
+__attribute__((weak)) int spi_flash_block_erase_64k(uint32_t addr) {
+  mock_flash_block_erase_called++;
+  mock_flash_last_block_erase_addr = addr;
+  return 0;
+}
+
+__attribute__((weak)) int spi_flash_page_program(uint32_t addr, const uint8_t* data, size_t len) {
+  mock_flash_page_program_called++;
+  mock_flash_last_page_program_addr = addr;
+  mock_flash_last_page_program_len = len;
+  if (data && len <= sizeof(mock_flash_page_program_buf)) {
+    memcpy(mock_flash_page_program_buf, data, len);
+  }
+  return 0;
+}
+
+__attribute__((weak)) int spi_flash_read_data(uint32_t addr, uint8_t* data, size_t len) {
+  mock_flash_read_data_called++;
+  mock_flash_last_read_addr = addr;
+  mock_flash_last_read_len = len;
+  if (data) {
+    memset(data, mock_flash_read_data_fill, len);
+  }
+  return 0;
+}
+
+__attribute__((weak)) int spi_flash_verify_crc32(uint32_t addr, uint32_t len, uint32_t expected_crc32) {
+  mock_flash_verify_crc32_called++;
+  mock_flash_last_verify_addr = addr;
+  mock_flash_last_verify_len = len;
+  mock_flash_last_verify_exp_crc = expected_crc32;
+  return mock_flash_verify_crc32_result;
 }

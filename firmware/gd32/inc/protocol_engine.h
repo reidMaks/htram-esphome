@@ -13,6 +13,8 @@ void protocol_send_button_event(uint8_t state, uint16_t duration_ms);
 /* Ask the ESP to hold off (resume=0) / resume (resume=1) the pixel stream. */
 void protocol_send_flow(uint8_t resume);
 void protocol_send_flash_info(uint8_t is_detected, uint8_t mfg, uint8_t type, uint8_t cap, uint8_t status1);
+void protocol_send_flash_ack(uint8_t cmd, uint8_t status, uint32_t addr);
+void protocol_send_flash_data(uint8_t status, uint32_t addr, const uint8_t *data, uint16_t len);
 void protocol_process_rx(void);
 uint8_t protocol_is_external_display_active(void);
 /* Hand the panel back to local rendering (standby) or to the ESP. */

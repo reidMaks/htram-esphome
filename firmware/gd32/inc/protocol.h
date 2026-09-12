@@ -16,6 +16,8 @@
 #define PKT_TYPE_BUTTON             0x03
 #define PKT_TYPE_FLOW               0x04
 #define PKT_TYPE_FLASH_INFO         0x05
+#define PKT_TYPE_FLASH_ACK          0x06
+#define PKT_TYPE_FLASH_DATA         0x07
 
 #define CMD_TYPE_DRAW_RECT          0x10
 #define CMD_TYPE_SET_BACKLIGHT      0x11
@@ -24,6 +26,21 @@
 #define CMD_TYPE_PLAY_MELODY        0x14
 #define CMD_TYPE_ENTER_BOOTLOADER   0x1F
 #define CMD_TYPE_GET_FLASH_INFO     0x20
+#define CMD_TYPE_FLASH_ERASE_SECTOR 0x21
+#define CMD_TYPE_FLASH_WRITE_CHUNK  0x22
+#define CMD_TYPE_FLASH_VERIFY_CRC   0x23
+#define CMD_TYPE_FLASH_ERASE_BLOCK  0x24
+#define CMD_TYPE_FLASH_READ         0x25
+
+/* ── Flash ACK Status Codes ── */
+#define FLASH_ACK_OK                0x00
+#define FLASH_ACK_ERR_BUSY          0x01
+#define FLASH_ACK_ERR_CRC           0x02
+#define FLASH_ACK_ERR_ADDR          0x03
+#define FLASH_ACK_ERR_TIMEOUT       0x04
+#define FLASH_ACK_ERR_VERIFY        0x05
+#define FLASH_ACK_ERR_LEN           0x06
+#define FLASH_ACK_ERR_NO_FLASH      0x07
 
 #define BOOTLOADER_MAGIC_KEY        0xDEADBEEFUL
 
@@ -156,10 +173,66 @@ typedef struct {
 typedef struct {
     uint8_t magic0;         /* 0xAA */
     uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x06 */
+    uint8_t cmd;            /* Command being acknowledged */
+    uint8_t status;         /* FLASH_ACK_* */
+    uint32_t addr;          /* Address (LE) */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} pkt_flash_ack_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x07 */
+    uint8_t status;         /* FLASH_ACK_* */
+    uint32_t addr;          /* Address (LE) */
+    uint16_t length;        /* Number of bytes that follow (LE) */
+    /* followed by length bytes data and uint16_t crc16 */
+} pkt_flash_data_hdr_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
     uint8_t type;           /* 0x1F */
     uint32_t magic_key;     /* 0xDEADBEEF */
     uint16_t crc16;
 } cmd_enter_bootloader_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x21 (SECTOR) or 0x24 (BLOCK) */
+    uint32_t addr;          /* Address (LE) */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} cmd_flash_erase_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x22 */
+    uint32_t addr;          /* Address (LE) */
+    uint16_t length;        /* Length <= 256 (LE) */
+    /* followed by length bytes data and uint16_t crc16 */
+} cmd_flash_write_chunk_hdr_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x23 */
+    uint32_t addr;          /* Address (LE) */
+    uint32_t length;        /* Length (LE) */
+    uint32_t expected_crc32;/* Expected CRC32 IEEE (LE) */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} cmd_flash_verify_crc_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x25 */
+    uint32_t addr;          /* Address (LE) */
+    uint16_t length;        /* Length <= 256 (LE) */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} cmd_flash_read_t;
 
 #pragma pack(pop)
 
@@ -184,6 +257,25 @@ static inline uint16_t crc16_ccitt(const uint8_t *data, size_t len)
         crc = crc16_ccitt_update(crc, data[i]);
     }
     return crc;
+}
+
+/* ── CRC-32 IEEE 802.3 (Polynomial 0xEDB88320, Init 0xFFFFFFFF, Reflected, Final XOR 0xFFFFFFFF) ── */
+static inline uint32_t crc32_ieee_update(uint32_t crc, uint8_t byte)
+{
+    crc ^= byte;
+    for (int i = 0; i < 8; i++) {
+        crc = (crc >> 1) ^ (0xEDB88320UL & (uint32_t)(-(int32_t)(crc & 1)));
+    }
+    return crc;
+}
+
+static inline uint32_t crc32_ieee(const uint8_t *data, size_t len)
+{
+    uint32_t crc = 0xFFFFFFFFUL;
+    for (size_t i = 0; i < len; i++) {
+        crc = crc32_ieee_update(crc, data[i]);
+    }
+    return ~crc;
 }
 
 #endif /* PROTOCOL_H */

@@ -166,8 +166,5 @@ void gpio_cfg_in(uint32_t base, uint8_t pin, uint8_t pud) {
 }
 
 int gpio_get(uint32_t base, uint8_t pin) {
-  if (base < 4) {
-    return (mock_gpios[base].istat & (1U << pin)) ? 1 : 0;
-  }
-  return 0;
+  return (mock_get_gpio_istat(base) & (1U << pin)) ? 1 : 0;
 }

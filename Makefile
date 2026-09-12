@@ -31,6 +31,7 @@ TEST_DIR := tests
 TEST_BIN_PROTOCOL := $(TEST_DIR)/test_protocol_engine_bin
 TEST_BIN_SENSORS  := $(TEST_DIR)/test_sensors_bin
 TEST_BIN_PERIPH   := $(TEST_DIR)/test_periph_bin
+TEST_BIN_SPI_FLASH:= $(TEST_DIR)/test_spi_flash_bin
 TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
 .PHONY: all test test-gd32 test-esphome test-tools test-configs \
@@ -75,13 +76,15 @@ test: test-gd32 test-esphome test-tools test-configs
 	@echo "========================================================"
 
 # ── GD32 Firmware Tests ─────────────────────────────────────────────────────
-test-gd32: $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH)
+test-gd32: $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH) $(TEST_BIN_SPI_FLASH)
 	@echo "==> Running GD32 Firmware Protocol Engine Tests..."
 	./$(TEST_BIN_PROTOCOL)
 	@echo "==> Running GD32 Firmware Sensor Drivers Tests..."
 	./$(TEST_BIN_SENSORS)
 	@echo "==> Running GD32 Firmware Peripheral & HAL Tests..."
 	./$(TEST_BIN_PERIPH)
+	@echo "==> Running GD32 Firmware SPI Flash Driver Tests..."
+	./$(TEST_BIN_SPI_FLASH)
 
 $(TEST_BIN_PROTOCOL): $(TEST_DIR)/firmware_gd32/test_protocol_engine.c \
                       $(GD32_SRC)/protocol_engine.c \
@@ -101,6 +104,13 @@ $(TEST_BIN_PERIPH): $(TEST_DIR)/firmware_gd32/test_periph.c \
                    $(UNITY_DIR)/unity.c
 	$(CC) $(CFLAGS) $^ -o $@
 
+$(TEST_BIN_SPI_FLASH): $(TEST_DIR)/firmware_gd32/test_spi_flash.c \
+                      $(GD32_SRC)/spi_flash.c \
+                      $(MOCKS_DIR)/mock_gd32.c \
+                      $(MOCKS_DIR)/mock_periph_display.c \
+                      $(UNITY_DIR)/unity.c
+	$(CC) $(CFLAGS) $^ -o $@
+
 # ── ESPHome Component Tests ─────────────────────────────────────────────────
 test-esphome: $(TEST_BIN_ESPHOME)
 	@echo "==> Running ESPHome C++ Component Tests..."
@@ -108,8 +118,10 @@ test-esphome: $(TEST_BIN_ESPHOME)
 
 $(TEST_BIN_ESPHOME): $(TEST_DIR)/esphome_component/test_htram_gd32.cpp \
                      $(MOCKS_DIR)/mock_esphome.cpp \
-                     $(UNITY_DIR)/unity.c
-	$(CXX) $(CXXFLAGS) $^ -o $@
+                     $(UNITY_DIR)/unity.c \
+                     esphome/custom_components/htram_gd32/htram_gd32.cpp \
+                     esphome/custom_components/htram_gd32/htram_gd32.h
+	$(CXX) $(CXXFLAGS) $(TEST_DIR)/esphome_component/test_htram_gd32.cpp $(MOCKS_DIR)/mock_esphome.cpp $(UNITY_DIR)/unity.c -o $@
 
 # ── Python Tools Tests ──────────────────────────────────────────────────────
 test-tools:
@@ -132,6 +144,7 @@ lint-c:
 	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/protocol_engine.c
 	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/sensors.c
 	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/periph.c
+	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/spi_flash.c
 	@echo "==> Running G++ -fanalyzer on ESPHome C++ component..."
 	$(CXX) -fanalyzer -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -fsyntax-only \
 	      -I. -I$(UNITY_DIR) -I$(MOCKS_DIR) -I$(MOCKS_DIR)/esphome -I$(ESPHOME_COMP) \
@@ -161,11 +174,12 @@ format:
 	$(CLANG_FORMAT) -i tests/firmware_gd32/*.c tests/esphome_component/*.cpp tests/mocks/*.c tests/mocks/*.cpp
 
 # ── Code Coverage ────────────────────────────────────────────────────────────
-coverage: clean $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH) $(TEST_BIN_ESPHOME)
+coverage: clean $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH) $(TEST_BIN_SPI_FLASH) $(TEST_BIN_ESPHOME)
 	@echo "==> Running test binaries for coverage collection..."
 	./$(TEST_BIN_PROTOCOL) > /dev/null
 	./$(TEST_BIN_SENSORS) > /dev/null
 	./$(TEST_BIN_PERIPH) > /dev/null
+	./$(TEST_BIN_SPI_FLASH) > /dev/null
 	./$(TEST_BIN_ESPHOME) > /dev/null
 	@echo "\n========================================================"
 	@echo "  C / C++ FIRMWARE & COMPONENT COVERAGE (gcovr)"

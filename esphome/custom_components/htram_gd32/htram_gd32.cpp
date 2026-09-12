@@ -88,6 +88,17 @@ size_t HtramGd32Component::head_packet_len_() {
     case 0x05:
       // magic(2)+type(1)+is_detected(1)+mfg(1)+type(1)+cap(1)+status1(1)+crc16(2)
       return 10;
+    case 0x06:
+      // PKT_TYPE_FLASH_ACK: magic(2)+type(1)+cmd(1)+status(1)+addr(4)+crc16(2)
+      return 11;
+    case 0x07:
+      // PKT_TYPE_FLASH_DATA: magic(2)+type(1)+status(1)+addr(4)+length(2)+data(N)+crc16(2)
+      if (rx_buffer_.size() < 10)
+        return 0;
+      {
+        uint16_t data_len = rx_buffer_[8] | (rx_buffer_[9] << 8);
+        return 10 + data_len + 2;
+      }
     default:
       ESP_LOGW(TAG, "Unknown packet type: 0x%02X", rx_buffer_[2]);
       rx_buffer_.clear();
@@ -305,6 +316,24 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
       this->spi_flash_status_ = buf;
       this->spi_flash_sensor_->publish_state(buf);
     }
+  } else if (type == 0x06) {
+    // pkt_flash_ack_t: cmd(1) status(1) addr(4 LE)
+    uint8_t cmd = data[3];
+    uint8_t status = data[4];
+    uint32_t addr = (uint32_t)data[5] | ((uint32_t)data[6] << 8) | ((uint32_t)data[7] << 16) | ((uint32_t)data[8] << 24);
+    this->last_flash_ack_cmd_ = cmd;
+    this->last_flash_ack_status_ = status;
+    this->last_flash_ack_addr_ = addr;
+    ESP_LOGD(TAG, "GD32 Flash ACK: cmd=0x%02X status=0x%02X addr=0x%08X", cmd, status, (unsigned)addr);
+  } else if (type == 0x07) {
+    // pkt_flash_data_hdr_t: status(1) addr(4 LE) length(2 LE)
+    uint8_t status = data[3];
+    uint32_t addr = (uint32_t)data[4] | ((uint32_t)data[5] << 8) | ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
+    uint16_t data_len = (uint16_t)data[8] | ((uint16_t)data[9] << 8);
+    this->last_flash_read_status_ = status;
+    this->last_flash_read_addr_ = addr;
+    this->last_flash_read_data_.assign(data + 10, data + 10 + data_len);
+    ESP_LOGD(TAG, "GD32 Flash Data: status=0x%02X addr=0x%08X len=%u", status, (unsigned)addr, (unsigned)data_len);
   }
 }
 
@@ -314,6 +343,86 @@ void HtramGd32Component::send_get_flash_info() {
   pkt[3] = crc & 0xFF;
   pkt[4] = crc >> 8;
   this->write_array(pkt, 5);
+}
+
+void HtramGd32Component::send_flash_erase_sector(uint32_t addr) {
+  uint8_t pkt[9] = {0xAA, 0x55, 0x21};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 5);
+  pkt[7] = (uint8_t)(crc & 0xFF);
+  pkt[8] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 9);
+}
+
+void HtramGd32Component::send_flash_erase_block(uint32_t addr) {
+  uint8_t pkt[9] = {0xAA, 0x55, 0x24};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 5);
+  pkt[7] = (uint8_t)(crc & 0xFF);
+  pkt[8] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 9);
+}
+
+void HtramGd32Component::send_flash_write_chunk(uint32_t addr, const uint8_t *data, size_t len) {
+  if (len == 0 || len > 256)
+    return;
+  std::vector<uint8_t> pkt(11 + len);
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x22;
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  pkt[7] = (uint8_t)(len & 0xFF);
+  pkt[8] = (uint8_t)((len >> 8) & 0xFF);
+  if (data && len > 0) {
+    memcpy(&pkt[9], data, len);
+  }
+  uint16_t crc = crc16_ccitt(&pkt[2], 7 + len);
+  pkt[9 + len] = (uint8_t)(crc & 0xFF);
+  pkt[10 + len] = (uint8_t)(crc >> 8);
+  this->write_array(pkt.data(), pkt.size());
+}
+
+void HtramGd32Component::send_flash_verify_crc(uint32_t addr, uint32_t len, uint32_t expected_crc32) {
+  uint8_t pkt[17] = {0xAA, 0x55, 0x23};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  pkt[7] = (uint8_t)(len & 0xFF);
+  pkt[8] = (uint8_t)((len >> 8) & 0xFF);
+  pkt[9] = (uint8_t)((len >> 16) & 0xFF);
+  pkt[10] = (uint8_t)((len >> 24) & 0xFF);
+  pkt[11] = (uint8_t)(expected_crc32 & 0xFF);
+  pkt[12] = (uint8_t)((expected_crc32 >> 8) & 0xFF);
+  pkt[13] = (uint8_t)((expected_crc32 >> 16) & 0xFF);
+  pkt[14] = (uint8_t)((expected_crc32 >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 13);
+  pkt[15] = (uint8_t)(crc & 0xFF);
+  pkt[16] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 17);
+}
+
+void HtramGd32Component::send_flash_read(uint32_t addr, uint16_t len) {
+  uint8_t pkt[11] = {0xAA, 0x55, 0x25};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  pkt[7] = (uint8_t)(len & 0xFF);
+  pkt[8] = (uint8_t)((len >> 8) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 7);
+  pkt[9] = (uint8_t)(crc & 0xFF);
+  pkt[10] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 11);
 }
 
 void HtramGd32Component::dump_config() {
