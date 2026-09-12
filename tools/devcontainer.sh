@@ -35,6 +35,7 @@ run_container() {
                 --name "${CONTAINER_NAME}" \
                 --network=host \
                 --privileged \
+                --cpus=7.0 \
                 -v /dev:/dev \
                 -v /run/udev:/run/udev:ro \
                 -v "${WORKSPACE_ROOT}:/workspaces/htram-esphome" \

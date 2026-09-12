@@ -7,7 +7,8 @@
   "remoteUser": "ubuntu",
   "runArgs": [
     "--network=host",
-    "--privileged"
+    "--privileged",
+    "--cpus=7.0"
   ],
   "mounts": [
     "source=/dev,target=/dev,type=bind",
