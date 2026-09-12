@@ -22,6 +22,7 @@
 #         - esphome/htram-core.yaml
 #         - esphome/features/alarm.yaml
 #         - esphome/features/weather.yaml
+#         - esphome/features/timer.yaml
 #       refresh: 0s
 #   -------------------------------------------------
 
@@ -38,3 +39,4 @@ packages:
   core: !include htram-core.yaml
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
+  timer: !include features/timer.yaml

@@ -21,6 +21,7 @@
 #       files:
 #         - esphome/htram-core.yaml
 #         - esphome/features/weather.yaml
+#         - esphome/features/timer.yaml
 #       refresh: 0s
 #   -------------------------------------------------
 

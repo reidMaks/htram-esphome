@@ -1,4 +1,4 @@
-# HTRAM — повна конфігурація з усіма функціями (Core + Alarm + Weather)
+# HTRAM — повна конфігурація з усіма функціями (Core + Alarm + Weather + Timer)
 #
 # Локальна збірка / прошивка:
 #   uv run esphome run esphome/htram.yaml
@@ -18,6 +18,7 @@
 #         - esphome/htram-core.yaml
 #         - esphome/features/alarm.yaml
 #         - esphome/features/weather.yaml
+#         - esphome/features/timer.yaml
 #       refresh: 0s
 #   -------------------------------------------------
 
