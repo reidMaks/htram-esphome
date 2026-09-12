@@ -474,6 +474,11 @@ script:
           // lv_label_set_text invalidates unconditionally, so each digit is
           // written only when it actually changed.
           static int prev[4] = {-1, -1, -1, -1};
+          static int last_face = -1;
+          if (id(face_state) != last_face) {
+            last_face = id(face_state);
+            prev[0] = prev[1] = prev[2] = prev[3] = -1;
+          }
           const int cur[4] = {now.hour / 10, now.hour % 10,
                               now.minute / 10, now.minute % 10};
           lv_obj_t *const lbl[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
@@ -555,10 +560,12 @@ script:
           lv_obj_t *const face[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
                                     id(ui_slot)};
           for (auto *o : face) {
-            if (want == 0)
+            if (want == 0) {
               lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-            else
+              lv_obj_invalidate(o);
+            } else {
               lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+            }
           }
 
           lv_obj_t *const msg[] = {id(ui_msg_cap), id(ui_msg), id(ui_msg_sub),
@@ -596,7 +603,11 @@ script:
           }
           lv_obj_add_flag(id(ui_tryzub), LV_OBJ_FLAG_HIDDEN);
 
-          if (want == 0) return;
+          if (want == 0) {
+            id(refresh_clock).execute();
+            id(refresh_slot).execute();
+            return;
+          }
 
           if (want == 3) {
             // Both strings come from the running config rather than being
@@ -1058,9 +1069,9 @@ time:
                 - script.execute: minute_of_silence
     on_time_sync:
       then:
+        - script.execute: refresh_face
         - script.execute: refresh_clock
         - script.execute: refresh_slot
-        - script.execute: refresh_face
 
   # The face is a clock, and until now the only thing that could set it was Home
   # Assistant -- so a unit that rebooted while HA was down showed dashes forever.
@@ -1071,9 +1082,9 @@ time:
     timezone: "Europe/Kyiv"
     on_time_sync:
       then:
+        - script.execute: refresh_face
         - script.execute: refresh_clock
         - script.execute: refresh_slot
-        - script.execute: refresh_face
 
 lvgl:
   displays:

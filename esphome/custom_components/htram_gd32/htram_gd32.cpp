@@ -86,7 +86,11 @@ void HtramGd32Component::setup() {
   }
 }
 
-void HtramGd32Component::loop() { this->pump_rx_(false); }
+void HtramGd32Component::loop() {
+  if (ota_mode_)
+    return;
+  this->pump_rx_(false);
+}
 
 /* Length of the packet at the head of the buffer, or 0 if it is not complete
    (or not yet identifiable). Clears the buffer on an unknown type. */
@@ -133,9 +137,6 @@ size_t HtramGd32Component::head_packet_len_() {
    re-entrancy crashed the ESP in lv_inv_area. So anything that is not a flow
    packet is left in the buffer for the next ordinary loop(). */
 void HtramGd32Component::pump_rx_(bool flow_only) {
-  if (ota_mode_)
-    return;
-
   for (;;) {
     size_t need = this->head_packet_len_();
     if (need != 0 && rx_buffer_.size() >= need) {
@@ -168,6 +169,9 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
   uint16_t calculated_crc = crc16_ccitt(data + 2, len - 4);
 
   if (received_crc != calculated_crc) return;
+
+  // During OTA mode, ignore non-flash packets (telemetry, hello, button, flow)
+  if (ota_mode_ && type != 0x05 && type != 0x06 && type != 0x07) return;
 
   if (type == 0x01) {
     uint16_t co2 = data[3] | (data[4] << 8);
@@ -855,6 +859,16 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   ESP_LOGI(TAG, "[OTA] Image size: %d bytes, Staged CRC16: 0x%04X, Battery: %d mV, Status: 0x%02X",
            (int)firmware.size(), staged_crc, last_batt_mv_, last_status_);
 
+  // Suppress LVGL screen updates and light all LEDs to indicate OTA mode
+  send_leds(1, 1, 1, 1);
+  ota_mode_ = true;
+
+  // Drain any pending telemetry in RX buffer
+  while (this->available()) {
+    uint8_t dummy;
+    this->read_byte(&dummy);
+  }
+
   // Phase 4 Safety: Check if SPI Flash is detected and operational
   bool has_spi_flash = (this->spi_flash_sensor_ != nullptr &&
                         !this->spi_flash_status_.empty() &&
@@ -871,6 +885,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
       this->pump_rx_(false);
       if (this->last_flash_ack_cmd_ == 0x26)
         break;
+      App.feed_wdt();
       delay(10);
     }
     if (this->last_flash_ack_cmd_ == 0x26 && this->last_flash_ack_status_ == 0x00) {
@@ -890,10 +905,13 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
       this->pump_rx_(false);
       if (this->last_flash_ack_cmd_ == 0x24)
         break;
+      App.feed_wdt();
       delay(10);
     }
     if (this->last_flash_ack_cmd_ != 0x24 || this->last_flash_ack_status_ != 0x00) {
       ESP_LOGE(TAG, "[OTA 0/6] Staging block erase failed: status=0x%02X", this->last_flash_ack_status_);
+      ota_mode_ = false;
+      resend_leds();
       snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_erase\",\"reason\":\"Block erase failed\"}");
       return buf;
     }
@@ -909,11 +927,15 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
         this->pump_rx_(false);
         if (this->last_flash_ack_cmd_ == 0x22)
           break;
+        App.feed_wdt();
         delay(2);
       }
       if (this->last_flash_ack_cmd_ != 0x22 || this->last_flash_ack_status_ != 0x00) {
         ESP_LOGE(TAG, "[OTA 0/6] Staging chunk at offset 0x%04X failed: status=0x%02X", (unsigned)offset, this->last_flash_ack_status_);
-        snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_chunk\",\"reason\":\"Chunk write failed\"}");
+        ota_mode_ = false;
+        resend_leds();
+        snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_chunk\",\"offset\":%u,\"status\":%u,\"reason\":\"Chunk write failed\"}",
+                 (unsigned)offset, (unsigned)this->last_flash_ack_status_);
         return buf;
       }
       App.feed_wdt();
@@ -928,6 +950,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
       this->pump_rx_(false);
       if (this->last_flash_ack_cmd_ == 0x23)
         break;
+      App.feed_wdt();
       delay(10);
     }
     if (this->last_flash_ack_cmd_ == 0x23 && this->last_flash_ack_status_ == 0x00) {
@@ -935,37 +958,18 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     } else {
       ESP_LOGE(TAG, "[OTA 0/6] Staging verification FAILED! CRC status=0x%02X. Aborting OTA.",
                this->last_flash_ack_status_);
+      ota_mode_ = false;
+      resend_leds();
       snprintf(buf, sizeof(buf),
                "{\"result\":\"error\",\"stage\":\"staging_verify\",\"reason\":\"Staging CRC mismatch in SPI flash\"}");
       return buf;
     }
   }
 
-  // Say something before going deaf. Once ota_mode_ is set, send_draw_rect()
-  // returns early and the panel keeps whatever frame it had -- so to an
-  // onlooker the device is indistinguishable from one that has hung, and the
-  // reasonable reaction to a hung device is to pull its power. Doing that
-  // between the erase and the last write is precisely how this chip gets
-  // bricked, and with no bench in reach that is the end of both OTA paths.
-  //
-  // All three LEDs at once is a combination the CO2 logic never produces, so
-  // it cannot be mistaken for a reading. Deliberately not an LVGL overlay:
-  // this runs on the HTTP task, and mutating LVGL off the render loop is what
-  // crashed this firmware in lv_inv_area before (see pump_rx_). One UART
-  // command, no allocation, no re-entrancy.
-  send_leds(1, 1, 1, 1);
-
-  ota_mode_ = true;
-
   // Drain any pending telemetry in RX buffer
-  int pre_drained = 0;
   while (this->available()) {
     uint8_t dummy;
     this->read_byte(&dummy);
-    pre_drained++;
-  }
-  if (pre_drained > 0) {
-    ESP_LOGD(TAG, "[OTA] Flushed %d old bytes from RX buffer", pre_drained);
   }
 
   // 1. Trigger bootloader
