@@ -447,16 +447,11 @@ void spi_flash_boot_guard_check(void)
 
     spi_flash_superblock_t sb;
     if (spi_flash_read_superblock(&sb) != 0) {
-        uint8_t *p = (uint8_t *)&sb;
-        for (size_t i = 0; i < sizeof(sb); i++) {
-            p[i] = 0;
-        }
-        sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
-        sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
-        sb.boot_status = BOOT_STATUS_CONFIRMED;
-        sb.boot_attempts = 0;
-        sb.active_fw_slot = 0;
-        spi_flash_write_superblock(&sb);
+        /* First boot or uninitialized superblock: create initial backup of
+         * currently running known-good firmware into Slot A (Golden) and Slot B (Rollback). */
+        uint32_t crc = 0;
+        spi_flash_backup_firmware(0, &crc);
+        spi_flash_backup_firmware(1, &crc);
         return;
     }
 
