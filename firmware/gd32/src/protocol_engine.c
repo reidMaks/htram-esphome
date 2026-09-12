@@ -376,6 +376,15 @@ void protocol_process_rx(void)
             } else if (current_cmd == CMD_TYPE_FLASH_READ) {
                 cmd_buf_expected = 6; /* Addr (4), Len (2) */
                 rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_FLASH_BACKUP_FW) {
+                cmd_buf_expected = 1; /* Slot (1) */
+                rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_FLASH_CONFIRM_BOOT) {
+                cmd_buf_expected = 0;
+                rx_state = STATE_CRC0;
+            } else if (current_cmd == CMD_TYPE_FLASH_RESTORE_FW) {
+                cmd_buf_expected = 5; /* Slot (1), Key (4) */
+                rx_state = STATE_HEADER;
             } else {
                 /* Unknown command */
                 reset_rx_state();
@@ -623,6 +632,60 @@ void protocol_process_rx(void)
                         } else {
                             protocol_send_flash_data(FLASH_ACK_ERR_TIMEOUT, addr, NULL, 0);
                         }
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_BACKUP_FW) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    uint8_t slot = cmd_buf[0];
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, 0);
+                    } else if (slot > 2) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_SLOT, 0);
+                    } else {
+                        protocol_send_flow(0);
+                        while (!(USART1_STAT & USART_TC))
+                            ;
+                        uint32_t crc32 = 0;
+                        int res = spi_flash_backup_firmware(slot, &crc32);
+                        protocol_send_flow(1);
+                        uint8_t status = (res == 0) ? FLASH_ACK_OK : ((res == -2) ? FLASH_ACK_ERR_VERIFY : FLASH_ACK_ERR_ADDR);
+                        protocol_send_flash_ack(current_cmd, status, crc32);
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_CONFIRM_BOOT) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, 0);
+                    } else {
+                        int res = spi_flash_confirm_boot();
+                        uint8_t status = (res == 0) ? FLASH_ACK_OK : FLASH_ACK_ERR_VERIFY;
+                        protocol_send_flash_ack(current_cmd, status, 0);
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_RESTORE_FW) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    uint8_t slot = cmd_buf[0];
+                    uint32_t key = (uint32_t)cmd_buf[1] |
+                                   ((uint32_t)cmd_buf[2] << 8) |
+                                   ((uint32_t)cmd_buf[3] << 16) |
+                                   ((uint32_t)cmd_buf[4] << 24);
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, 0);
+                    } else if (key != BOOTLOADER_MAGIC_KEY) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_VERIFY, 0);
+                    } else if (slot > 2) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_SLOT, 0);
+                    } else {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_OK, 0);
+                        while (!(USART1_STAT & USART_TC))
+                            ;
+                        uint32_t slot_addr = (slot == 0) ? SPI_FLASH_SLOT_A_ADDR :
+                                             ((slot == 1) ? SPI_FLASH_SLOT_B_ADDR : SPI_FLASH_SLOT_STAGING_ADDR);
+                        spi_flash_superblock_t sb;
+                        uint32_t size = 65536;
+                        if (spi_flash_read_superblock(&sb) == 0) {
+                            if (slot == 0 && sb.fw_slot_a_size > 0) size = sb.fw_slot_a_size;
+                            else if (slot == 1 && sb.fw_slot_b_size > 0) size = sb.fw_slot_b_size;
+                            else if (slot == 2 && sb.staging_size > 0) size = sb.staging_size;
+                        }
+                        flasher_restore_and_reboot(slot_addr, size);
                     }
                 }
             }

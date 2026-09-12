@@ -1,10 +1,13 @@
 #include <string.h>
 
+#include "flasher.h"
 #include "mock_gd32.h"
 #include "periph.h"
 #include "protocol.h"
 #include "spi_flash.h"
 #include "unity.h"
+
+extern void mock_set_fw_size(uint32_t s);
 
 /* SPI Flash Slave Simulation State */
 #define MISO_QUEUE_MAX 512
@@ -45,6 +48,7 @@ static void queue_miso_bytes(const uint8_t* data, size_t len) {
 
 void setUp(void) {
   mock_gd32_reset();
+  mock_flasher_reset();
   mock_gpio_istat_hook = simulated_miso_hook;
   miso_queue_len = 0;
   miso_queue_idx = 0;
@@ -211,6 +215,133 @@ void test_spi_flash_verify_crc32_match_and_mismatch(void) {
   TEST_ASSERT_EQUAL(-2, res);
 }
 
+void test_spi_flash_superblock_read_write(void) {
+  spi_flash_superblock_t sb;
+  memset(&sb, 0, sizeof(sb));
+  sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
+  sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
+  sb.boot_status = BOOT_STATUS_CONFIRMED;
+  sb.boot_attempts = 0;
+  sb.active_fw_slot = 0;
+  sb.fw_slot_a_size = 14000;
+  sb.fw_slot_a_crc32 = 0x11223344;
+  sb.fw_slot_b_size = 14000;
+  sb.fw_slot_b_crc32 = 0x55667788;
+  sb.superblock_crc32 = crc32_ieee((const uint8_t*)&sb, sizeof(sb) - 4);
+
+  /* Write superblock */
+  int res = spi_flash_write_superblock(&sb);
+  TEST_ASSERT_EQUAL(0, res);
+
+  /* Null pointer check */
+  TEST_ASSERT_EQUAL(-1, spi_flash_write_superblock(NULL));
+  TEST_ASSERT_EQUAL(-1, spi_flash_read_superblock(NULL));
+
+  /* Successful read */
+  uint8_t resp[4 + sizeof(sb)];
+  memset(resp, 0, 4);
+  memcpy(resp + 4, &sb, sizeof(sb));
+  queue_miso_bytes(resp, sizeof(resp));
+
+  spi_flash_superblock_t read_sb;
+  res = spi_flash_read_superblock(&read_sb);
+  TEST_ASSERT_EQUAL(0, res);
+  TEST_ASSERT_EQUAL_HEX64(SPI_FLASH_SUPERBLOCK_MAGIC, read_sb.magic);
+  TEST_ASSERT_EQUAL_HEX8(BOOT_STATUS_CONFIRMED, read_sb.boot_status);
+  TEST_ASSERT_EQUAL_UINT32(14000, read_sb.fw_slot_a_size);
+
+  /* Corrupted CRC32 */
+  sb.superblock_crc32 ^= 0xFFFFFFFF;
+  memcpy(resp + 4, &sb, sizeof(sb));
+  queue_miso_bytes(resp, sizeof(resp));
+  res = spi_flash_read_superblock(&read_sb);
+  TEST_ASSERT_EQUAL(-2, res);
+
+  /* Corrupted Magic */
+  sb.magic = 0x1234;
+  memcpy(resp + 4, &sb, sizeof(sb));
+  queue_miso_bytes(resp, sizeof(resp));
+  res = spi_flash_read_superblock(&read_sb);
+  TEST_ASSERT_EQUAL(-1, res);
+}
+
+void test_spi_flash_confirm_boot(void) {
+  int res = spi_flash_confirm_boot();
+  TEST_ASSERT_EQUAL(0, res);
+}
+
+void test_spi_flash_boot_guard_check_normal(void) {
+  /* When boot_status is CONFIRMED, boot guard does nothing */
+  spi_flash_superblock_t sb;
+  memset(&sb, 0, sizeof(sb));
+  sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
+  sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
+  sb.boot_status = BOOT_STATUS_CONFIRMED;
+  sb.boot_attempts = 0;
+  sb.superblock_crc32 = crc32_ieee((const uint8_t*)&sb, sizeof(sb) - 4);
+
+  uint8_t resp[4 + sizeof(sb)];
+  memset(resp, 0, 4);
+  memcpy(resp + 4, &sb, sizeof(sb));
+  queue_miso_bytes(resp, sizeof(resp));
+
+  spi_flash_boot_guard_check();
+  TEST_ASSERT_EQUAL(0, mock_flasher_restore_called);
+}
+
+void test_spi_flash_boot_guard_check_testing_increment(void) {
+  /* When boot_status is TESTING and attempts < 3, increments attempts */
+  spi_flash_superblock_t sb;
+  memset(&sb, 0, sizeof(sb));
+  sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
+  sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
+  sb.boot_status = BOOT_STATUS_TESTING;
+  sb.boot_attempts = 1;
+  sb.superblock_crc32 = crc32_ieee((const uint8_t*)&sb, sizeof(sb) - 4);
+
+  uint8_t resp[4 + sizeof(sb)];
+  memset(resp, 0, 4);
+  memcpy(resp + 4, &sb, sizeof(sb));
+  queue_miso_bytes(resp, sizeof(resp));
+
+  spi_flash_boot_guard_check();
+  TEST_ASSERT_EQUAL(0, mock_flasher_restore_called);
+}
+
+void test_spi_flash_boot_guard_check_testing_rollback(void) {
+  /* When boot_status is TESTING and attempts >= 3, triggers rollback to Slot B */
+  spi_flash_superblock_t sb;
+  memset(&sb, 0, sizeof(sb));
+  sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
+  sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
+  sb.boot_status = BOOT_STATUS_TESTING;
+  sb.boot_attempts = 3;
+  sb.fw_slot_b_size = 14200;
+  sb.superblock_crc32 = crc32_ieee((const uint8_t*)&sb, sizeof(sb) - 4);
+
+  uint8_t resp[4 + sizeof(sb)];
+  memset(resp, 0, 4);
+  memcpy(resp + 4, &sb, sizeof(sb));
+  queue_miso_bytes(resp, sizeof(resp));
+
+  spi_flash_boot_guard_check();
+  TEST_ASSERT_EQUAL(1, mock_flasher_restore_called);
+  TEST_ASSERT_EQUAL_HEX32(SPI_FLASH_SLOT_B_ADDR, mock_flasher_restore_slot);
+  TEST_ASSERT_EQUAL_UINT32(14200, mock_flasher_restore_size);
+}
+
+void test_spi_flash_backup_firmware(void) {
+  /* Invalid slot > 2 */
+  TEST_ASSERT_EQUAL(-1, spi_flash_backup_firmware(3, NULL));
+
+  /* Valid backup to Slot B */
+  mock_set_fw_size(512);
+  uint32_t out_crc = 0;
+  int res = spi_flash_backup_firmware(1, &out_crc);
+  TEST_ASSERT_EQUAL(0, res);
+  TEST_ASSERT_NOT_EQUAL(0, out_crc);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_spi_flash_init_pin_discipline);
@@ -223,5 +354,11 @@ int main(void) {
   RUN_TEST(test_spi_flash_page_program_validation);
   RUN_TEST(test_spi_flash_read_data_validation);
   RUN_TEST(test_spi_flash_verify_crc32_match_and_mismatch);
+  RUN_TEST(test_spi_flash_superblock_read_write);
+  RUN_TEST(test_spi_flash_confirm_boot);
+  RUN_TEST(test_spi_flash_boot_guard_check_normal);
+  RUN_TEST(test_spi_flash_boot_guard_check_testing_increment);
+  RUN_TEST(test_spi_flash_boot_guard_check_testing_rollback);
+  RUN_TEST(test_spi_flash_backup_firmware);
   return UNITY_END();
 }

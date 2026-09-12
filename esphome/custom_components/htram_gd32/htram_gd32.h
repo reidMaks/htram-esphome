@@ -64,6 +64,9 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void send_stop();                          // silence / cancel current melody
   void play_rtttl(const std::string &song);  // parse RTTTL, stream to GD32
   void send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *pixel_data, size_t len);
+  void send_flash_backup_fw(uint8_t slot);
+  void send_flash_confirm_boot();
+  void send_flash_restore_fw(uint8_t slot);
 
   /* True once per GD32 restart, and cleared by the read.
    *

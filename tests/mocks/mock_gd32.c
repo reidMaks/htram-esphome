@@ -4,6 +4,7 @@
 #include <sys/mman.h>
 
 static void __attribute__((constructor)) init_mock_hardware_memory(void) {
+  mmap((void*)0x08000000, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   mmap((void*)0x40020000, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   mmap((void*)0xE000E000, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 }

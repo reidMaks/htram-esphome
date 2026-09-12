@@ -26,6 +26,7 @@
 #define CMD_ERASE       0x43
 #define CMD_WRITE       0x31
 #define CMD_GO          0x21
+#define CMD_RESTORE_SLOT 0x52
 
 #define RESP_ACK        0x79
 #define RESP_NACK       0x1F
@@ -101,6 +102,93 @@ RAM_CODE static int ram_fmc_write_words(uint32_t addr, const uint32_t *data, uin
     return 0;
 }
 
+RAM_CODE static uint8_t ram_spi_transfer(uint8_t out)
+{
+    uint8_t in = 0;
+    for (int i = 7; i >= 0; i--) {
+        if (out & (1 << i)) {
+            GPIO_BOP(GPIOA_BASE) = (1 << 7); /* MOSI = 1 */
+        } else {
+            GPIO_BC(GPIOA_BASE) = (1 << 7);  /* MOSI = 0 */
+        }
+        GPIO_BOP(GPIOA_BASE) = (1 << 5);     /* SCK = 1 */
+        if (GPIO_ISTAT(GPIOA_BASE) & (1 << 6)) {
+            in |= (1 << i);
+        }
+        GPIO_BC(GPIOA_BASE) = (1 << 5);      /* SCK = 0 */
+    }
+    return in;
+}
+
+RAM_CODE static void ram_spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
+{
+    GPIO_BC(GPIOA_BASE) = (1 << 4); /* CS LOW */
+    ram_spi_transfer(0x03); /* CMD_W25Q_READ_DATA */
+    ram_spi_transfer((uint8_t)((addr >> 16) & 0xFF));
+    ram_spi_transfer((uint8_t)((addr >> 8) & 0xFF));
+    ram_spi_transfer((uint8_t)(addr & 0xFF));
+    for (uint32_t i = 0; i < len; i++) {
+        buf[i] = ram_spi_transfer(0xFF);
+    }
+    GPIO_BOP(GPIOA_BASE) = (1 << 4); /* CS HIGH */
+}
+
+RAM_CODE int flasher_restore_from_slot(uint32_t slot_addr, uint32_t size)
+{
+    if (size == 0 || size > 65536) {
+        return -1;
+    }
+    ram_fmc_unlock();
+    if (ram_fmc_erase_all() != 0) {
+        return -1;
+    }
+    uint8_t page_buf[256];
+    uint32_t offset = 0;
+    while (offset < size) {
+        uint32_t chunk = size - offset;
+        if (chunk > 256) {
+            chunk = 256;
+        }
+        ram_spi_flash_read(slot_addr + offset, page_buf, chunk);
+        uint32_t word_count = (chunk + 3) / 4;
+        if (ram_fmc_write_words(0x08000000 + offset, (const uint32_t *)page_buf, word_count) != 0) {
+            return -1;
+        }
+        offset += chunk;
+        FWDGT_CTL = FWDGT_KEY_RELOAD;
+    }
+    return 0;
+}
+
+RAM_CODE void flasher_restore_and_reboot(uint32_t slot_addr, uint32_t size)
+{
+    /* 1. Disable interrupts so no ISR executes from Flash */
+    __asm__ volatile("cpsid i");
+
+    /* 2. Disable SysTick */
+    *(volatile uint32_t *)0xE000E010 = 0;
+
+    /* 3. Disable NVIC interrupts and clear pending */
+    *(volatile uint32_t *)0xE000E180 = 0xFFFFFFFF;
+    *(volatile uint32_t *)0xE000E280 = 0xFFFFFFFF;
+
+    /* 4. Disable RX interrupt on USART1, switch to pure polled mode */
+    USART1_CTL0 &= ~USART_RBNEIE;
+
+    /* 5. Ensure power latches are held */
+    GPIO_BOP(GPIOC_BASE) = (1 << 15); /* PC15 */
+    GPIO_BOP(GPIOB_BASE) = (1 << 3) | (1 << 9) | (1 << 11); /* PB3, PB9, PB11 */
+    GPIO_BOP(GPIOF_BASE) = (1 << 7); /* PF7 */
+
+    /* 6. Restore from SPI Flash */
+    flasher_restore_from_slot(slot_addr, size);
+
+    /* 7. Hardware system reset via AIRCR */
+    SCB_AIRCR = 0x05FA0004;
+    while (1)
+        ;
+}
+
 RAM_CODE void flasher_run(void)
 {
     /* 1. Disable interrupts so no ISR executes from Flash */
@@ -140,7 +228,7 @@ RAM_CODE void flasher_run(void)
             continue;
         }
 
-        if (c == CMD_ERASE || c == CMD_WRITE || c == CMD_GO) {
+        if (c == CMD_ERASE || c == CMD_WRITE || c == CMD_GO || c == CMD_RESTORE_SLOT) {
             int inv = ram_uart_getc(2000000);
             if (inv < 0 || (uint8_t)(c ^ inv) != 0xFF) {
                 ram_uart_putc(RESP_NACK);
@@ -235,6 +323,31 @@ RAM_CODE void flasher_run(void)
                 );
                 while (1)
                     ;
+            } else if (c == CMD_RESTORE_SLOT) {
+                uint8_t params[5];
+                int ok = 1;
+                for (int i = 0; i < 5; i++) {
+                    int b = ram_uart_getc(2000000);
+                    if (b < 0) { ok = 0; break; }
+                    params[i] = (uint8_t)b;
+                }
+                int rx_chk = ram_uart_getc(2000000);
+                uint8_t calc_chk = params[0] ^ params[1] ^ params[2] ^ params[3] ^ params[4];
+                if (!ok || rx_chk < 0 || (uint8_t)rx_chk != calc_chk) {
+                    ram_uart_putc(RESP_NACK);
+                    continue;
+                }
+                uint8_t slot = params[0];
+                uint32_t size = (uint32_t)params[1] |
+                                ((uint32_t)params[2] << 8) |
+                                ((uint32_t)params[3] << 16) |
+                                ((uint32_t)params[4] << 24);
+                uint32_t slot_addr = (slot == 0) ? 0x00010000 : ((slot == 1) ? 0x00020000 : 0x00030000);
+                if (flasher_restore_from_slot(slot_addr, size) == 0) {
+                    ram_uart_putc(RESP_ACK);
+                } else {
+                    ram_uart_putc(RESP_NACK);
+                }
             }
         }
     }

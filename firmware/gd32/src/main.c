@@ -127,6 +127,7 @@ int main(void)
     const spi_flash_info_t *flash_info = spi_flash_get_info();
     if (flash_info->is_detected) {
         boot_flags |= HELLO_FLAG_FLASH_OK;
+        spi_flash_boot_guard_check();
     } else {
         boot_flags |= HELLO_FLAG_FLASH_FAIL;
     }

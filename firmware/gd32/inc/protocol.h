@@ -31,6 +31,9 @@
 #define CMD_TYPE_FLASH_VERIFY_CRC   0x23
 #define CMD_TYPE_FLASH_ERASE_BLOCK  0x24
 #define CMD_TYPE_FLASH_READ         0x25
+#define CMD_TYPE_FLASH_BACKUP_FW    0x26
+#define CMD_TYPE_FLASH_CONFIRM_BOOT 0x27
+#define CMD_TYPE_FLASH_RESTORE_FW   0x28
 
 /* ── Flash ACK Status Codes ── */
 #define FLASH_ACK_OK                0x00
@@ -41,6 +44,7 @@
 #define FLASH_ACK_ERR_VERIFY        0x05
 #define FLASH_ACK_ERR_LEN           0x06
 #define FLASH_ACK_ERR_NO_FLASH      0x07
+#define FLASH_ACK_ERR_SLOT          0x08
 
 #define BOOTLOADER_MAGIC_KEY        0xDEADBEEFUL
 
@@ -233,6 +237,30 @@ typedef struct {
     uint16_t length;        /* Length <= 256 (LE) */
     uint16_t crc16;         /* CRC-16-CCITT */
 } cmd_flash_read_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x26 */
+    uint8_t slot;           /* 0=Slot A, 1=Slot B, 2=Staging */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} cmd_flash_backup_fw_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x27 */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} cmd_flash_confirm_boot_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x28 */
+    uint8_t slot;           /* 0=Slot A, 1=Slot B, 2=Staging */
+    uint32_t key;           /* BOOTLOADER_MAGIC_KEY (0xDEADBEEF) */
+    uint16_t crc16;         /* CRC-16-CCITT */
+} cmd_flash_restore_fw_t;
 
 #pragma pack(pop)
 

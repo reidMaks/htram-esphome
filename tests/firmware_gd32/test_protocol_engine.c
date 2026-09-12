@@ -6,6 +6,7 @@
 #include "periph.h"
 #include "protocol.h"
 #include "protocol_engine.h"
+#include "spi_flash.h"
 #include "unity.h"
 
 extern int mock_flash_sector_erase_called;
@@ -25,6 +26,15 @@ extern uint32_t mock_flash_last_verify_addr;
 extern uint32_t mock_flash_last_verify_len;
 extern uint32_t mock_flash_last_verify_exp_crc;
 extern int mock_flash_verify_crc32_result;
+extern int mock_flash_backup_fw_called;
+extern uint8_t mock_flash_last_backup_slot;
+extern int mock_flash_backup_fw_result;
+extern uint32_t mock_flash_backup_fw_crc;
+extern int mock_flash_confirm_boot_called;
+extern int mock_flash_confirm_boot_result;
+extern int mock_flasher_restore_called;
+extern uint32_t mock_flasher_restore_slot;
+extern uint32_t mock_flasher_restore_size;
 extern void mock_flash_reset(void);
 extern void mock_flash_set_detected(int detected);
 
@@ -658,6 +668,170 @@ void test_cmd_flash_no_flash(void) {
   TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_ERR_NO_FLASH, ack->status);
 }
 
+void test_cmd_flash_backup_fw_valid(void) {
+  uint8_t pkt[6];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_FLASH_BACKUP_FW;
+  pkt[3] = 1; /* Slot B */
+  uint16_t crc = crc16_ccitt(&pkt[2], 2);
+  pkt[4] = (uint8_t)(crc & 0xFF);
+  pkt[5] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  mock_flash_backup_fw_result = 0;
+  mock_flash_backup_fw_crc = 0xAABBCCDD;
+  inject_rx_bytes(pkt, 6);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(1, mock_flash_backup_fw_called);
+  TEST_ASSERT_EQUAL_UINT8(1, mock_flash_last_backup_slot);
+
+  TEST_ASSERT_GREATER_OR_EQUAL(sizeof(pkt_flash_ack_t), mock_tx_capture_len);
+  const pkt_flash_ack_t* ack = (const pkt_flash_ack_t*)&mock_tx_capture[mock_tx_capture_len - sizeof(pkt_flash_ack_t)];
+  TEST_ASSERT_EQUAL_HEX8(CMD_TYPE_FLASH_BACKUP_FW, ack->cmd);
+  TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_OK, ack->status);
+  TEST_ASSERT_EQUAL_HEX32(0xAABBCCDD, ack->addr);
+}
+
+void test_cmd_flash_backup_fw_invalid_slot(void) {
+  uint8_t pkt[6];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_FLASH_BACKUP_FW;
+  pkt[3] = 3; /* invalid slot > 2 */
+  uint16_t crc = crc16_ccitt(&pkt[2], 2);
+  pkt[4] = (uint8_t)(crc & 0xFF);
+  pkt[5] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  inject_rx_bytes(pkt, 6);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(0, mock_flash_backup_fw_called);
+  const pkt_flash_ack_t* ack = (const pkt_flash_ack_t*)&mock_tx_capture[mock_tx_capture_len - sizeof(pkt_flash_ack_t)];
+  TEST_ASSERT_EQUAL_HEX8(CMD_TYPE_FLASH_BACKUP_FW, ack->cmd);
+  TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_ERR_SLOT, ack->status);
+}
+
+void test_cmd_flash_backup_fw_no_flash(void) {
+  mock_flash_set_detected(0);
+  uint8_t pkt[6];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_FLASH_BACKUP_FW;
+  pkt[3] = 1;
+  uint16_t crc = crc16_ccitt(&pkt[2], 2);
+  pkt[4] = (uint8_t)(crc & 0xFF);
+  pkt[5] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  inject_rx_bytes(pkt, 6);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(0, mock_flash_backup_fw_called);
+  const pkt_flash_ack_t* ack = (const pkt_flash_ack_t*)&mock_tx_capture[mock_tx_capture_len - sizeof(pkt_flash_ack_t)];
+  TEST_ASSERT_EQUAL_HEX8(CMD_TYPE_FLASH_BACKUP_FW, ack->cmd);
+  TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_ERR_NO_FLASH, ack->status);
+}
+
+void test_cmd_flash_confirm_boot(void) {
+  uint8_t pkt[5];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_FLASH_CONFIRM_BOOT;
+  uint16_t crc = crc16_ccitt(&pkt[2], 1);
+  pkt[3] = (uint8_t)(crc & 0xFF);
+  pkt[4] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  mock_flash_confirm_boot_result = 0;
+  inject_rx_bytes(pkt, 5);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(1, mock_flash_confirm_boot_called);
+  const pkt_flash_ack_t* ack = (const pkt_flash_ack_t*)&mock_tx_capture[mock_tx_capture_len - sizeof(pkt_flash_ack_t)];
+  TEST_ASSERT_EQUAL_HEX8(CMD_TYPE_FLASH_CONFIRM_BOOT, ack->cmd);
+  TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_OK, ack->status);
+}
+
+void test_cmd_flash_restore_fw_valid(void) {
+  uint8_t pkt[11];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_FLASH_RESTORE_FW;
+  pkt[3] = 1; /* Slot B */
+  uint32_t key = BOOTLOADER_MAGIC_KEY;
+  pkt[4] = (uint8_t)(key & 0xFF);
+  pkt[5] = (uint8_t)((key >> 8) & 0xFF);
+  pkt[6] = (uint8_t)((key >> 16) & 0xFF);
+  pkt[7] = (uint8_t)((key >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 6);
+  pkt[8] = (uint8_t)(crc & 0xFF);
+  pkt[9] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  inject_rx_bytes(pkt, 10);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(1, mock_flasher_restore_called);
+  TEST_ASSERT_EQUAL_HEX32(SPI_FLASH_SLOT_B_ADDR, mock_flasher_restore_slot);
+
+  const pkt_flash_ack_t* ack = (const pkt_flash_ack_t*)mock_tx_capture;
+  TEST_ASSERT_EQUAL_HEX8(CMD_TYPE_FLASH_RESTORE_FW, ack->cmd);
+  TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_OK, ack->status);
+}
+
+void test_cmd_flash_restore_fw_invalid_key(void) {
+  uint8_t pkt[11];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_FLASH_RESTORE_FW;
+  pkt[3] = 1; /* Slot B */
+  uint32_t key = 0x12345678;
+  pkt[4] = (uint8_t)(key & 0xFF);
+  pkt[5] = (uint8_t)((key >> 8) & 0xFF);
+  pkt[6] = (uint8_t)((key >> 16) & 0xFF);
+  pkt[7] = (uint8_t)((key >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 6);
+  pkt[8] = (uint8_t)(crc & 0xFF);
+  pkt[9] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  inject_rx_bytes(pkt, 10);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(0, mock_flasher_restore_called);
+  const pkt_flash_ack_t* ack = (const pkt_flash_ack_t*)mock_tx_capture;
+  TEST_ASSERT_EQUAL_HEX8(CMD_TYPE_FLASH_RESTORE_FW, ack->cmd);
+  TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_ERR_VERIFY, ack->status);
+}
+
+void test_cmd_flash_restore_fw_invalid_slot(void) {
+  uint8_t pkt[11];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_FLASH_RESTORE_FW;
+  pkt[3] = 5; /* Invalid slot > 2 */
+  uint32_t key = BOOTLOADER_MAGIC_KEY;
+  pkt[4] = (uint8_t)(key & 0xFF);
+  pkt[5] = (uint8_t)((key >> 8) & 0xFF);
+  pkt[6] = (uint8_t)((key >> 16) & 0xFF);
+  pkt[7] = (uint8_t)((key >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 6);
+  pkt[8] = (uint8_t)(crc & 0xFF);
+  pkt[9] = (uint8_t)(crc >> 8);
+
+  mock_tx_clear();
+  inject_rx_bytes(pkt, 10);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(0, mock_flasher_restore_called);
+  const pkt_flash_ack_t* ack = (const pkt_flash_ack_t*)mock_tx_capture;
+  TEST_ASSERT_EQUAL_HEX8(CMD_TYPE_FLASH_RESTORE_FW, ack->cmd);
+  TEST_ASSERT_EQUAL_HEX8(FLASH_ACK_ERR_SLOT, ack->status);
+}
+
 void test_protocol_send_flash_ack(void) {
   mock_tx_clear();
   protocol_send_flash_ack(CMD_TYPE_FLASH_ERASE_SECTOR, FLASH_ACK_OK, 0x00010000);
@@ -823,6 +997,13 @@ int main(void) {
   RUN_TEST(test_cmd_flash_verify_crc32_mismatch);
   RUN_TEST(test_cmd_flash_read_valid);
   RUN_TEST(test_cmd_flash_no_flash);
+  RUN_TEST(test_cmd_flash_backup_fw_valid);
+  RUN_TEST(test_cmd_flash_backup_fw_invalid_slot);
+  RUN_TEST(test_cmd_flash_backup_fw_no_flash);
+  RUN_TEST(test_cmd_flash_confirm_boot);
+  RUN_TEST(test_cmd_flash_restore_fw_valid);
+  RUN_TEST(test_cmd_flash_restore_fw_invalid_key);
+  RUN_TEST(test_cmd_flash_restore_fw_invalid_slot);
   RUN_TEST(test_protocol_send_flash_ack);
   RUN_TEST(test_protocol_send_flash_data);
   RUN_TEST(test_corrupted_crc_rejected);

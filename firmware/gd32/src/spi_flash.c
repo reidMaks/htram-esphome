@@ -2,6 +2,7 @@
 #include "gd32f150.h"
 #include "periph.h"
 #include "protocol.h"
+#include "flasher.h"
 
 static spi_flash_info_t g_flash_info;
 
@@ -290,4 +291,189 @@ void spi_flash_init(void)
 const spi_flash_info_t *spi_flash_get_info(void)
 {
     return &g_flash_info;
+}
+
+#ifdef __arm__
+extern uint32_t _sidata;
+extern uint32_t _sdata;
+extern uint32_t _edata;
+
+uint32_t spi_flash_get_fw_size(void)
+{
+    uint32_t load_end = (uint32_t)&_sidata + ((uint32_t)&_edata - (uint32_t)&_sdata);
+    if (load_end > 0x08000000 && load_end <= 0x08010000) {
+        return load_end - 0x08000000;
+    }
+    return 65536;
+}
+#else
+static uint32_t mock_fw_size = 13000;
+void mock_set_fw_size(uint32_t s) { mock_fw_size = s; }
+uint32_t spi_flash_get_fw_size(void)
+{
+    return mock_fw_size;
+}
+#endif
+
+int spi_flash_read_superblock(spi_flash_superblock_t *sb)
+{
+    if (!sb) {
+        return -1;
+    }
+    if (spi_flash_read_data(SPI_FLASH_SUPERBLOCK_ADDR, (uint8_t *)sb, sizeof(*sb)) != 0) {
+        return -1;
+    }
+    if (sb->magic != SPI_FLASH_SUPERBLOCK_MAGIC || sb->layout_version != SPI_FLASH_LAYOUT_VERSION) {
+        return -1;
+    }
+    uint32_t crc = crc32_ieee((const uint8_t *)sb, sizeof(*sb) - sizeof(sb->superblock_crc32));
+    if (crc != sb->superblock_crc32) {
+        return -2;
+    }
+    return 0;
+}
+
+int spi_flash_write_superblock(const spi_flash_superblock_t *sb)
+{
+    if (!sb) {
+        return -1;
+    }
+    spi_flash_superblock_t copy = *sb;
+    copy.superblock_crc32 = crc32_ieee((const uint8_t *)&copy, sizeof(copy) - sizeof(copy.superblock_crc32));
+
+    if (spi_flash_sector_erase_4k(SPI_FLASH_SUPERBLOCK_ADDR) != 0) {
+        return -1;
+    }
+    if (spi_flash_page_program(SPI_FLASH_SUPERBLOCK_ADDR, (const uint8_t *)&copy, sizeof(copy)) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int spi_flash_backup_firmware(uint8_t slot_idx, uint32_t *out_crc32)
+{
+    uint32_t slot_addr;
+    if (slot_idx == 0) {
+        slot_addr = SPI_FLASH_SLOT_A_ADDR;
+    } else if (slot_idx == 1) {
+        slot_addr = SPI_FLASH_SLOT_B_ADDR;
+    } else if (slot_idx == 2) {
+        slot_addr = SPI_FLASH_SLOT_STAGING_ADDR;
+    } else {
+        return -1;
+    }
+
+    uint32_t fw_size = spi_flash_get_fw_size();
+    if (fw_size == 0 || fw_size > SPI_FLASH_BLOCK_SIZE) {
+        return -1;
+    }
+
+    if (spi_flash_block_erase_64k(slot_addr) != 0) {
+        return -1;
+    }
+
+    uint32_t offset = 0;
+    while (offset < fw_size) {
+        size_t chunk = fw_size - offset;
+        if (chunk > SPI_FLASH_PAGE_SIZE) {
+            chunk = SPI_FLASH_PAGE_SIZE;
+        }
+        const uint8_t *src = (const uint8_t *)((uintptr_t)(0x08000000UL + offset));
+        if (spi_flash_page_program(slot_addr + offset, src, chunk) != 0) {
+            return -1;
+        }
+        offset += chunk;
+        watchdog_kick();
+    }
+
+    uint32_t internal_crc = crc32_ieee((const uint8_t *)((uintptr_t)0x08000000UL), fw_size);
+    if (spi_flash_verify_crc32(slot_addr, fw_size, internal_crc) != 0) {
+        return -2;
+    }
+
+    if (out_crc32) {
+        *out_crc32 = internal_crc;
+    }
+
+    spi_flash_superblock_t sb;
+    if (spi_flash_read_superblock(&sb) != 0) {
+        uint8_t *p = (uint8_t *)&sb;
+        for (size_t i = 0; i < sizeof(sb); i++) {
+            p[i] = 0;
+        }
+        sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
+        sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
+        sb.boot_status = BOOT_STATUS_CONFIRMED;
+        sb.active_fw_slot = slot_idx;
+    }
+    if (slot_idx == 0) {
+        sb.fw_slot_a_size = fw_size;
+        sb.fw_slot_a_crc32 = internal_crc;
+    } else if (slot_idx == 1) {
+        sb.fw_slot_b_size = fw_size;
+        sb.fw_slot_b_crc32 = internal_crc;
+    } else {
+        sb.staging_size = fw_size;
+        sb.staging_crc32 = internal_crc;
+    }
+    spi_flash_write_superblock(&sb);
+
+    return 0;
+}
+
+int spi_flash_confirm_boot(void)
+{
+    spi_flash_superblock_t sb;
+    if (spi_flash_read_superblock(&sb) != 0) {
+        uint8_t *p = (uint8_t *)&sb;
+        for (size_t i = 0; i < sizeof(sb); i++) {
+            p[i] = 0;
+        }
+        sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
+        sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
+        sb.active_fw_slot = 0;
+    }
+    sb.boot_status = BOOT_STATUS_CONFIRMED;
+    sb.boot_attempts = 0;
+    return spi_flash_write_superblock(&sb);
+}
+
+void spi_flash_boot_guard_check(void)
+{
+    const spi_flash_info_t *info = spi_flash_get_info();
+    if (!info->is_detected) {
+        return;
+    }
+
+    spi_flash_superblock_t sb;
+    if (spi_flash_read_superblock(&sb) != 0) {
+        uint8_t *p = (uint8_t *)&sb;
+        for (size_t i = 0; i < sizeof(sb); i++) {
+            p[i] = 0;
+        }
+        sb.magic = SPI_FLASH_SUPERBLOCK_MAGIC;
+        sb.layout_version = SPI_FLASH_LAYOUT_VERSION;
+        sb.boot_status = BOOT_STATUS_CONFIRMED;
+        sb.boot_attempts = 0;
+        sb.active_fw_slot = 0;
+        spi_flash_write_superblock(&sb);
+        return;
+    }
+
+    if (sb.boot_status == BOOT_STATUS_TESTING) {
+        if (sb.boot_attempts >= 3) {
+            uint32_t size = sb.fw_slot_b_size;
+            if (size == 0 || size > SPI_FLASH_BLOCK_SIZE) {
+                size = 65536;
+            }
+            sb.boot_status = BOOT_STATUS_CONFIRMED;
+            sb.boot_attempts = 0;
+            sb.active_fw_slot = 1;
+            spi_flash_write_superblock(&sb);
+            flasher_restore_and_reboot(SPI_FLASH_SLOT_B_ADDR, size);
+        } else {
+            sb.boot_attempts++;
+            spi_flash_write_superblock(&sb);
+        }
+    }
 }

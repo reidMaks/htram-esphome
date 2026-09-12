@@ -51,12 +51,29 @@ void mock_display_reset(void) {
 
 /* Flasher mock */
 int mock_flasher_run_called = 0;
+int mock_flasher_restore_called = 0;
+uint32_t mock_flasher_restore_slot = 0;
+uint32_t mock_flasher_restore_size = 0;
 void flasher_run(void) {
   mock_flasher_run_called++;
+}
+int flasher_restore_from_slot(uint32_t slot_addr, uint32_t size) {
+  mock_flasher_restore_called++;
+  mock_flasher_restore_slot = slot_addr;
+  mock_flasher_restore_size = size;
+  return 0;
+}
+void flasher_restore_and_reboot(uint32_t slot_addr, uint32_t size) {
+  mock_flasher_restore_called++;
+  mock_flasher_restore_slot = slot_addr;
+  mock_flasher_restore_size = size;
 }
 
 void mock_flasher_reset(void) {
   mock_flasher_run_called = 0;
+  mock_flasher_restore_called = 0;
+  mock_flasher_restore_slot = 0;
+  mock_flasher_restore_size = 0;
 }
 
 /* Periph mocks */
@@ -145,6 +162,14 @@ uint32_t mock_flash_last_verify_addr = 0;
 uint32_t mock_flash_last_verify_len = 0;
 uint32_t mock_flash_last_verify_exp_crc = 0;
 int mock_flash_verify_crc32_result = 0; /* 0 = match, -2 = mismatch */
+int mock_flash_backup_fw_called = 0;
+uint8_t mock_flash_last_backup_slot = 0;
+int mock_flash_backup_fw_result = 0;
+uint32_t mock_flash_backup_fw_crc = 0x12345678;
+int mock_flash_confirm_boot_called = 0;
+int mock_flash_confirm_boot_result = 0;
+static spi_flash_superblock_t mock_superblock;
+int mock_flash_read_sb_result = 0;
 
 void mock_flash_reset(void) {
   mock_flash_info.is_detected = 1;
@@ -169,6 +194,14 @@ void mock_flash_reset(void) {
   mock_flash_last_verify_len = 0;
   mock_flash_last_verify_exp_crc = 0;
   mock_flash_verify_crc32_result = 0;
+  mock_flash_backup_fw_called = 0;
+  mock_flash_last_backup_slot = 0;
+  mock_flash_backup_fw_result = 0;
+  mock_flash_backup_fw_crc = 0x12345678;
+  mock_flash_confirm_boot_called = 0;
+  mock_flash_confirm_boot_result = 0;
+  mock_flash_read_sb_result = 0;
+  memset(&mock_superblock, 0, sizeof(mock_superblock));
 }
 
 void mock_flash_set_detected(int detected) {
@@ -217,4 +250,32 @@ __attribute__((weak)) int spi_flash_verify_crc32(uint32_t addr, uint32_t len, ui
   mock_flash_last_verify_len = len;
   mock_flash_last_verify_exp_crc = expected_crc32;
   return mock_flash_verify_crc32_result;
+}
+
+__attribute__((weak)) int spi_flash_backup_firmware(uint8_t slot_idx, uint32_t* out_crc32) {
+  mock_flash_backup_fw_called++;
+  mock_flash_last_backup_slot = slot_idx;
+  if (out_crc32) {
+    *out_crc32 = mock_flash_backup_fw_crc;
+  }
+  return mock_flash_backup_fw_result;
+}
+
+__attribute__((weak)) int spi_flash_confirm_boot(void) {
+  mock_flash_confirm_boot_called++;
+  return mock_flash_confirm_boot_result;
+}
+
+__attribute__((weak)) int spi_flash_read_superblock(spi_flash_superblock_t* sb) {
+  if (sb) {
+    *sb = mock_superblock;
+  }
+  return mock_flash_read_sb_result;
+}
+
+__attribute__((weak)) int spi_flash_write_superblock(const spi_flash_superblock_t* sb) {
+  if (sb) {
+    mock_superblock = *sb;
+  }
+  return 0;
 }

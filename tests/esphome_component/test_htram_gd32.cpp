@@ -136,6 +136,13 @@ void test_crc16_ccitt_vector(void) {
   TEST_ASSERT_EQUAL_HEX16(0x0000, crc16_ccitt(nullptr, 0));
 }
 
+void test_crc32_ieee_vector(void) {
+  const uint8_t data[] = "123456789";
+  uint32_t crc = crc32_ieee(data, 9);
+  TEST_ASSERT_EQUAL_HEX32(0xCBF43926, crc);
+  TEST_ASSERT_EQUAL_HEX32(0x00000000, crc32_ieee(nullptr, 0));
+}
+
 // ---------------------------------------------------------------------------
 // 3. Head Packet Length
 // ---------------------------------------------------------------------------
@@ -637,6 +644,27 @@ void test_outgoing_commands(void) {
   TEST_ASSERT_EQUAL_HEX8(64, g_comp->mock_tx_bytes[7]);
   TEST_ASSERT_EQUAL_HEX8(0, g_comp->mock_tx_bytes[8]);
 
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_backup_fw(1);
+  TEST_ASSERT_EQUAL(6, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x26, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[3]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_confirm_boot();
+  TEST_ASSERT_EQUAL(5, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x27, g_comp->mock_tx_bytes[2]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_restore_fw(1);
+  TEST_ASSERT_EQUAL(10, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x28, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0xEF, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0xBE, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL_HEX8(0xAD, g_comp->mock_tx_bytes[6]);
+  TEST_ASSERT_EQUAL_HEX8(0xDE, g_comp->mock_tx_bytes[7]);
+
   class TestableLedSwitch : public HtramLedSwitch {
    public:
     using HtramLedSwitch::write_state;
@@ -817,6 +845,73 @@ void test_execute_ota_safety_gates(void) {
   g_comp->on_write = nullptr;
 }
 
+void test_execute_ota_with_spi_flash_success(void) {
+  std::vector<uint8_t> fw(256, 0x5A);
+  g_comp->last_batt_mv_ = 4000;
+  g_comp->last_status_ = 0x02;  // USB present
+  g_comp->mock_clear_rx();
+
+  // Set SPI flash as detected
+  auto info_pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(info_pkt.data(), info_pkt.size());
+
+  g_comp->on_write = [](const uint8_t* data, size_t len) {
+    if (len >= 3 && data[2] == 0x26) {
+      // Flash backup fw command ack
+      auto ack = make_flash_ack_pkt(0x26, 0x00, 0x11223344);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x23) {
+      // Flash verify crc command ack
+      auto ack = make_flash_ack_pkt(0x23, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len == 9 && data[2] == 0x1F) {
+      uint8_t ack[] = {0xAA, 0x55, 0x1F, 0x79};
+      g_comp->mock_push_rx(ack, 4);
+    } else {
+      g_comp->mock_push_rx_byte(0x79);
+    }
+  };
+
+  std::string res = g_comp->execute_ota(fw, true);
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"ok\""));
+  TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  g_comp->on_write = nullptr;
+
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+}
+
+void test_execute_ota_with_spi_flash_staging_failure(void) {
+  std::vector<uint8_t> fw(256, 0x5A);
+  g_comp->last_batt_mv_ = 4000;
+  g_comp->last_status_ = 0x02;  // USB present
+  g_comp->mock_clear_rx();
+
+  // Set SPI flash as detected
+  auto info_pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(info_pkt.data(), info_pkt.size());
+
+  g_comp->on_write = [](const uint8_t* data, size_t len) {
+    if (len >= 3 && data[2] == 0x26) {
+      auto ack = make_flash_ack_pkt(0x26, 0x00, 0x11223344);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x23) {
+      // Staging CRC verify fails!
+      auto ack = make_flash_ack_pkt(0x23, 0x03, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    }
+  };
+
+  std::string res = g_comp->execute_ota(fw, true);
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"stage\":\"staging_verify\""));
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"error\""));
+  TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  g_comp->on_write = nullptr;
+
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+}
+
 // ---------------------------------------------------------------------------
 // 13. Display Methods
 // ---------------------------------------------------------------------------
@@ -889,6 +984,7 @@ int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_batt_mv_to_pct_logic);
   RUN_TEST(test_crc16_ccitt_vector);
+  RUN_TEST(test_crc32_ieee_vector);
   RUN_TEST(test_head_packet_len_cases);
   RUN_TEST(test_telemetry_packet_parsing_normal);
   RUN_TEST(test_telemetry_packet_corrupt_crc);
@@ -906,6 +1002,8 @@ int main(void) {
   RUN_TEST(test_rtttl_parser_notes_and_durations);
   RUN_TEST(test_rom_bootloader_primitives);
   RUN_TEST(test_execute_ota_safety_gates);
+  RUN_TEST(test_execute_ota_with_spi_flash_success);
+  RUN_TEST(test_execute_ota_with_spi_flash_staging_failure);
   RUN_TEST(test_display_pixel_drawing);
   RUN_TEST(test_ota_web_handler);
   RUN_TEST(test_setup_and_dump_config);

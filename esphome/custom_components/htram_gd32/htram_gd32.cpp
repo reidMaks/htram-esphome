@@ -30,6 +30,26 @@ static uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
   return crc;
 }
 
+static inline uint32_t crc32_ieee_update(uint32_t crc, uint8_t byte) {
+  crc ^= byte;
+  for (int j = 0; j < 8; j++) {
+    if (crc & 1) {
+      crc = (crc >> 1) ^ 0xEDB88320UL;
+    } else {
+      crc >>= 1;
+    }
+  }
+  return crc;
+}
+
+static uint32_t crc32_ieee(const uint8_t *data, size_t len) {
+  uint32_t crc = 0xFFFFFFFFUL;
+  for (size_t i = 0; i < len; i++) {
+    crc = crc32_ieee_update(crc, data[i]);
+  }
+  return ~crc;
+}
+
 // Single-cell Li-ion voltage (mV) -> state-of-charge %, piecewise-linear.
 //
 // The top point is 4180 mV, not the nominal 4200. The charger ends its CV
@@ -425,6 +445,30 @@ void HtramGd32Component::send_flash_read(uint32_t addr, uint16_t len) {
   this->write_array(pkt, 11);
 }
 
+void HtramGd32Component::send_flash_backup_fw(uint8_t slot) {
+  uint8_t pkt[6] = {0xAA, 0x55, 0x26, slot};
+  uint16_t crc = crc16_ccitt(&pkt[2], 2);
+  pkt[4] = (uint8_t)(crc & 0xFF);
+  pkt[5] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 6);
+}
+
+void HtramGd32Component::send_flash_confirm_boot() {
+  uint8_t pkt[5] = {0xAA, 0x55, 0x27};
+  uint16_t crc = crc16_ccitt(&pkt[2], 1);
+  pkt[3] = (uint8_t)(crc & 0xFF);
+  pkt[4] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 5);
+}
+
+void HtramGd32Component::send_flash_restore_fw(uint8_t slot) {
+  uint8_t pkt[10] = {0xAA, 0x55, 0x28, slot, 0xEF, 0xBE, 0xAD, 0xDE};
+  uint16_t crc = crc16_ccitt(&pkt[2], 6);
+  pkt[8] = (uint8_t)(crc & 0xFF);
+  pkt[9] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 10);
+}
+
 void HtramGd32Component::dump_config() {
   ESP_LOGCONFIG(TAG, "HTRAM GD32:");
 }
@@ -811,6 +855,64 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   ESP_LOGI(TAG, "[OTA] Image size: %d bytes, Staged CRC16: 0x%04X, Battery: %d mV, Status: 0x%02X",
            (int)firmware.size(), staged_crc, last_batt_mv_, last_status_);
 
+  // Phase 4 Safety: Check if SPI Flash is detected and operational
+  bool has_spi_flash = (this->spi_flash_sensor_ != nullptr &&
+                        !this->spi_flash_status_.empty() &&
+                        this->spi_flash_status_.find("Not detected") == std::string::npos);
+
+  if (has_spi_flash) {
+    ESP_LOGI(TAG, "[OTA 0/6] Backing up running GD32 firmware to SPI Flash Slot B (0x020000)...");
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
+    this->send_flash_backup_fw(1);
+    this->flush();
+    uint32_t bk_start = millis();
+    while (millis() - bk_start < 2000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x26)
+        break;
+      delay(10);
+    }
+    if (this->last_flash_ack_cmd_ == 0x26 && this->last_flash_ack_status_ == 0x00) {
+      ESP_LOGI(TAG, "[OTA 0/6] Firmware backup SUCCESS: CRC32=0x%08X", (unsigned)this->last_flash_ack_addr_);
+    } else {
+      ESP_LOGW(TAG, "[OTA 0/6] Firmware backup warning: status=0x%02X", this->last_flash_ack_status_);
+    }
+
+    ESP_LOGI(TAG, "[OTA 0/6] Staging new firmware into SPI Flash (0x030000)...");
+    uint32_t host_crc32 = crc32_ieee(firmware.data(), firmware.size());
+    this->send_flash_erase_block(0x00030000);
+    delay(200);
+
+    for (size_t offset = 0; offset < firmware.size(); offset += 256) {
+      size_t chunk_len = std::min((size_t)256, firmware.size() - offset);
+      this->send_flash_write_chunk(0x00030000 + offset, firmware.data() + offset, chunk_len);
+      delay(5);
+      App.feed_wdt();
+    }
+
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
+    this->send_flash_verify_crc(0x00030000, firmware.size(), host_crc32);
+    this->flush();
+    uint32_t vstart = millis();
+    while (millis() - vstart < 2000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x23)
+        break;
+      delay(10);
+    }
+    if (this->last_flash_ack_cmd_ == 0x23 && this->last_flash_ack_status_ == 0x00) {
+      ESP_LOGI(TAG, "[OTA 0/6] Staging verified! CRC32=0x%08X matches host.", (unsigned)host_crc32);
+    } else {
+      ESP_LOGE(TAG, "[OTA 0/6] Staging verification FAILED! CRC status=0x%02X. Aborting OTA.",
+               this->last_flash_ack_status_);
+      snprintf(buf, sizeof(buf),
+               "{\"result\":\"error\",\"stage\":\"staging_verify\",\"reason\":\"Staging CRC mismatch in SPI flash\"}");
+      return buf;
+    }
+  }
+
   // Say something before going deaf. Once ota_mode_ is set, send_draw_rect()
   // returns early and the panel keeps whatever frame it had -- so to an
   // onlooker the device is indistinguishable from one that has hung, and the
@@ -1015,7 +1117,7 @@ void HtramGd32Component::wait_for_flow(uint32_t timeout_ms) {
   }
   if (this->flow_paused_) {
     // A lost RESUME must not wedge the display for good.
-    ESP_LOGW(TAG, "flow control still paused after %u ms, resuming anyway", timeout_ms);
+    ESP_LOGW(TAG, "flow control still paused after %u ms, resuming anyway", (unsigned)timeout_ms);
     this->flow_paused_ = false;
   }
 }
