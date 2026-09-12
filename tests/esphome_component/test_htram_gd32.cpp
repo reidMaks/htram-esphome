@@ -881,6 +881,8 @@ void test_execute_ota_with_spi_flash_success(void) {
   std::string res = g_comp->execute_ota(fw, true);
   TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"ok\""));
   TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
+  TEST_ASSERT_FALSE(g_comp->consume_display_refresh());
   g_comp->on_write = nullptr;
 
   auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
@@ -952,6 +954,17 @@ void test_display_pixel_drawing(void) {
   g_comp->mock_clear_tx();
   disp.draw_pixels_at(0, 0, 2, 2, test_pixels, display::COLOR_ORDER_RGB, display::COLOR_BITNESS_565, false, 0, 0, 0);
   TEST_ASSERT_GREATER_THAN(0, g_comp->mock_tx_bytes.size());
+
+  // draw_pixels_at and draw_pixel_at are suppressed during ota_mode
+  g_comp->set_ota_mode(true);
+  TEST_ASSERT_TRUE(g_comp->is_ota_mode());
+  g_comp->mock_clear_tx();
+  disp.draw_pixel_at(10, 20, Color(255, 255, 255));
+  disp.draw_pixels_at(0, 0, 2, 2, test_pixels, display::COLOR_ORDER_RGB, display::COLOR_BITNESS_565, true, 0, 0, 0);
+  TEST_ASSERT_EQUAL(0, g_comp->mock_tx_bytes.size());
+  g_comp->set_ota_mode(false);
+  TEST_ASSERT_FALSE(g_comp->is_ota_mode());
+  TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,6 +1037,8 @@ void test_execute_assets_upload_success(void) {
   TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"ok\""));
   TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"bytes_written\":512"));
   TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
+  TEST_ASSERT_FALSE(g_comp->consume_display_refresh());
   g_comp->on_write = nullptr;
 
   auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);

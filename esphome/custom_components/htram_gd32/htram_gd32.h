@@ -68,6 +68,23 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void send_flash_confirm_boot();
   void send_flash_restore_fw(uint8_t slot);
 
+  bool is_ota_mode() const { return ota_mode_; }
+
+  void set_ota_mode(bool enable) {
+    if (this->ota_mode_ != enable) {
+      this->ota_mode_ = enable;
+      if (!enable) {
+        this->needs_display_refresh_ = true;
+      }
+    }
+  }
+
+  bool consume_display_refresh() {
+    bool b = this->needs_display_refresh_;
+    this->needs_display_refresh_ = false;
+    return b;
+  }
+
   /* True once per GD32 restart, and cleared by the read.
    *
    * The GD32 sets HELLO_FLAG_BOOT on the first HELLO after it has drawn its
@@ -128,6 +145,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   uint16_t last_batt_mv_{0};
   uint8_t last_status_{0};
   bool ota_mode_{false};
+  bool needs_display_refresh_{false};
 
   void process_packet_(const uint8_t *data, size_t len);
 

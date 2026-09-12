@@ -863,7 +863,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
 
   // Suppress LVGL screen updates and light all LEDs to indicate OTA mode
   send_leds(1, 1, 1, 1);
-  ota_mode_ = true;
+  this->set_ota_mode(true);
 
   // Drain any pending telemetry in RX buffer
   while (this->available()) {
@@ -912,7 +912,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     }
     if (this->last_flash_ack_cmd_ != 0x24 || this->last_flash_ack_status_ != 0x00) {
       ESP_LOGE(TAG, "[OTA 0/6] Staging block erase failed: status=0x%02X", this->last_flash_ack_status_);
-      ota_mode_ = false;
+      this->set_ota_mode(false);
       resend_leds();
       snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_erase\",\"reason\":\"Block erase failed\"}");
       return buf;
@@ -934,7 +934,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
       }
       if (this->last_flash_ack_cmd_ != 0x22 || this->last_flash_ack_status_ != 0x00) {
         ESP_LOGE(TAG, "[OTA 0/6] Staging chunk at offset 0x%04X failed: status=0x%02X", (unsigned)offset, this->last_flash_ack_status_);
-        ota_mode_ = false;
+        this->set_ota_mode(false);
         resend_leds();
         snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_chunk\",\"offset\":%u,\"status\":%u,\"reason\":\"Chunk write failed\"}",
                  (unsigned)offset, (unsigned)this->last_flash_ack_status_);
@@ -960,7 +960,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     } else {
       ESP_LOGE(TAG, "[OTA 0/6] Staging verification FAILED! CRC status=0x%02X. Aborting OTA.",
                this->last_flash_ack_status_);
-      ota_mode_ = false;
+      this->set_ota_mode(false);
       resend_leds();
       snprintf(buf, sizeof(buf),
                "{\"result\":\"error\",\"stage\":\"staging_verify\",\"reason\":\"Staging CRC mismatch in SPI flash\"}");
@@ -1029,8 +1029,8 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   if (!synced) {
     ESP_LOGE(TAG, "[OTA 3/6] FAILED: Could not sync with flasher after 10 attempts!");
     rx_buffer_.clear();
-    ota_mode_ = false;
-  resend_leds();
+    this->set_ota_mode(false);
+    resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"rom_sync\",\"reason\":\"No ACK from flasher (timeout on 0x7F)\"}");
     return buf;
   }
@@ -1041,8 +1041,8 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   std::string erase_err;
   if (!rom_erase(erase_err)) {
     rx_buffer_.clear();
-    ota_mode_ = false;
-  resend_leds();
+    this->set_ota_mode(false);
+    resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"erase\",\"reason\":\"%s\"}", erase_err.c_str());
     return buf;
   }
@@ -1084,7 +1084,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   }
 
   rx_buffer_.clear();
-  ota_mode_ = false;
+  this->set_ota_mode(false);
   resend_leds();
 
   if (!success) {
@@ -1124,7 +1124,7 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
 
   // Suppress LVGL screen updates and light LEDs to indicate asset upload mode
   send_leds(1, 1, 0, 1);
-  ota_mode_ = true;
+  this->set_ota_mode(true);
 
   // Drain any pending telemetry in RX buffer
   while (this->available()) {
@@ -1149,7 +1149,7 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
   }
   if (this->last_flash_ack_cmd_ != 0x24 || this->last_flash_ack_status_ != 0x00) {
     ESP_LOGE(TAG, "[ASSETS 1/3] Block erase failed: status=0x%02X", this->last_flash_ack_status_);
-    ota_mode_ = false;
+    this->set_ota_mode(false);
     resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"erase\",\"reason\":\"Block erase failed\"}");
     return buf;
@@ -1174,7 +1174,7 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
     }
     if (this->last_flash_ack_cmd_ != 0x22 || this->last_flash_ack_status_ != 0x00) {
       ESP_LOGE(TAG, "[ASSETS 2/3] Chunk write failed at offset 0x%04X: status=0x%02X", (unsigned)offset, this->last_flash_ack_status_);
-      ota_mode_ = false;
+      this->set_ota_mode(false);
       resend_leds();
       snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"chunk_write\",\"offset\":%u,\"status\":%u}",
                (unsigned)offset, (unsigned)this->last_flash_ack_status_);
@@ -1201,7 +1201,7 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
   }
   if (this->last_flash_ack_cmd_ != 0x23 || this->last_flash_ack_status_ != 0x00) {
     ESP_LOGE(TAG, "[ASSETS 3/3] CRC32 verification failed! status=0x%02X", this->last_flash_ack_status_);
-    ota_mode_ = false;
+    this->set_ota_mode(false);
     resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"verify\",\"reason\":\"CRC32 mismatch in SPI flash\"}");
     return buf;
@@ -1211,7 +1211,7 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
            (int)assets_data.size(), (unsigned)host_crc32);
 
   rx_buffer_.clear();
-  ota_mode_ = false;
+  this->set_ota_mode(false);
   resend_leds();
 
   snprintf(buf, sizeof(buf), "{\"result\":\"ok\",\"bytes_written\":%d,\"crc32\":%u}",
@@ -1256,6 +1256,7 @@ void HtramGd32Display::update() {
 
 void HtramGd32Display::draw_pixel_at(int x, int y, Color color) {
   if (this->parent_ == nullptr) return;
+  if (this->parent_->is_ota_mode()) return;
   if (x < 0 || x >= 240 || y < 0 || y >= 240) return;
   uint16_t c = display::ColorUtil::color_to_565(color);
   uint8_t data[2] = {(uint8_t)(c >> 8), (uint8_t)(c & 0xFF)};
@@ -1282,6 +1283,7 @@ void HtramGd32Display::draw_pixels_at(int x_start, int y_start, int w, int h, co
                                       display::ColorOrder order, display::ColorBitness bitness,
                                       bool big_endian, int x_offset, int y_offset, int x_pad) {
   if (this->parent_ == nullptr || ptr == nullptr) return;
+  if (this->parent_->is_ota_mode()) return;
   if (w <= 0 || h <= 0) return;
   if (x_start >= 240 || y_start >= 240) return;
 

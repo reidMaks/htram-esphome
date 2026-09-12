@@ -926,6 +926,17 @@ interval:
   - interval: 20ms
     then:
       - lambda: |-
+          static int last_ui_sec = -1;
+          static int last_min = -1;
+          if (id(htram_core)->consume_display_refresh()) {
+            last_ui_sec = -1;
+            last_min = -1;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+            lv_obj_invalidate(lv_screen_active());
+          }
+          if (id(htram_core)->is_ota_mode()) return;
+
           timeval tv;
           gettimeofday(&tv, nullptr);
           auto now = id(ha_time).now();
@@ -965,7 +976,6 @@ interval:
           }
 
           // 2. Exact-second LCD updates (orbiting seconds dot & clock minute flip)
-          static int last_ui_sec = -1;
           if ((int) tv.tv_sec != last_ui_sec) {
             last_ui_sec = (int) tv.tv_sec;
             // Moving the dot invalidates only where it was and where it lands.
@@ -973,7 +983,6 @@ interval:
             lv_obj_set_pos(id(ui_secdot),
                            (lv_coord_t) lroundf(120.0f + 113.0f * cosf(a) - 3.5f),
                            (lv_coord_t) lroundf(120.0f + 113.0f * sinf(a) - 3.5f));
-            static int last_min = -1;
             if (now.minute != last_min) {
               last_min = now.minute;
               id(refresh_clock).execute();
@@ -1003,12 +1012,14 @@ interval:
   - interval: 7s
     then:
       - lambda: |-
+          if (id(htram_core)->is_ota_mode()) return;
           int max_slots = id(slot_extra_text).empty() ? 2 : 3;
           id(slot_idx) = (id(slot_idx) + 1) % max_slots;
-      - script.execute: refresh_slot
+          id(refresh_slot).execute();
       # Same rhythm flips the AP face between the QR and the typed credentials,
       # until somebody takes the wheel with the button.
       - lambda: |-
+          if (id(htram_core)->is_ota_mode()) return;
           if (id(face_state) == 3 && !id(ap_manual)) {
             id(ap_page) ^= 1;
             id(face_state) = -1;   // force refresh_face to repaint
