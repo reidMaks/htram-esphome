@@ -64,6 +64,7 @@ jobs:
           # not agree with is worse than publishing none, so there is exactly
           # one implementation.
           pip install --quiet pyserial requests pillow
+          python3 tools/pack_flash_assets.py
           python3 tools/pack_flash_assets.py --validate
 
           crc=$(python3 -c "
