@@ -206,9 +206,9 @@ class Gd32OtaHandler : public AsyncWebHandler {
       // update is recoverable; a panicked ESP in someone's hallway is not.
       // The margin covers what the flasher itself needs further on.
       size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-      if (largest < want + 4096) {
+      if (largest < want + 1024) {
         ESP_LOGE("htram_gd32", "[OTA] refusing: need %u B contiguous, largest free block is %u B",
-                 (unsigned) (want + 4096), (unsigned) largest);
+                 (unsigned) (want + 1024), (unsigned) largest);
         this->staging_failed_ = true;
         return;
       }

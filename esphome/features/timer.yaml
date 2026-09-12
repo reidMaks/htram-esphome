@@ -1,0 +1,587 @@
+# HTRAM Feature: Універсальний таймер (Timer)
+#
+# Надає функціонал таймера з керуванням кнопкою та через Home Assistant:
+# - Керування кнопкою:
+#     * 1 клік у спокої: вибір пресетів (1, 3, 5, 10, 15, 30 хв) з автостартом через 2.5 с;
+#     * 1 клік під час відліку: пауза / відновлення;
+#     * довге утримання (1 с): звук відбою та скасування таймера;
+#     * 1 клік під час дзвінка: вимкнути звук;
+#     * 2 кліки залишаються системними (мережа, IP, погода).
+# - Візуалізація:
+#     * Під час відліку: годинник на екрані + бірюзова засічка на безелі (ui_timer_tick)
+#       у позиції фінішу + рядок у нижньому слоті (ui_slot);
+#     * Фінальні 60 секунд: великі бурштинові цифри 44 px (font_id) із секундами;
+# - Сигналізація:
+#     * Резонансний сигнал зумера 1976 Гц (b6 пік);
+#     * Світлодіоди лишаються для CO2.
+
+substitutions:
+  timer_rtttl: "Timer:d=8,o=6,b=220:b,16p,b,16p,b,16p,b,4p"
+  timer_repeat_seconds: "2"
+  timer_cancel_rtttl: "Cancel:d=16,o=6,b=240:b,8p,g"
+  timer_confirm_rtttl: "Confirm:d=16,o=6,b=240:g,8p,b"
+
+globals:
+  - id: timer_state
+    type: int
+    restore_value: false
+    initial_value: "0" # 0=IDLE, 1=ARMING, 2=RUNNING, 3=PAUSED, 4=RINGING
+  - id: timer_preset_idx
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  - id: timer_total_seconds
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: timer_remaining_seconds
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: timer_finish_hour
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: timer_finish_minute
+    type: float
+    restore_value: false
+    initial_value: "0.0"
+  - id: timer_cancel_triggered
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+lvgl:
+  widgets:
+    - arc:
+        id: ui_timer_tick
+        align: center
+        width: 236
+        height: 236
+        arc_width: 12
+        arc_color: 0x00D5FF
+        arc_rounded: false
+        start_angle: 0
+        end_angle: 4
+        adjustable: false
+        value: 0
+        hidden: true
+        indicator:
+          arc_opa: TRANSP
+        knob:
+          bg_opa: TRANSP
+
+    - label:
+        id: ui_timer_d1
+        align: top_mid
+        x: -30
+        y: 82
+        text_font: font_clock
+        text_color: 0xFF9E3D
+        text: "0"
+        hidden: true
+
+    - label:
+        id: ui_timer_d2
+        align: top_mid
+        x: 30
+        y: 82
+        text_font: font_clock
+        text_color: 0xFF9E3D
+        text: "0"
+        hidden: true
+
+    - label:
+        id: ui_timer_cap
+        align: bottom_mid
+        y: -25
+        text_font: font_slot
+        text_color: 0x707880
+        text: "ТАЙМЕР"
+        hidden: true
+
+api:
+  services:
+    - service: start_timer
+      variables:
+        minutes: int
+        seconds: int
+      then:
+        - lambda: |-
+            int tot = minutes * 60 + seconds;
+            if (tot > 0) {
+              id(timer_total_seconds) = tot;
+              id(timer_remaining_seconds) = tot;
+              auto now = id(ha_time).now();
+              if (now.is_valid()) {
+                int cur = now.hour * 3600 + now.minute * 60 + now.second;
+                int fin = (cur + tot) % 86400;
+                id(timer_finish_hour) = (fin / 3600) % 24;
+                id(timer_finish_minute) = (fin % 3600) / 60.0f;
+              }
+            }
+        - script.execute: timer_start_running
+
+    - service: cancel_timer
+      then:
+        - script.execute: timer_cancel
+
+    - service: pause_timer
+      then:
+        - script.execute: timer_pause
+
+    - service: resume_timer
+      then:
+        - script.execute: timer_resume
+
+sensor:
+  - platform: template
+    id: timer_remaining
+    name: "Timer Remaining"
+    icon: "mdi:timer-outline"
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    lambda: return id(timer_remaining_seconds);
+
+text_sensor:
+  - platform: template
+    id: timer_status
+    name: "Timer Status"
+    icon: "mdi:timer"
+    lambda: |-
+      switch (id(timer_state)) {
+        case 1: return std::string("arming");
+        case 2: return std::string("running");
+        case 3: return std::string("paused");
+        case 4: return std::string("ringing");
+        default: return std::string("idle");
+      }
+
+script:
+  - id: refresh_timer_ui
+    then:
+      - lambda: |-
+          const int state = id(timer_state);
+          const int rem = id(timer_remaining_seconds);
+          const bool alert = id(alert_active);
+          const bool silence = id(silence_active);
+          const bool slot_held = id(slot_hold);
+
+          static int last_screen_mode = -1; // 0 = CLOCK, 1 = TIMER, 2 = OVERLAY_HIDDEN
+          static int last_tick_sig = -999;
+          static int prev_d1 = -1;
+          static int prev_d2 = -1;
+          static uint32_t prev_digits_color = 0;
+          static const char *prev_cap = nullptr;
+          static uint32_t prev_cap_col = 0;
+
+          // 1. If alert, silence, or overlay active: hide timer UI
+          if (alert || silence || slot_held || id(face_state) != 0) {
+            if (last_screen_mode != 2) {
+              last_screen_mode = 2;
+              lv_obj_add_flag(id(ui_timer_tick), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(ui_timer_cap), LV_OBJ_FLAG_HIDDEN);
+              last_tick_sig = -999;
+            }
+            return;
+          }
+
+          // 2. Determine screen mode:
+          // TIMER screen active in:
+          // - ARMING (state == 1)
+          // - FINAL 60s countdown (state == 2 or 3, rem <= 60 && rem > 0)
+          // - RINGING (state == 4)
+          const bool show_timer_screen = (state == 1) ||
+                                         ((state == 2 || state == 3) && rem <= 60 && rem > 0) ||
+                                         (state == 4);
+
+          const int want_screen_mode = show_timer_screen ? 1 : 0;
+
+          if (want_screen_mode != last_screen_mode) {
+            last_screen_mode = want_screen_mode;
+            if (want_screen_mode == 1) {
+              // Switch to TIMER screen: hide clock widgets and secdot
+              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot)};
+              for (auto *o : clk) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+              // Show timer widgets
+              lv_obj_remove_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_remove_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_remove_flag(id(ui_timer_cap), LV_OBJ_FLAG_HIDDEN);
+              // Reset caches so elements paint fresh
+              prev_d1 = -1;
+              prev_d2 = -1;
+              prev_digits_color = 0;
+              prev_cap = nullptr;
+              prev_cap_col = 0;
+            } else {
+              // Switch to CLOCK screen: hide timer widgets
+              lv_obj_add_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(ui_timer_cap), LV_OBJ_FLAG_HIDDEN);
+              // Show clock widgets and secdot
+              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot)};
+              for (auto *o : clk) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+              id(refresh_clock).execute();
+              id(refresh_slot).execute();
+            }
+          }
+
+          // 3. Bezel Tick (ui_timer_tick)
+          // ONLY visible on CLOCK screen during RUNNING or PAUSED when rem > 60
+          int current_tick_sig = 0;
+          int angle_int = 0;
+          const bool have_time = id(ha_time).now().is_valid();
+          if (want_screen_mode == 0 && (state == 2 || state == 3) && rem > 60 && have_time) {
+            const float dial = ((id(timer_finish_hour) % 12) + id(timer_finish_minute) / 60.0f) * 30.0f;
+            const float lv = dial - 90.0f;
+            auto norm = [](float deg) {
+              int32_t d = (int32_t) lroundf(deg) % 360;
+              return d < 0 ? d + 360 : d;
+            };
+            angle_int = norm(lv);
+            current_tick_sig = (state == 2 ? 10000 : 20000) + angle_int;
+          }
+
+          if (current_tick_sig != last_tick_sig) {
+            last_tick_sig = current_tick_sig;
+            if (current_tick_sig == 0) {
+              lv_obj_add_flag(id(ui_timer_tick), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              auto norm = [](float deg) {
+                int32_t d = (int32_t) lroundf(deg) % 360;
+                return d < 0 ? d + 360 : d;
+              };
+              float lv = (float) angle_int;
+              lv_arc_set_bg_angles(id(ui_timer_tick), norm(lv - 1.6f), norm(lv + 1.6f));
+              lv_obj_set_style_arc_color(id(ui_timer_tick),
+                                         lv_color_hex(state == 3 ? 0x707880 : 0x00D5FF),
+                                         LV_PART_MAIN);
+              lv_obj_remove_flag(id(ui_timer_tick), LV_OBJ_FLAG_HIDDEN);
+            }
+          }
+
+          // 4. Update digits and caption if in TIMER screen
+          if (want_screen_mode == 1) {
+            int val = 0;
+            uint32_t dig_color = 0xFF9E3D;
+            const char *cap = "ТАЙМЕР";
+            uint32_t cap_col = 0x707880;
+
+            if (state == 1) { // ARMING: presets in minutes
+              static const int PRESETS[] = {1, 3, 5, 10, 15, 30};
+              int p = id(timer_preset_idx);
+              val = (p >= 0 && p < 6) ? PRESETS[p] : 1;
+              dig_color = 0xFF9E3D;
+              cap = "ВИБІР ТАЙМЕРА";
+              cap_col = 0x707880;
+            } else if (state == 4) { // RINGING: 00 in red
+              val = 0;
+              dig_color = 0xFF3D3D;
+              cap = "ГОТОВО";
+              cap_col = 0xFF3D3D;
+            } else if (state == 3) { // PAUSED (final 60s): seconds in grey
+              val = rem;
+              dig_color = 0x707880;
+              cap = "ПАУЗА";
+              cap_col = 0x707880;
+            } else { // RUNNING (final 60s): seconds in amber
+              val = rem;
+              dig_color = 0xFF9E3D;
+              cap = "ТАЙМЕР";
+              cap_col = 0x707880;
+            }
+
+            const int d1 = val / 10;
+            const int d2 = val % 10;
+
+            if (dig_color != prev_digits_color) {
+              prev_digits_color = dig_color;
+              lv_obj_set_style_text_color(id(ui_timer_d1), lv_color_hex(dig_color), LV_PART_MAIN);
+              lv_obj_set_style_text_color(id(ui_timer_d2), lv_color_hex(dig_color), LV_PART_MAIN);
+            }
+
+            char buf[2] = {0, 0};
+            if (d1 != prev_d1) {
+              prev_d1 = d1;
+              buf[0] = '0' + d1;
+              lv_label_set_text(id(ui_timer_d1), buf);
+            }
+            if (d2 != prev_d2) {
+              prev_d2 = d2;
+              buf[0] = '0' + d2;
+              lv_label_set_text(id(ui_timer_d2), buf);
+            }
+
+            if (cap != prev_cap) {
+              prev_cap = cap;
+              lv_label_set_text(id(ui_timer_cap), cap);
+            }
+            if (cap_col != prev_cap_col) {
+              prev_cap_col = cap_col;
+              lv_obj_set_style_text_color(id(ui_timer_cap), lv_color_hex(cap_col), LV_PART_MAIN);
+            }
+          }
+
+  - id: timer_start_running
+    mode: restart
+    then:
+      - script.stop: timer_arm_commit
+      - script.stop: timer_countdown
+      - script.stop: timer_ring
+      - lambda: |-
+          id(timer_state) = 2; // RUNNING
+          int m = (id(timer_remaining_seconds) + 59) / 60;
+          id(slot_extra_text) = "таймер " + std::to_string(m) + " хв";
+          if (id(timer_remaining_seconds) > 60) {
+            id(slot_idx) = 2;
+          }
+      - script.execute: refresh_timer_ui
+      - script.execute: refresh_slot
+      - script.execute: timer_countdown
+
+  - id: timer_countdown
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: return id(timer_state) == 2 && id(timer_remaining_seconds) > 0;
+          then:
+            - delay: 1s
+            - if:
+                condition:
+                  lambda: return id(timer_state) == 2;
+                then:
+                  - lambda: |-
+                      id(timer_remaining_seconds)--;
+                      static int last_slot_m = -1;
+                      if (id(timer_remaining_seconds) > 60) {
+                        int m = (id(timer_remaining_seconds) + 59) / 60;
+                        if (m != last_slot_m) {
+                          last_slot_m = m;
+                          id(slot_extra_text) = "таймер " + std::to_string(m) + " хв";
+                          if (id(slot_idx) == 2) id(refresh_slot).execute();
+                        }
+                      } else if (id(timer_remaining_seconds) > 0) {
+                        if (last_slot_m != 0) {
+                          last_slot_m = 0;
+                          id(slot_extra_text) = "таймер < 1 хв";
+                          if (id(slot_idx) == 2) id(refresh_slot).execute();
+                        }
+                      }
+                  - script.execute: refresh_timer_ui
+                  - if:
+                      condition:
+                        lambda: return id(timer_remaining_seconds) == 0;
+                      then:
+                        - script.execute: timer_ring
+
+  - id: timer_cycle_preset
+    then:
+      - lambda: |-
+          id(timer_state) = 1; // ARMING
+          id(timer_preset_idx)++;
+          if (id(timer_preset_idx) >= 6) {
+            id(timer_state) = 0;
+            id(timer_preset_idx) = -1;
+            id(htram_core)->send_beep(1760, 30);
+          } else {
+            id(htram_core)->send_beep(1976, 30);
+          }
+      - if:
+          condition:
+            lambda: return id(timer_state) == 1;
+          then:
+            - script.execute: refresh_timer_ui
+            - script.execute: timer_arm_commit
+          else:
+            - script.stop: timer_arm_commit
+            - script.execute: timer_cancel
+
+  - id: timer_arm_commit
+    mode: restart
+    then:
+      - delay: 2500ms
+      - if:
+          condition:
+            lambda: return id(timer_state) == 1;
+          then:
+            - lambda: |-
+                static const int PRESETS[] = {1, 3, 5, 10, 15, 30};
+                int p = id(timer_preset_idx);
+                int m = (p >= 0 && p < 6) ? PRESETS[p] : 1;
+                id(timer_total_seconds) = m * 60;
+                id(timer_remaining_seconds) = m * 60;
+                id(timer_state) = 2; // RUNNING
+                auto now = id(ha_time).now();
+                if (now.is_valid()) {
+                  int cur = now.hour * 3600 + now.minute * 60 + now.second;
+                  int fin = (cur + m * 60) % 86400;
+                  id(timer_finish_hour) = (fin / 3600) % 24;
+                  id(timer_finish_minute) = (fin % 3600) / 60.0f;
+                }
+                id(htram_core)->play_rtttl("${timer_confirm_rtttl}");
+            - script.execute: timer_start_running
+
+  - id: timer_pause
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(timer_state) == 2) {
+            id(timer_state) = 3; // PAUSED
+            int m = (id(timer_remaining_seconds) + 59) / 60;
+            id(slot_extra_text) = "пауза " + std::to_string(m) + " хв";
+            id(htram_core)->send_beep(1760, 40);
+          }
+      - script.stop: timer_countdown
+      - script.execute: refresh_timer_ui
+      - script.execute: refresh_slot
+
+  - id: timer_resume
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(timer_state) == 3) {
+            id(timer_state) = 2; // RUNNING
+            auto now = id(ha_time).now();
+            if (now.is_valid()) {
+              int cur = now.hour * 3600 + now.minute * 60 + now.second;
+              int fin = (cur + id(timer_remaining_seconds)) % 86400;
+              id(timer_finish_hour) = (fin / 3600) % 24;
+              id(timer_finish_minute) = (fin % 3600) / 60.0f;
+            }
+            int m = (id(timer_remaining_seconds) + 59) / 60;
+            id(slot_extra_text) = "таймер " + std::to_string(m) + " хв";
+            id(htram_core)->send_beep(1976, 40);
+          }
+      - script.execute: refresh_timer_ui
+      - script.execute: refresh_slot
+      - script.execute: timer_countdown
+
+  - id: timer_cancel
+    mode: restart
+    then:
+      - script.stop: timer_arm_commit
+      - script.stop: timer_countdown
+      - script.stop: timer_ring
+      - lambda: |-
+          id(htram_core)->send_stop();
+          id(timer_state) = 0; // IDLE
+          id(timer_preset_idx) = -1;
+          id(timer_total_seconds) = 0;
+          id(timer_remaining_seconds) = 0;
+          id(slot_extra_text) = "";
+          if (id(slot_idx) >= 2) id(slot_idx) = 0;
+      - script.execute: refresh_timer_ui
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+
+  - id: timer_ring
+    mode: single
+    then:
+      - lambda: |-
+          id(timer_state) = 4; // RINGING
+          id(slot_extra_text) = "таймер 0 хв";
+      - script.execute: refresh_timer_ui
+      - repeat:
+          count: 60
+          then:
+            - lambda: id(htram_core)->play_rtttl("${timer_rtttl}");
+            - delay: ${timer_repeat_seconds}s
+      - script.execute: timer_dismiss
+
+  - id: timer_dismiss
+    mode: restart
+    then:
+      - script.stop: timer_ring
+      - lambda: |-
+          id(htram_core)->send_stop();
+          id(timer_state) = 0; // IDLE
+          id(timer_preset_idx) = -1;
+          id(timer_total_seconds) = 0;
+          id(timer_remaining_seconds) = 0;
+          id(slot_extra_text) = "";
+          if (id(slot_idx) >= 2) id(slot_idx) = 0;
+      - script.execute: refresh_timer_ui
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+
+  - id: timer_hold_detector
+    mode: restart
+    then:
+      - delay: 1000ms
+      - if:
+          condition:
+            lambda: return id(timer_state) != 0;
+          then:
+            - lambda: |-
+                id(timer_cancel_triggered) = true;
+                id(htram_core)->play_rtttl("${timer_cancel_rtttl}");
+            - script.execute: timer_cancel
+
+  - id: !extend on_button_press
+    then:
+      - script.execute: timer_hold_detector
+
+  - id: !extend on_button_release
+    then:
+      - script.stop: timer_hold_detector
+
+  - id: !extend handle_feature_button
+    then:
+      - lambda: |-
+          if (id(button_handled)) return;
+
+          if (id(timer_cancel_triggered)) {
+            id(timer_cancel_triggered) = false;
+            id(button_handled) = true;
+            return;
+          }
+
+          if (action == "single") {
+            const int st = id(timer_state);
+            if (st == 4) {
+              id(button_handled) = true;
+              id(timer_dismiss).execute();
+            } else if (st == 1) {
+              id(button_handled) = true;
+              id(timer_cycle_preset).execute();
+            } else if (st == 0) {
+              id(button_handled) = true;
+              id(timer_cycle_preset).execute();
+            } else if (st == 2) {
+              id(button_handled) = true;
+              id(timer_pause).execute();
+            } else if (st == 3) {
+              id(button_handled) = true;
+              id(timer_resume).execute();
+            }
+          } else if (action == "long") {
+            if (id(timer_state) != 0 || id(timer_cancel_triggered)) {
+              id(button_handled) = true;
+            }
+          }
+
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face != 0) {
+            lv_obj_add_flag(id(ui_timer_tick), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_timer_cap), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            id(refresh_timer_ui).execute();
+          }
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_timer_tick), id(ui_root));
+            lv_obj_set_parent(id(ui_timer_d1), id(ui_root));
+            lv_obj_set_parent(id(ui_timer_d2), id(ui_root));
+            lv_obj_set_parent(id(ui_timer_cap), id(ui_root));
+        - script.execute: refresh_timer_ui

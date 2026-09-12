@@ -215,7 +215,7 @@ int main(void)
             debounce_count = 0;
         }
 
-        if (debounced_btn && btn_hold_start_ms && (now - btn_hold_start_ms >= 3000)) {
+        if (debounced_btn && btn_hold_start_ms && (now - btn_hold_start_ms >= 5000)) {
             periph_beep_blocking(2000, 100);
             
             /* STANDBY MODE ENTRY -- mirrors what the factory image actually

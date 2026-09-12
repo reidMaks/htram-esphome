@@ -76,6 +76,67 @@ def crc16_ccitt(data: bytes) -> int:
     return crc
 
 
+def check_status(host: str) -> int:
+    """Query live device telemetry and print a summary."""
+    import asyncio
+    try:
+        from aioesphomeapi import APIClient
+    except ImportError:
+        print("[status] aioesphomeapi not installed in .venv", file=sys.stderr)
+        return 1
+
+    psk = None
+    if SECRETS.exists():
+        for line in SECRETS.read_text(encoding="utf-8").splitlines():
+            key, _, val = line.partition(":")
+            if key.strip() == "api_key":
+                psk = val.strip().strip('"').strip("'")
+
+    async def _query():
+        cli = APIClient(host, 6053, password=None, noise_psk=psk)
+        try:
+            await cli.connect(login=True)
+        except Exception as e:
+            print(f"[status] Failed to connect to {host}: {e}", file=sys.stderr)
+            return 1
+
+        info = await cli.device_info()
+        print(f"\n========================================================")
+        print(f"  DEVICE: {info.name} ({info.mac_address})")
+        print(f"  ESPHome Version: {info.esphome_version}")
+        print(f"  Compilation:     {info.compilation_time}")
+        print(f"========================================================")
+
+        entities, user_services = await cli.list_entities_services()
+        states = {}
+
+        def state_callback(state):
+            states[state.key] = state
+
+        cli.subscribe_states(state_callback)
+        await asyncio.sleep(1.5)
+        await cli.disconnect()
+
+        ent_by_key = {ent.key: ent for ent in entities}
+        print("\nTelemetry & Sensors:")
+        for key, ent in sorted(ent_by_key.items(), key=lambda x: x[1].name):
+            st = states.get(key)
+            val = getattr(st, "state", None) if st else None
+            if val is not None:
+                unit = getattr(ent, "unit_of_measurement", "")
+                print(f"  {ent.name:<28}: {val} {unit}")
+
+        print("\nRegistered Services:")
+        for s in user_services:
+            args = ", ".join(f"{arg.name}: {arg.type}" for arg in s.args)
+            print(f"  service: {s.name}({args})")
+        print()
+        return 0
+
+    return asyncio.run(_query())
+
+
+
 def pyocd(*cmds, freq="100k", timeout=60):
     args = [str(PYOCD), "cmd", "-t", "cortex_m", "-f", freq]
     for c in cmds:
@@ -269,9 +330,12 @@ def main() -> int:
                          "PB3 and takes the ESP down with it")
     ap.add_argument("--swd-mem", action="store_true",
                     help="flash via SWD memory mailbox (no UART required)")
-    ap.add_argument("--no-reset", action="store_true",
-                    help="do not reset+run the target after flashing (SWD only)")
+    ap.add_argument("--status", metavar="HOST",
+                    help="query live device telemetry and services over Native API")
     args = ap.parse_args()
+
+    if args.status:
+        return check_status(args.status)
 
     if args.factory:
         img_path = FACTORY_IMAGE

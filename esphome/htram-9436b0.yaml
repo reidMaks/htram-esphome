@@ -36,3 +36,4 @@ esphome:
 packages:
   core: !include htram-core.yaml
   weather: !include features/weather.yaml
+  timer: !include features/timer.yaml
