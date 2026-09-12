@@ -1,0 +1,41 @@
+{
+  "name": "HTRAM ESPHome & GD32 Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "ubuntu",
+  "runArgs": [
+    "--network=host",
+    "--privileged",
+    "--cpus=7.0"
+  ],
+  "mounts": [
+    "source=/dev,target=/dev,type=bind",
+    "source=/run/udev,target=/run/udev,type=bind,readonly",
+    "source=htram-platformio,target=/home/ubuntu/.platformio,type=volume",
+    "source=htram-cache,target=/home/ubuntu/.cache,type=volume",
+    "source=${localEnv:HOME}/.gemini,target=/home/ubuntu/.gemini,type=bind",
+    "source=${localEnv:HOME}/.local/bin,target=/host-bin,type=bind,readonly"
+  ],
+  "containerEnv": {
+    "PATH": "/home/ubuntu/.local/bin:/host-bin:/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "charliermarsh.ruff",
+        "esphome.esphome-vscode",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+        "C_Cpp.default.compilerPath": "/usr/bin/gcc",
+        "clang-format.executable": "/usr/bin/clang-format"
+      }
+    }
+  },
+  "postCreateCommand": "sudo chown -R ubuntu:ubuntu /home/ubuntu/.cache /home/ubuntu/.platformio && uv sync && make install-hooks"
+}

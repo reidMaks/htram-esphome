@@ -36,7 +36,8 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 .PHONY: all test test-gd32 test-esphome test-tools test-configs \
         lint lint-c lint-py lint-yaml format format-check \
         coverage coverage-html build-gd32 ota-gd32 status build-esp install-hooks clean help \
-        device device-silence device-status device-beep
+        device device-silence device-status device-beep \
+        container-build container-run container-stop
 
 all: test
 
@@ -62,6 +63,9 @@ help:
 	@echo "  make device        - Control device API: make device DEVICE=<ip|alias> CMD=<cmd>"
 	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<ip|alias>"
 	@echo "  make device-silence- Trigger minute of silence test: make device-silence DEVICE=<ip|alias>"
+	@echo "  make container-build- Build dev container Docker image"
+	@echo "  make container-run  - Launch dev container shell (Docker)"
+	@echo "  make container-stop - Stop and remove dev container"
 	@echo "  make clean         - Remove test binaries, coverage counters, and build artifacts"
 
 # ── Test Suite ───────────────────────────────────────────────────────────────
@@ -227,6 +231,16 @@ device-status:
 
 device-beep:
 	$(PYTHON) tools/device.py $(or $(DEVICE),office) beep
+
+# ── Dev Container ────────────────────────────────────────────────────────────
+container-build:
+	./tools/devcontainer.sh build
+
+container-run:
+	./tools/devcontainer.sh run
+
+container-stop:
+	./tools/devcontainer.sh stop
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 clean:
