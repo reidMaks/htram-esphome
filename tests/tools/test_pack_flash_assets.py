@@ -5,6 +5,7 @@ import sys
 import zlib
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from tools.pack_flash_assets import (
@@ -13,8 +14,15 @@ from tools.pack_flash_assets import (
     FLASH_ASSETS_MAGIC,
     FLASH_ASSETS_VERSION,
     HEADER_SIZE,
+    MAX_DISPLAY_HEIGHT,
+    MAX_DISPLAY_WIDTH,
+    MAX_GD32_ROW_STRIDE,
+    MAX_SINGLE_BLOCK_ASSETS_SIZE,
+    AssetValidationError,
     encode_a1_bitmap,
     pack_assets,
+    validate_asset_dimensions,
+    validate_assets_container,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -130,3 +138,105 @@ def test_pack_flash_assets_cli(tmp_path):
     assert meta["version"] == 1
     assert len(meta["assets"]) == len(CANONICAL_ASSETS)
     assert out_bin.stat().st_size == meta["total_size"]
+
+
+def test_validate_asset_dimensions_bounds():
+    # Valid bounds
+    validate_asset_dimensions(10, 10, "valid")
+    validate_asset_dimensions(MAX_DISPLAY_WIDTH, MAX_DISPLAY_HEIGHT, "max_valid")
+
+    # Zero or negative
+    with pytest.raises(AssetValidationError, match="positive"):
+        validate_asset_dimensions(0, 10, "zero_w")
+    with pytest.raises(AssetValidationError, match="positive"):
+        validate_asset_dimensions(10, -5, "neg_h")
+
+    # Exceed width
+    with pytest.raises(AssetValidationError, match="exceeds ST7789 display width"):
+        validate_asset_dimensions(MAX_DISPLAY_WIDTH + 1, 100, "too_wide")
+
+    # Exceed height
+    with pytest.raises(AssetValidationError, match="exceeds ST7789 display height"):
+        validate_asset_dimensions(100, MAX_DISPLAY_HEIGHT + 1, "too_tall")
+
+    # Stride limit check
+    assert MAX_GD32_ROW_STRIDE == 40
+
+
+def test_validate_assets_container_valid():
+    bin_data, entries = pack_assets(IMAGES_DIR)
+    validated = validate_assets_container(bin_data)
+    assert len(validated) == len(entries)
+
+
+def test_validate_assets_container_oversized_memory():
+    bin_data, _ = pack_assets(IMAGES_DIR)
+    assert MAX_SINGLE_BLOCK_ASSETS_SIZE == 65536
+    # If max_allowed_size is smaller than container, must reject to prevent memory overflow
+    with pytest.raises(AssetValidationError, match="exceeds allocated flash memory limit"):
+        validate_assets_container(bin_data, max_allowed_size=len(bin_data) - 1)
+
+
+def test_validate_assets_container_corrupted_magic():
+    bin_data, _ = pack_assets(IMAGES_DIR)
+    corrupted = bytearray(bin_data)
+    corrupted[0] ^= 0xFF
+    with pytest.raises(AssetValidationError, match="Invalid container magic"):
+        validate_assets_container(bytes(corrupted))
+
+
+def test_validate_assets_container_corrupted_header_crc():
+    bin_data, _ = pack_assets(IMAGES_DIR)
+    corrupted = bytearray(bin_data)
+    # Flip bit in version field without updating CRC
+    corrupted[8] ^= 0x01
+    with pytest.raises(AssetValidationError, match="Unsupported container version"):
+        validate_assets_container(bytes(corrupted))
+
+
+def test_validate_assets_container_corrupted_data_crc():
+    bin_data, entries = pack_assets(IMAGES_DIR)
+    corrupted = bytearray(bin_data)
+    # Corrupt first byte of first asset's bitmap
+    first_offset = entries[0]["data_offset"]
+    corrupted[first_offset] ^= 0xFF
+    with pytest.raises(AssetValidationError, match="data CRC32 mismatch"):
+        validate_assets_container(bytes(corrupted))
+
+
+def test_validate_assets_container_invalid_offset():
+    bin_data, _ = pack_assets(IMAGES_DIR)
+    corrupted = bytearray(bin_data)
+    # Point first entry's data_offset to overlap directory table
+    entry_offset = HEADER_SIZE
+    struct.pack_into("<I", corrupted, entry_offset + 8, 0x0010)
+    # Recompute header CRC is not needed because entry offset is in directory
+    with pytest.raises(AssetValidationError, match="overlaps directory table"):
+        validate_assets_container(bytes(corrupted))
+
+
+def test_pack_flash_assets_validate_cli():
+    bin_path = REPO_ROOT / "firmware" / "gd32" / "build" / "flash_assets.bin"
+    if not bin_path.exists():
+        bin_data, _ = pack_assets(IMAGES_DIR)
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.write_bytes(bin_data)
+
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "tools" / "pack_flash_assets.py"),
+        "--validate",
+        str(bin_path),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    assert "[validate OK]" in res.stdout
+    assert "passed all integrity, geometry, and memory checks" in res.stdout
+
+
+def test_upload_assets_rejects_corrupted_file(tmp_path):
+    from tools.flash_assets import upload_assets
+
+    bad_bin = tmp_path / "corrupted_assets.bin"
+    bad_bin.write_bytes(b"INVALID_ASSETS_FILE_NOT_MAGIC_1234567890")
+    ret = upload_assets("127.0.0.1", image_file=bad_bin)
+    assert ret == 1

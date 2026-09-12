@@ -106,7 +106,7 @@ id(htram_core)->send_draw_cached_asset(
 
 ## 5. Asset Packing & Flashing Toolchain
 
-### 1. Packing
+### 1. Packing & Validation
 Source masks live in `esphome/images/*.png` (1-bit monochrome PNGs).
 Run:
 ```bash
@@ -114,12 +114,19 @@ make pack-assets
 # Or directly:
 .venv/bin/python tools/pack_flash_assets.py
 ```
-This generates `firmware/gd32/build/flash_assets.bin` containing `flash_assets_header_t`,
-`flash_asset_entry_t[]` directory, and row-aligned 1-bit bitmap data.
+This generates `firmware/gd32/build/flash_assets.bin` and automatically runs strict validation:
+- Geometry limits: `width <= 240`, `height <= 240`.
+- Line buffer limit: `stride <= 40` bytes (GD32 line buffer).
+- Memory limit: total size $\le 65\,536$ bytes (fits Block 4 without memory corruption).
+- CRC integrity: header and per-asset bitmap CRC32s.
+
+You can also run validation independently:
+```bash
+make validate-assets
+```
 
 ### 2. Flashing to Hardware
-Uploads container to `/gd32_assets` on the ESP32, which programs SPI Flash at `0x040000`
-and verifies 32-bit CRC32:
+`make flash-assets` validates the container first; if any safety limit is violated, it aborts immediately to protect hardware. Valid containers are uploaded to `/gd32_assets` on the ESP32:
 ```bash
 make flash-assets DEVICE=office
 # Or directly:

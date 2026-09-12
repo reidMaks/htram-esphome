@@ -36,7 +36,7 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
 .PHONY: all test test-gd32 test-esphome test-tools test-configs \
         lint lint-c lint-py lint-yaml format format-check \
-        coverage coverage-html build-gd32 ota-gd32 pack-assets flash-assets \
+        coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
         status build-esp install-hooks clean help \
         device device-silence device-status device-beep \
         container-build container-run container-stop
@@ -61,8 +61,9 @@ help:
 	@echo "  make install-hooks - Configure git to use repository pre-commit hook"
 	@echo "  make build-gd32    - Build GD32 target firmware via arm-none-eabi-gcc"
 	@echo "  make ota-gd32      - Flash GD32 firmware via OTA (Usage: make ota-gd32 DEVICE=<alias|ip>)"
-	@echo "  make pack-assets   - Pack UI monochrome bitmaps into flash_assets.bin"
-	@echo "  make flash-assets  - Pack and upload graphic assets to SPI Flash: make flash-assets DEVICE=<alias|ip>"
+	@echo "  make pack-assets   - Pack and validate UI monochrome bitmaps into flash_assets.bin"
+	@echo "  make validate-assets- Validate graphic assets container for geometry and memory safety"
+	@echo "  make flash-assets  - Pack, validate, and upload graphic assets to SPI Flash: make flash-assets DEVICE=<alias|ip>"
 	@echo "  make build-esp     - Compile ESPHome ESP32 firmware"
 	@echo "  make device        - Control device API: make device DEVICE=<alias|ip> CMD=<cmd>"
 	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<alias|ip>"
@@ -245,14 +246,18 @@ endif
 	$(PYTHON) tools/swd/flash.py --ota $(TARGET_DEVICE)
 
 pack-assets:
-	@echo "==> Packing graphic assets into flash_assets.bin..."
+	@echo "==> Packing and validating graphic assets into flash_assets.bin..."
 	$(PYTHON) tools/pack_flash_assets.py
 
-flash-assets: pack-assets
+validate-assets:
+	@echo "==> Validating graphic assets binary container..."
+	$(PYTHON) tools/pack_flash_assets.py --validate
+
+flash-assets: pack-assets validate-assets
 ifeq ($(strip $(TARGET_DEVICE)),)
 	$(error TARGET_DEVICE is not set. Usage: make flash-assets DEVICE=<alias|ip>, e.g. make flash-assets DEVICE=office)
 endif
-	@echo "==> Uploading graphic assets to $(TARGET_DEVICE)..."
+	@echo "==> Uploading validated graphic assets to $(TARGET_DEVICE)..."
 	$(PYTHON) tools/flash_assets.py $(TARGET_DEVICE)
 
 status:

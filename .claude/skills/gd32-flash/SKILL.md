@@ -123,9 +123,21 @@ Container format:
 - `flash_asset_entry_t[]` (52 bytes per asset): ID, dimensions, stride, offset, CRC32, name
 - Bitmaps: page-aligned sequential 1-bit A1 row-padded data
 
-### 2. Flash Assets to Device
-Uploads `flash_assets.bin` to the ESP32 endpoint `/gd32_assets` (Digest Auth), which
-erases 64 KB blocks at `0x040000`, writes chunks, and verifies full CRC32 with the GD32:
+### 2. Validate Assets Container
+Before flashing, assets are strictly validated against hardware display constraints and memory bounds:
+- **Geometry bounds**: `width <= 240`, `height <= 240` (ST7789 display controller limits).
+- **Buffer bounds**: `stride <= 40` bytes (GD32 line buffer limit in `display.c`).
+- **Memory safety**: container size $\le 65\,536$ bytes (64 KB Block 4 allocation limit). Prevents overwriting adjacent SPI Flash firmware or sectors.
+- **Integrity**: header CRC32 and per-asset bitmap IEEE CRC32s verified.
+
+```bash
+make validate-assets
+# or directly:
+.venv/bin/python tools/pack_flash_assets.py --validate
+```
+
+### 3. Flash Assets to Device
+`make flash-assets` automatically runs `pack-assets` and `validate-assets`. If validation fails, upload is aborted before making network requests to prevent corrupting hardware memory:
 
 ```bash
 make flash-assets DEVICE=office

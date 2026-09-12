@@ -31,8 +31,11 @@ from tools.device import load_credentials, resolve_device_address
 from tools.pack_flash_assets import (
     DEFAULT_IMAGES_DIR,
     DEFAULT_OUTPUT_BIN,
+    MAX_SINGLE_BLOCK_ASSETS_SIZE,
+    AssetValidationError,
     pack_assets,
     print_asset_table,
+    validate_assets_container,
 )
 
 
@@ -42,15 +45,30 @@ def upload_assets(target: str, repack: bool = False, image_file: Path | None = N
 
     if repack or not bin_path.exists():
         print(f"[assets] Packing assets from {DEFAULT_IMAGES_DIR} ...")
-        bin_data, entries = pack_assets(DEFAULT_IMAGES_DIR)
+        try:
+            bin_data, entries = pack_assets(DEFAULT_IMAGES_DIR)
+        except (FileNotFoundError, AssetValidationError) as e:
+            print(f"[assets ERROR] Failed to pack assets: {e}", file=sys.stderr)
+            return 1
         bin_path.parent.mkdir(parents=True, exist_ok=True)
         bin_path.write_bytes(bin_data)
         print_asset_table(entries, len(bin_data))
     else:
         bin_data = bin_path.read_bytes()
 
+    # Pre-upload validation: verify container integrity, geometry, and memory bounds
+    try:
+        entries = validate_assets_container(bin_data, max_allowed_size=MAX_SINGLE_BLOCK_ASSETS_SIZE)
+    except AssetValidationError as e:
+        print(f"[assets ERROR] Validation failed for {bin_path.name}: {e}", file=sys.stderr)
+        print(
+            "[assets ERROR] Aborting upload to protect device SPI Flash and display subsystem.",
+            file=sys.stderr,
+        )
+        return 1
+
     host_crc = zlib.crc32(bin_data) & 0xFFFFFFFF
-    print(f"[assets] Image {bin_path.name}: {len(bin_data)} bytes, CRC32=0x{host_crc:08X}")
+    print(f"[assets] Validated {bin_path.name}: {len(bin_data)} bytes ({len(entries)} assets), CRC32=0x{host_crc:08X}")
 
     url = f"http://{host}/gd32_assets"
     username, password = load_credentials()
