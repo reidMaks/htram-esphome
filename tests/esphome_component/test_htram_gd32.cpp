@@ -975,6 +975,77 @@ void test_ota_web_handler(void) {
   empty_handler.handleRequest(&req);
 }
 
+void test_execute_assets_upload_safety_and_validation(void) {
+  std::vector<uint8_t> tiny(10, 0x00);
+  std::string res1 = g_comp->execute_assets_upload(tiny);
+  TEST_ASSERT_NOT_NULL(strstr(res1.c_str(), "invalid assets size"));
+
+  std::vector<uint8_t> bad_magic(64, 0x00);
+  std::string res2 = g_comp->execute_assets_upload(bad_magic);
+  TEST_ASSERT_NOT_NULL(strstr(res2.c_str(), "invalid assets container magic"));
+
+  std::vector<uint8_t> valid_magic(64, 0x00);
+  uint64_t magic = 0x545353414D525448ULL;
+  memcpy(valid_magic.data(), &magic, 8);
+
+  // No SPI flash detected
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+  std::string res3 = g_comp->execute_assets_upload(valid_magic);
+  TEST_ASSERT_NOT_NULL(strstr(res3.c_str(), "SPI flash not detected"));
+}
+
+void test_execute_assets_upload_success(void) {
+  std::vector<uint8_t> assets(512, 0xAA);
+  uint64_t magic = 0x545353414D525448ULL;
+  memcpy(assets.data(), &magic, 8);
+
+  // Mark SPI flash as detected
+  auto info_pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(info_pkt.data(), info_pkt.size());
+
+  g_comp->on_write = [](const uint8_t* data, size_t len) {
+    if (len >= 3 && data[2] == 0x24) {
+      // Erase ACK
+      auto ack = make_flash_ack_pkt(0x24, 0x00, 0x00040000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x22) {
+      // Write Chunk ACK
+      auto ack = make_flash_ack_pkt(0x22, 0x00, 0x00040000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x23) {
+      // Verify CRC ACK
+      auto ack = make_flash_ack_pkt(0x23, 0x00, 0x00040000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    }
+  };
+
+  std::string res = g_comp->execute_assets_upload(assets);
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"ok\""));
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"bytes_written\":512"));
+  TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  g_comp->on_write = nullptr;
+
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+}
+
+void test_assets_web_handler(void) {
+  Gd32AssetsHandler handler(g_comp);
+  AsyncWebServerRequest req;
+
+  // Upload simulation
+  uint8_t chunk[64] = {0x00};
+  uint64_t magic = 0x545353414D525448ULL;
+  memcpy(chunk, &magic, 8);
+  handler.handleUpload(&req, "flash_assets.bin", 0, chunk, sizeof(chunk), false);
+  handler.handleUpload(&req, "flash_assets.bin", 64, chunk, sizeof(chunk), true);
+
+  // Empty handler test
+  Gd32AssetsHandler empty_handler(g_comp);
+  empty_handler.handleRequest(&req);
+}
+
 // ---------------------------------------------------------------------------
 // 15. Setup and Dump Config
 // ---------------------------------------------------------------------------
@@ -989,7 +1060,7 @@ void test_setup_and_dump_config(void) {
   esphome::web_server_base::WebServerBase srv;
   esphome::web_server_base::global_web_server_base = &srv;
   g_comp->setup();
-  TEST_ASSERT_EQUAL(1, srv.handlers.size());
+  TEST_ASSERT_EQUAL(2, srv.handlers.size());
 }
 
 int main(void) {
@@ -1018,6 +1089,9 @@ int main(void) {
   RUN_TEST(test_execute_ota_with_spi_flash_staging_failure);
   RUN_TEST(test_display_pixel_drawing);
   RUN_TEST(test_ota_web_handler);
+  RUN_TEST(test_execute_assets_upload_safety_and_validation);
+  RUN_TEST(test_execute_assets_upload_success);
+  RUN_TEST(test_assets_web_handler);
   RUN_TEST(test_setup_and_dump_config);
   return UNITY_END();
 }

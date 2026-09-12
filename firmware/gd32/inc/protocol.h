@@ -24,6 +24,7 @@
 #define CMD_TYPE_SET_LEDS           0x12
 #define CMD_TYPE_BEEP               0x13
 #define CMD_TYPE_PLAY_MELODY        0x14
+#define CMD_TYPE_DRAW_CACHED_ASSET  0x15
 #define CMD_TYPE_ENTER_BOOTLOADER   0x1F
 #define CMD_TYPE_GET_FLASH_INFO     0x20
 #define CMD_TYPE_FLASH_ERASE_SECTOR 0x21
@@ -173,6 +174,19 @@ typedef struct {
     uint16_t duration_ms;   /* ms */
     uint16_t crc16;
 } cmd_beep_t;
+
+typedef struct {
+    uint8_t magic0;         /* 0xAA */
+    uint8_t magic1;         /* 0x55 */
+    uint8_t type;           /* 0x15 */
+    uint16_t asset_id;      /* Enum flash_asset_id_e */
+    uint8_t x;              /* X position */
+    uint8_t y;              /* Y position */
+    uint16_t fg_color;      /* RGB565 */
+    uint16_t bg_color;      /* RGB565 */
+    uint8_t flags;          /* bit 0: transparent bg */
+    uint16_t crc16;
+} cmd_draw_cached_asset_t;
 
 typedef struct {
     uint8_t magic0;         /* 0xAA */

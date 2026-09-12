@@ -80,7 +80,9 @@ void HtramGd32Component::setup() {
   ESP_LOGI(TAG, "Setup HTRAM GD32 component...");
   if (esphome::web_server_base::global_web_server_base != nullptr) {
     esphome::web_server_base::global_web_server_base->add_handler(new Gd32OtaHandler(this));
+    esphome::web_server_base::global_web_server_base->add_handler(new Gd32AssetsHandler(this));
     ESP_LOGI(TAG, "GD32 OTA HTTP handler registered at /gd32_ota");
+    ESP_LOGI(TAG, "GD32 Assets HTTP handler registered at /gd32_assets");
   } else {
     ESP_LOGW(TAG, "web_server_base is null, OTA will not be available!");
   }
@@ -1092,6 +1094,128 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     snprintf(buf, sizeof(buf), "{\"result\":\"ok\",\"bytes_written\":%d,\"staged_crc\":%d}", 
              bytes_written, staged_crc);
   }
+  return buf;
+}
+
+std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t> &assets_data) {
+  char buf[256];
+  if (assets_data.size() < 20 || assets_data.size() > 65536) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"invalid assets size (%d bytes)\"}", (int)assets_data.size());
+    return buf;
+  }
+
+  // Validate magic: "HTRMASST" = 0x545353414D525448ULL
+  uint64_t magic = 0;
+  memcpy(&magic, assets_data.data(), sizeof(magic));
+  if (magic != 0x545353414D525448ULL) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"invalid assets container magic\"}");
+    return buf;
+  }
+
+  bool has_spi_flash = (this->spi_flash_sensor_ != nullptr &&
+                        !this->spi_flash_status_.empty() &&
+                        this->spi_flash_status_.find("Not detected") == std::string::npos);
+  if (!has_spi_flash) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"SPI flash not detected\"}");
+    return buf;
+  }
+
+  ESP_LOGI(TAG, "[ASSETS] Starting graphic assets upload: %d bytes", (int)assets_data.size());
+
+  // Suppress LVGL screen updates and light LEDs to indicate asset upload mode
+  send_leds(1, 1, 0, 1);
+  ota_mode_ = true;
+
+  // Drain any pending telemetry in RX buffer
+  while (this->available()) {
+    uint8_t dummy;
+    this->read_byte(&dummy);
+  }
+
+  // 1. Erase SPI Flash Block 4 (0x00040000, 64 KB)
+  ESP_LOGI(TAG, "[ASSETS 1/3] Erasing SPI Flash Block 4 (0x00040000)...");
+  this->last_flash_ack_cmd_ = 0;
+  this->last_flash_ack_status_ = 0xFF;
+  this->send_flash_erase_block(0x00040000);
+  this->flush();
+
+  uint32_t e_start = millis();
+  while (millis() - e_start < 3000) {
+    this->pump_rx_(false);
+    if (this->last_flash_ack_cmd_ == 0x24)
+      break;
+    App.feed_wdt();
+    delay(10);
+  }
+  if (this->last_flash_ack_cmd_ != 0x24 || this->last_flash_ack_status_ != 0x00) {
+    ESP_LOGE(TAG, "[ASSETS 1/3] Block erase failed: status=0x%02X", this->last_flash_ack_status_);
+    ota_mode_ = false;
+    resend_leds();
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"erase\",\"reason\":\"Block erase failed\"}");
+    return buf;
+  }
+
+  // 2. Write Chunks (up to 256 bytes each)
+  ESP_LOGI(TAG, "[ASSETS 2/3] Writing %d bytes in 256B chunks to 0x00040000...", (int)assets_data.size());
+  for (size_t offset = 0; offset < assets_data.size(); offset += 256) {
+    size_t chunk_len = std::min((size_t)256, assets_data.size() - offset);
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
+    this->send_flash_write_chunk(0x00040000 + offset, assets_data.data() + offset, chunk_len);
+    this->flush();
+
+    uint32_t wstart = millis();
+    while (millis() - wstart < 1000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x22)
+        break;
+      App.feed_wdt();
+      delay(2);
+    }
+    if (this->last_flash_ack_cmd_ != 0x22 || this->last_flash_ack_status_ != 0x00) {
+      ESP_LOGE(TAG, "[ASSETS 2/3] Chunk write failed at offset 0x%04X: status=0x%02X", (unsigned)offset, this->last_flash_ack_status_);
+      ota_mode_ = false;
+      resend_leds();
+      snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"chunk_write\",\"offset\":%u,\"status\":%u}",
+               (unsigned)offset, (unsigned)this->last_flash_ack_status_);
+      return buf;
+    }
+    App.feed_wdt();
+  }
+
+  // 3. Verify CRC32
+  ESP_LOGI(TAG, "[ASSETS 3/3] Verifying CRC32 on SPI Flash...");
+  uint32_t host_crc32 = crc32_ieee(assets_data.data(), assets_data.size());
+  this->last_flash_ack_cmd_ = 0;
+  this->last_flash_ack_status_ = 0xFF;
+  this->send_flash_verify_crc(0x00040000, assets_data.size(), host_crc32);
+  this->flush();
+
+  uint32_t vstart = millis();
+  while (millis() - vstart < 3000) {
+    this->pump_rx_(false);
+    if (this->last_flash_ack_cmd_ == 0x23)
+      break;
+    App.feed_wdt();
+    delay(10);
+  }
+  if (this->last_flash_ack_cmd_ != 0x23 || this->last_flash_ack_status_ != 0x00) {
+    ESP_LOGE(TAG, "[ASSETS 3/3] CRC32 verification failed! status=0x%02X", this->last_flash_ack_status_);
+    ota_mode_ = false;
+    resend_leds();
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"verify\",\"reason\":\"CRC32 mismatch in SPI flash\"}");
+    return buf;
+  }
+
+  ESP_LOGI(TAG, "[ASSETS] Upload and verification SUCCESSFUL! (%d bytes, CRC32=0x%08X)",
+           (int)assets_data.size(), (unsigned)host_crc32);
+
+  rx_buffer_.clear();
+  ota_mode_ = false;
+  resend_leds();
+
+  snprintf(buf, sizeof(buf), "{\"result\":\"ok\",\"bytes_written\":%d,\"crc32\":%u}",
+           (int)assets_data.size(), (unsigned)host_crc32);
   return buf;
 }
 

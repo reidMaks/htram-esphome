@@ -93,6 +93,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
 
   // Returns JSON string with result
   std::string execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery);
+  std::string execute_assets_upload(const std::vector<uint8_t> &assets_data);
 
  protected:
   bool flow_paused_{false};
@@ -251,6 +252,41 @@ class Gd32OtaHandler : public AsyncWebHandler {
   HtramGd32Component *parent_;
   std::vector<uint8_t> firmware_;
   bool staging_failed_{false};
+};
+
+class Gd32AssetsHandler : public AsyncWebHandler {
+ public:
+  Gd32AssetsHandler(HtramGd32Component *parent) : parent_(parent) {}
+
+  bool canHandle(AsyncWebServerRequest *request) const override {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    return request->url() == "/gd32_assets" && request->method() == HTTP_POST;
+#pragma GCC diagnostic pop
+  }
+
+  void handleRequest(AsyncWebServerRequest *request) override {
+    if (this->assets_data_.empty()) {
+      request->send(400, "application/json", "{\"result\":\"error\",\"reason\":\"no file uploaded\"}");
+      return;
+    }
+    std::string res = this->parent_->execute_assets_upload(this->assets_data_);
+    request->send(200, "application/json", res.c_str());
+    std::vector<uint8_t>().swap(this->assets_data_);
+  }
+
+  void handleUpload(AsyncWebServerRequest *request, const PlatformString &filename, size_t index, uint8_t *data, size_t len, bool final) override {
+    if (index == 0) {
+      std::vector<uint8_t>().swap(this->assets_data_);
+    }
+    if (len > 0) {
+      this->assets_data_.insert(this->assets_data_.end(), data, data + len);
+    }
+  }
+
+ private:
+  HtramGd32Component *parent_;
+  std::vector<uint8_t> assets_data_;
 };
 
 }  // namespace htram_gd32
