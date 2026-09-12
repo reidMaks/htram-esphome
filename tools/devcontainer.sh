@@ -37,12 +37,12 @@ run_container() {
                 --privileged \
                 -v /dev:/dev \
                 -v /run/udev:/run/udev:ro \
-                -v "${WORKSPACE_ROOT}:/workspace" \
+                -v "${WORKSPACE_ROOT}:/workspaces/htram-esphome" \
                 -v htram-platformio:/home/ubuntu/.platformio \
                 -v htram-cache:/home/ubuntu/.cache \
                 -v "${HOME}/.gemini:/home/ubuntu/.gemini:ro" \
                 -v "${HOME}/.local/bin:/host-bin:ro" \
-                -w /workspace \
+                -w /workspaces/htram-esphome \
                 "${IMAGE_NAME}" \
                 sleep infinity
         fi
