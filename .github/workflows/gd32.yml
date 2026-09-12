@@ -63,7 +63,9 @@ jobs:
           # despite the name. Publishing a number that the flashing tool will
           # not agree with is worse than publishing none, so there is exactly
           # one implementation.
-          pip install --quiet pyserial requests
+          pip install --quiet pyserial requests pillow
+          python3 tools/pack_flash_assets.py --validate
+
           crc=$(python3 -c "
           import importlib.util
           spec = importlib.util.spec_from_file_location('f', 'tools/swd/flash.py')
@@ -74,9 +76,21 @@ jobs:
           ")
           size=$(stat -c%s firmware/gd32/build/gd32_firmware.bin)
           sha=$(sha256sum firmware/gd32/build/gd32_firmware.bin | cut -d' ' -f1)
-          echo "crc=$crc"   >> "$GITHUB_OUTPUT"
-          echo "size=$size" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha"   >> "$GITHUB_OUTPUT"
+
+          assets_crc=$(python3 -c "
+          import zlib
+          data = open('firmware/gd32/build/flash_assets.bin', 'rb').read()
+          print(f'{zlib.crc32(data) & 0xFFFFFFFF:08X}')
+          ")
+          assets_size=$(stat -c%s firmware/gd32/build/flash_assets.bin)
+          assets_sha=$(sha256sum firmware/gd32/build/flash_assets.bin | cut -d' ' -f1)
+
+          echo "crc=$crc"                 >> "$GITHUB_OUTPUT"
+          echo "size=$size"               >> "$GITHUB_OUTPUT"
+          echo "sha=$sha"                 >> "$GITHUB_OUTPUT"
+          echo "assets_crc=$assets_crc"   >> "$GITHUB_OUTPUT"
+          echo "assets_size=$assets_size" >> "$GITHUB_OUTPUT"
+          echo "assets_sha=$assets_sha"   >> "$GITHUB_OUTPUT"
           {
             echo "### GD32 firmware"
             echo ""
@@ -85,6 +99,14 @@ jobs:
             echo "| size | $size B |"
             echo "| CRC (as flash.py computes it) | 0x$crc |"
             echo "| sha256 | \`$sha\` |"
+            echo ""
+            echo "### SPI Flash Graphic Assets"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| size | $assets_size B |"
+            echo "| CRC32 | 0x$assets_crc |"
+            echo "| sha256 | \`$assets_sha\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the image for this run
@@ -94,6 +116,7 @@ jobs:
           path: |
             firmware/gd32/build/gd32_firmware.bin
             firmware/gd32/build/gd32_firmware.elf
+            firmware/gd32/build/flash_assets.bin
           retention-days: 14
 
       - name: Attach to the release
@@ -104,28 +127,39 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           cp build/gd32_firmware.bin "gd32_firmware-${tag}.bin"
+          cp build/flash_assets.bin "flash_assets.bin"
           cat > notes.md <<EOF
-          GD32F150 firmware \`${tag}\`.
+          HTRAM release \`${tag}\`.
 
+          ### GD32 Firmware
           | | |
           | --- | --- |
           | size | ${{ steps.stamp.outputs.size }} B |
-          | CRC (as flash.py computes it) | \`0x${{ steps.stamp.outputs.crc }}\` |
+          | CRC16 | \`0x${{ steps.stamp.outputs.crc }}\` |
           | sha256 | \`${{ steps.stamp.outputs.sha }}\` |
 
-          Flash over the air through the ESP32, no ARM toolchain needed:
-
-          \`\`\`
+          Flash over the air through the ESP32:
+          \`\`\`bash
           tools/swd/flash.py --ota <device> gd32_firmware-${tag}.bin
           \`\`\`
 
-          The tool prints the host CRC before sending and the device's own
-          \`staged_crc\` after; both must equal the CRC above.
+          ### SPI Flash Graphic Assets
+          | | |
+          | --- | --- |
+          | size | ${{ steps.stamp.outputs.assets_size }} B |
+          | CRC32 | \`0x${{ steps.stamp.outputs.assets_crc }}\` |
+          | sha256 | \`${{ steps.stamp.outputs.assets_sha }}\` |
 
-          Never put a timeout on the write. See docs/CONVERSION.md.
+          Upload graphic assets to device SPI Flash:
+          \`\`\`bash
+          tools/flash_assets.py <device> --file flash_assets.bin
+          \`\`\`
+
+          See docs/RELEASE_NOTES_v1.2.0.md for architecture details and compatibility matrix.
+          Never put a timeout on a flash write operation.
           EOF
           # Create the release if the tag has none yet, then upload. --clobber
           # keeps a re-run of the same tag idempotent.
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --title "$tag" --notes-file notes.md
-          gh release upload "$tag" "gd32_firmware-${tag}.bin" --clobber
+          gh release upload "$tag" "gd32_firmware-${tag}.bin" "flash_assets.bin" --clobber
