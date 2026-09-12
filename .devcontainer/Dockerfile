@@ -49,7 +49,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Configure the ubuntu user (UID 1000) with passwordless sudo & dialout/plugdev groups for hardware access
 RUN usermod -aG sudo,dialout,plugdev ubuntu && \
     echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu && \
-    chmod 0440 /etc/sudoers.d/ubuntu
+    chmod 0440 /etc/sudoers.d/ubuntu && \
+    mkdir -p /home/ubuntu/.cache /home/ubuntu/.platformio /home/ubuntu/.local/share && \
+    chown -R ubuntu:ubuntu /home/ubuntu
 
 USER ubuntu
 WORKDIR /workspace

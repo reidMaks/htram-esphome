@@ -36,5 +36,5 @@
       }
     }
   },
-  "postCreateCommand": "uv sync && make install-hooks"
+  "postCreateCommand": "sudo chown -R ubuntu:ubuntu /home/ubuntu/.cache /home/ubuntu/.platformio && uv sync && make install-hooks"
 }
