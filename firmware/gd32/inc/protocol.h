@@ -8,7 +8,7 @@
 #define PROTOCOL_MAGIC1             0x55
 
 #define PROTOCOL_VERSION            0x01
-#define GD32_FW_VERSION             0x0111 /* v1.1.1 */
+#define GD32_FW_VERSION             0x0120 /* v1.2.0 */
 
 /* ── Packet Types ── */
 #define PKT_TYPE_TELEMETRY          0x01

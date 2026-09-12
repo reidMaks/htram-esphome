@@ -63,13 +63,32 @@ The GD32 side builds with `arm-none-eabi-gcc` and flashes over the air through
 the ESP:
 
 ```bash
-cd firmware/gd32 && make
-uv run python tools/swd/flash.py --ota <device-ip>
+make ota-gd32 DEVICE=<alias-or-ip>      # e.g. DEVICE=office
+make flash-assets DEVICE=<alias-or-ip>   # upload UI graphic assets
 ```
 
 **Before touching the GD32, read [docs/BENCH.md](docs/BENCH.md).** It carries
 the power-on order for the debug probe and the recovery procedure, both of
 which were written after losing a day to not having them.
+
+## Firmware Compatibility & Upgrade Notes (v1.2.0)
+
+With **v1.2.0**, the architecture incorporates the external SPI Flash (Winbond W25Q32, 4 MB)
+for **staged OTA with autonomous hardware rollback** and **cached asset blitting** (zero ESP32 DRAM overhead).
+
+### Compatibility Matrix
+
+| GD32 Firmware | ESPHome Firmware | Status & Behavior |
+|---|---|---|
+| **v1.2.0+** | **v1.2.0+** | **Full feature set**: Staged OTA, autonomous Boot Guard rollback, fast cached assets (0 B DRAM, 14 B UART). |
+| **v1.0.x / v1.1.x** (pre-flash) | **v1.2.0+** | **Compatible with fallback**: Telemetry, sensors, LEDs, buzzer, clock face, and OTA update work. ESPHome detects missing SPI Flash and automatically falls back to legacy ROM bootloader OTA to allow upgrading GD32. *Note: Minute of silence emblem (Tryzub) is skipped on older GD32 since it was offloaded from ESP32 DRAM.* |
+| **v1.2.0+** | **v1.0.x / v1.1.x** (pre-flash) | **Compatible**: Telemetry and sensor polling work normally. Older ESP32 streams dirty rectangles without utilizing cached SPI Flash assets. |
+
+### Upgrade Procedure from v1.1.x to v1.2.0
+To transition a device smoothly:
+1. **Flash GD32 v1.2.0**: `make ota-gd32 DEVICE=<device>` (ESPHome safely uses fallback bootloader to upgrade older GD32 firmware).
+2. **Flash Assets**: `make flash-assets DEVICE=<device>` (uploads `flash_assets.bin` into SPI Flash).
+3. **Flash ESPHome**: `uv run esphome run esphome/htram.yaml`.
 
 ## Legal, research and safety
 
