@@ -358,6 +358,9 @@ void protocol_process_rx(void)
             } else if (current_cmd == CMD_TYPE_PLAY_MELODY) {
                 cmd_buf_expected = 1; /* Count (1); notes stream after */
                 rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_DRAW_CACHED_ASSET) {
+                cmd_buf_expected = 9; /* Asset ID (2), X (1), Y (1), FG (2), BG (2), Flags (1) */
+                rx_state = STATE_HEADER;
             } else if (current_cmd == CMD_TYPE_ENTER_BOOTLOADER) {
                 cmd_buf_expected = 4; /* Key (4) */
                 rx_state = STATE_HEADER;
@@ -516,6 +519,15 @@ void protocol_process_rx(void)
                     periph_beep(freq, dur);
                 } else if (current_cmd == CMD_TYPE_PLAY_MELODY) {
                     periph_play_melody(melody_buf, melody_count);
+                } else if (current_cmd == CMD_TYPE_DRAW_CACHED_ASSET) {
+                    uint16_t asset_id = (uint16_t)cmd_buf[0] | ((uint16_t)cmd_buf[1] << 8);
+                    uint8_t x = cmd_buf[2];
+                    uint8_t y = cmd_buf[3];
+                    uint16_t fg_color = (uint16_t)cmd_buf[4] | ((uint16_t)cmd_buf[5] << 8);
+                    uint16_t bg_color = (uint16_t)cmd_buf[6] | ((uint16_t)cmd_buf[7] << 8);
+                    uint8_t flags = cmd_buf[8];
+                    g_external_display_active = 1;
+                    display_draw_cached_asset(asset_id, x, y, fg_color, bg_color, flags);
                 } else if (current_cmd == CMD_TYPE_ENTER_BOOTLOADER) {
                     uint32_t key = (uint32_t)cmd_buf[0] |
                                    ((uint32_t)cmd_buf[1] << 8) |

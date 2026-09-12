@@ -15,6 +15,14 @@ uint8_t mock_display_last_y = 0;
 uint8_t mock_display_last_w = 0;
 uint8_t mock_display_last_h = 0;
 uint16_t mock_display_last_pixel = 0;
+int mock_display_draw_cached_asset_called = 0;
+uint16_t mock_display_last_asset_id = 0;
+uint8_t mock_display_last_asset_x = 0;
+uint8_t mock_display_last_asset_y = 0;
+uint16_t mock_display_last_asset_fg = 0;
+uint16_t mock_display_last_asset_bg = 0;
+uint8_t mock_display_last_asset_flags = 0;
+int mock_display_draw_cached_asset_result = 0;
 
 void display_start_pixels(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
   mock_display_start_pixels_called++;
@@ -37,6 +45,18 @@ void display_set_backlight(uint8_t brightness) {
   mock_display_backlight = brightness;
 }
 
+int display_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color,
+                              uint8_t flags) {
+  mock_display_draw_cached_asset_called++;
+  mock_display_last_asset_id = asset_id;
+  mock_display_last_asset_x = x;
+  mock_display_last_asset_y = y;
+  mock_display_last_asset_fg = fg_color;
+  mock_display_last_asset_bg = bg_color;
+  mock_display_last_asset_flags = flags;
+  return mock_display_draw_cached_asset_result;
+}
+
 void mock_display_reset(void) {
   mock_display_backlight = 0;
   mock_display_start_pixels_called = 0;
@@ -47,6 +67,14 @@ void mock_display_reset(void) {
   mock_display_last_w = 0;
   mock_display_last_h = 0;
   mock_display_last_pixel = 0;
+  mock_display_draw_cached_asset_called = 0;
+  mock_display_last_asset_id = 0;
+  mock_display_last_asset_x = 0;
+  mock_display_last_asset_y = 0;
+  mock_display_last_asset_fg = 0;
+  mock_display_last_asset_bg = 0;
+  mock_display_last_asset_flags = 0;
+  mock_display_draw_cached_asset_result = 0;
 }
 
 /* Flasher mock */

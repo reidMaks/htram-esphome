@@ -16,6 +16,35 @@
 namespace esphome {
 namespace htram_gd32 {
 
+enum FlashAssetId : uint16_t {
+  ASSET_ID_TRYZUB = 0,
+  ASSET_ID_BELL = 1,
+  ASSET_ID_ALERT = 2,
+  ASSET_ID_ALERT_SMALL = 3,
+  ASSET_ID_THREAT_BALLISTIC = 4,
+  ASSET_ID_THREAT_KAB = 5,
+  ASSET_ID_THREAT_MISSILE = 6,
+  ASSET_ID_THREAT_DRONE = 7,
+  ASSET_ID_THREAT_RECON = 8,
+  ASSET_ID_WEATHER_SUNNY = 9,
+  ASSET_ID_WEATHER_PARTLYCLOUDY_SUN = 10,
+  ASSET_ID_WEATHER_PARTLYCLOUDY_CLOUD = 11,
+  ASSET_ID_WEATHER_CLOUDY = 12,
+  ASSET_ID_WEATHER_RAINY_CLOUD = 13,
+  ASSET_ID_WEATHER_RAINY_DROPS = 14,
+  ASSET_ID_WEATHER_LIGHTNING_CLOUD = 15,
+  ASSET_ID_WEATHER_LIGHTNING_BOLT = 16,
+  ASSET_ID_WEATHER_SNOWY_CLOUD = 17,
+  ASSET_ID_WEATHER_SNOWY_FLAKES = 18,
+  ASSET_ID_WEATHER_FOG = 19,
+  ASSET_ID_WEATHER_WINDY = 20,
+  ASSET_ID_WEATHER_RAINY = 21,
+  ASSET_ID_WEATHER_PARTLYCLOUDY = 22,
+  ASSET_ID_WEATHER_LIGHTNING = 23,
+  ASSET_ID_WEATHER_SNOWY = 24,
+  ASSET_ID_COUNT = 25
+};
+
 class HtramGd32Component : public Component, public uart::UARTDevice {
  public:
   void setup() override;
@@ -64,6 +93,10 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void send_stop();                          // silence / cancel current melody
   void play_rtttl(const std::string &song);  // parse RTTTL, stream to GD32
   void send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *pixel_data, size_t len);
+  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
+  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 0) {
+    this->send_draw_cached_asset(asset_id, x, y, display::ColorUtil::color_to_565(fg_color), display::ColorUtil::color_to_565(bg_color), flags);
+  }
   void send_flash_backup_fw(uint8_t slot);
   void send_flash_confirm_boot();
   void send_flash_restore_fw(uint8_t slot);

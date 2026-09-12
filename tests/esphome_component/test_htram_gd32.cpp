@@ -583,6 +583,22 @@ void test_outgoing_commands(void) {
   TEST_ASSERT_EQUAL(20, g_comp->mock_tx_bytes[4]);
 
   g_comp->mock_clear_tx();
+  g_comp->send_draw_cached_asset(2, 84, 70, 0xF800, 0x0000, 1);
+  TEST_ASSERT_EQUAL(14, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x55, g_comp->mock_tx_bytes[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x15, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_UINT16(2, g_comp->mock_tx_bytes[3] | (g_comp->mock_tx_bytes[4] << 8));
+  TEST_ASSERT_EQUAL(84, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL(70, g_comp->mock_tx_bytes[6]);
+  TEST_ASSERT_EQUAL_HEX16(0xF800, g_comp->mock_tx_bytes[7] | (g_comp->mock_tx_bytes[8] << 8));
+  TEST_ASSERT_EQUAL_HEX16(0x0000, g_comp->mock_tx_bytes[9] | (g_comp->mock_tx_bytes[10] << 8));
+  TEST_ASSERT_EQUAL(1, g_comp->mock_tx_bytes[11]);
+  uint16_t exp_asset_crc = crc16_ccitt(&g_comp->mock_tx_bytes[2], 10);
+  uint16_t act_asset_crc = g_comp->mock_tx_bytes[12] | (g_comp->mock_tx_bytes[13] << 8);
+  TEST_ASSERT_EQUAL_HEX16(exp_asset_crc, act_asset_crc);
+
+  g_comp->mock_clear_tx();
   g_comp->send_flash_erase_sector(0x00001000);
   TEST_ASSERT_EQUAL(9, g_comp->mock_tx_bytes.size());
   TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);

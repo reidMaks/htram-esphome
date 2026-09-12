@@ -268,16 +268,6 @@ image:
     id: img_recon
     type: BINARY
 
-  # Малий Державний Герб. Джерело — SVG користувача, з якого взято сам знак
-  # (у файлі він темний на світлому полі щита) і збережено як однобітну маску:
-  # у LVGL вона стає LV_COLOR_FORMAT_A1, тобто силуетом без власного кольору.
-  # 2 КБ замість 32 КБ, які коштувало б те саме зображення в RGB565, а колір
-  # накладає refresh_face. Державні символи не є об'єктом авторського права.
-  - platform: file
-    file: "${repo_url}/images/tryzub_mask.png"
-    id: img_tryzub
-    type: BINARY
-
 font:
   # Digits only, and pre-slanted: ESPHome renders from the TTF at build time and
   # LVGL has no shear, so the 12 deg oblique is baked into the file by
@@ -555,8 +545,12 @@ script:
           // the minute of silence, then the ordinary faces.
           const int want = ap ? 3 : (id(silence_active) ? 4 : (have_time ? 0 : (net ? 1 : 2)));
           if (want != 3) id(ap_manual) = false;
-          if (want == id(face_state)) return;
+          const int prev_face = id(face_state);
+          if (want == prev_face) return;
           id(face_state) = want;
+          if (prev_face == 4 && want != 4) {
+            lv_obj_invalidate(id(ui_root));
+          }
 
           lv_obj_t *const face[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
                                     id(ui_slot)};
@@ -588,24 +582,17 @@ script:
                                     LV_PART_MAIN);
 
           if (want == 4) {
-            // The emblem carries no colour of its own -- A1 is a silhouette --
-            // so it is tinted here rather than baked into the asset.
-            lv_image_set_src(id(ui_tryzub), id(img_tryzub)->get_lv_image_dsc());
-            lv_obj_set_style_image_recolor(id(ui_tryzub), lv_color_hex(${silence_fg}),
-                                           LV_PART_MAIN);
-            lv_obj_set_style_image_recolor_opa(id(ui_tryzub), LV_OPA_COVER,
-                                               LV_PART_MAIN);
-            lv_obj_align(id(ui_tryzub), LV_ALIGN_CENTER, 0, 0);
-            lv_obj_move_foreground(id(ui_tryzub));
-            lv_obj_remove_flag(id(ui_tryzub), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_invalidate(id(ui_tryzub));
+            // Emblem is rendered directly from GD32 external SPI Flash via CMD_DRAW_CACHED_ASSET.
+            // Zero ESP32 DRAM allocation, zero UART streaming overhead (14 bytes vs 14.4 KB).
+            id(htram_core)->send_draw_cached_asset(
+                htram_gd32::ASSET_ID_TRYZUB, 84, 70,
+                Color(${silence_fg}), Color(0x000000), 0);
             // Nothing else is shown. The seconds dot is already circling, and
             // starting at 09:00:00 it completes exactly one revolution as the
             // minute runs out -- motion that costs nothing and means the right
             // thing.
             return;
           }
-          lv_obj_add_flag(id(ui_tryzub), LV_OBJ_FLAG_HIDDEN);
 
           if (want == 0) {
             id(refresh_clock).execute();
@@ -1270,14 +1257,6 @@ lvgl:
               x: 74
               y: -26
               src: img_alert
-              hidden: true
-
-          - image:
-              id: ui_tryzub
-              align: center
-              x: 0
-              y: 0
-              src: img_tryzub
               hidden: true
 
           - label:

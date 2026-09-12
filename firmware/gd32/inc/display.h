@@ -29,5 +29,6 @@ void display_end_pixels(void);
 void display_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color);
 void display_fill_screen(uint16_t color);
 void display_draw_string(uint8_t x, uint8_t y, const char *s, uint16_t color, uint16_t bg);
+int display_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
 
 #endif /* DISPLAY_H */

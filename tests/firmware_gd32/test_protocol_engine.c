@@ -35,6 +35,13 @@ extern int mock_flash_confirm_boot_result;
 extern int mock_flasher_restore_called;
 extern uint32_t mock_flasher_restore_slot;
 extern uint32_t mock_flasher_restore_size;
+extern int mock_display_draw_cached_asset_called;
+extern uint16_t mock_display_last_asset_id;
+extern uint8_t mock_display_last_asset_x;
+extern uint8_t mock_display_last_asset_y;
+extern uint16_t mock_display_last_asset_fg;
+extern uint16_t mock_display_last_asset_bg;
+extern uint8_t mock_display_last_asset_flags;
 extern void mock_flash_reset(void);
 extern void mock_flash_set_detected(int detected);
 
@@ -962,6 +969,51 @@ void test_rx_timeout_during_pixels(void) {
   TEST_ASSERT_GREATER_THAN(0, mock_display_end_pixels_called);
 }
 
+void test_cmd_draw_cached_asset_valid(void) {
+  cmd_draw_cached_asset_t cmd;
+  cmd.magic0 = PROTOCOL_MAGIC0;
+  cmd.magic1 = PROTOCOL_MAGIC1;
+  cmd.type = CMD_TYPE_DRAW_CACHED_ASSET;
+  cmd.asset_id = 2; /* ASSET_ID_ALERT */
+  cmd.x = 84;
+  cmd.y = 70;
+  cmd.fg_color = 0xF800; /* RED */
+  cmd.bg_color = 0x0000; /* BLACK */
+  cmd.flags = 0x01;      /* transparent */
+  cmd.crc16 = crc16_ccitt(&cmd.type, sizeof(cmd) - 4);
+
+  inject_rx_bytes((const uint8_t*)&cmd, sizeof(cmd));
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL_INT(1, mock_display_draw_cached_asset_called);
+  TEST_ASSERT_EQUAL_UINT16(2, mock_display_last_asset_id);
+  TEST_ASSERT_EQUAL_UINT8(84, mock_display_last_asset_x);
+  TEST_ASSERT_EQUAL_UINT8(70, mock_display_last_asset_y);
+  TEST_ASSERT_EQUAL_HEX16(0xF800, mock_display_last_asset_fg);
+  TEST_ASSERT_EQUAL_HEX16(0x0000, mock_display_last_asset_bg);
+  TEST_ASSERT_EQUAL_UINT8(0x01, mock_display_last_asset_flags);
+  TEST_ASSERT_EQUAL_UINT8(1, protocol_is_external_display_active());
+}
+
+void test_cmd_draw_cached_asset_invalid_crc(void) {
+  cmd_draw_cached_asset_t cmd;
+  cmd.magic0 = PROTOCOL_MAGIC0;
+  cmd.magic1 = PROTOCOL_MAGIC1;
+  cmd.type = CMD_TYPE_DRAW_CACHED_ASSET;
+  cmd.asset_id = 2;
+  cmd.x = 84;
+  cmd.y = 70;
+  cmd.fg_color = 0xF800;
+  cmd.bg_color = 0x0000;
+  cmd.flags = 0x01;
+  cmd.crc16 = 0xDEAD; /* corrupt CRC */
+
+  inject_rx_bytes((const uint8_t*)&cmd, sizeof(cmd));
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL_INT(0, mock_display_draw_cached_asset_called);
+}
+
 void test_external_display_active(void) {
   protocol_set_external_display(1);
   TEST_ASSERT_EQUAL(1, protocol_is_external_display_active());
@@ -985,6 +1037,8 @@ int main(void) {
   RUN_TEST(test_cmd_play_melody);
   RUN_TEST(test_cmd_draw_rect);
   RUN_TEST(test_cmd_draw_rect_zero_dim);
+  RUN_TEST(test_cmd_draw_cached_asset_valid);
+  RUN_TEST(test_cmd_draw_cached_asset_invalid_crc);
   RUN_TEST(test_cmd_enter_bootloader_valid);
   RUN_TEST(test_cmd_enter_bootloader_invalid_key);
   RUN_TEST(test_cmd_get_flash_info);

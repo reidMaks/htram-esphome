@@ -1246,6 +1246,29 @@ void HtramGd32Component::send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t
   this->write_array(crc_bytes, 2);
 }
 
+void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y,
+                                                uint16_t fg_color, uint16_t bg_color,
+                                                uint8_t flags) {
+  if (ota_mode_) return;
+  uint8_t pkt[14];
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x15;  // CMD_TYPE_DRAW_CACHED_ASSET
+  pkt[3] = (uint8_t)(asset_id & 0xFF);
+  pkt[4] = (uint8_t)((asset_id >> 8) & 0xFF);
+  pkt[5] = x;
+  pkt[6] = y;
+  pkt[7] = (uint8_t)(fg_color & 0xFF);
+  pkt[8] = (uint8_t)((fg_color >> 8) & 0xFF);
+  pkt[9] = (uint8_t)(bg_color & 0xFF);
+  pkt[10] = (uint8_t)((bg_color >> 8) & 0xFF);
+  pkt[11] = flags;
+  uint16_t crc = crc16_ccitt(&pkt[2], 10);
+  pkt[12] = (uint8_t)(crc & 0xFF);
+  pkt[13] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, sizeof(pkt));
+}
+
 void HtramGd32Display::dump_config() {
   LOG_DISPLAY("", "HTRAM GD32 Display", this);
 }
