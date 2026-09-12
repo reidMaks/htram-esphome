@@ -36,7 +36,8 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
 .PHONY: all test test-gd32 test-esphome test-tools test-configs \
         lint lint-c lint-py lint-yaml format format-check \
-        coverage coverage-html build-gd32 ota-gd32 status build-esp install-hooks clean help \
+        coverage coverage-html build-gd32 ota-gd32 pack-assets flash-assets \
+        status build-esp install-hooks clean help \
         device device-silence device-status device-beep \
         container-build container-run container-stop
 
@@ -59,11 +60,13 @@ help:
 	@echo "  make coverage-html - Generate HTML coverage report in coverage_html/"
 	@echo "  make install-hooks - Configure git to use repository pre-commit hook"
 	@echo "  make build-gd32    - Build GD32 target firmware via arm-none-eabi-gcc"
-	@echo "  make ota-gd32      - Flash GD32 firmware via OTA (Usage: make ota-gd32 DEVICE=<ip|host>)"
+	@echo "  make ota-gd32      - Flash GD32 firmware via OTA (Usage: make ota-gd32 DEVICE=<alias|ip>)"
+	@echo "  make pack-assets   - Pack UI monochrome bitmaps into flash_assets.bin"
+	@echo "  make flash-assets  - Pack and upload graphic assets to SPI Flash: make flash-assets DEVICE=<alias|ip>"
 	@echo "  make build-esp     - Compile ESPHome ESP32 firmware"
-	@echo "  make device        - Control device API: make device DEVICE=<ip|alias> CMD=<cmd>"
-	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<ip|alias>"
-	@echo "  make device-silence- Trigger minute of silence test: make device-silence DEVICE=<ip|alias>"
+	@echo "  make device        - Control device API: make device DEVICE=<alias|ip> CMD=<cmd>"
+	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<alias|ip>"
+	@echo "  make device-silence- Trigger minute of silence test: make device-silence DEVICE=<alias|ip>"
 	@echo "  make container-build- Build dev container Docker image"
 	@echo "  make container-run  - Launch dev container shell (Docker)"
 	@echo "  make container-stop - Stop and remove dev container"
@@ -209,23 +212,52 @@ build-gd32:
 	$(MAKE) -C firmware/gd32 flash
 
 TARGET_DEVICE := $(strip $(if $(DEVICE),$(DEVICE),$(if $(HOST),$(HOST),$(IP))))
+ifeq ($(TARGET_DEVICE),office)
+  override TARGET_DEVICE := 192.168.0.78
+endif
 ifeq ($(TARGET_DEVICE),кабінет)
-  override TARGET_DEVICE := htram-9436b0.local
+  override TARGET_DEVICE := 192.168.0.78
 endif
 ifeq ($(TARGET_DEVICE),cabinet)
-  override TARGET_DEVICE := htram-9436b0.local
+  override TARGET_DEVICE := 192.168.0.78
+endif
+ifeq ($(TARGET_DEVICE),bedroom)
+  override TARGET_DEVICE := 192.168.0.159
+endif
+ifeq ($(TARGET_DEVICE),спальня)
+  override TARGET_DEVICE := 192.168.0.159
+endif
+ifeq ($(TARGET_DEVICE),living)
+  override TARGET_DEVICE := 192.168.0.185
+endif
+ifeq ($(TARGET_DEVICE),livingroom)
+  override TARGET_DEVICE := 192.168.0.185
+endif
+ifeq ($(TARGET_DEVICE),вітальня)
+  override TARGET_DEVICE := 192.168.0.185
 endif
 
 ota-gd32: build-gd32
 ifeq ($(strip $(TARGET_DEVICE)),)
-	$(error TARGET_DEVICE is not set. Usage: make ota-gd32 DEVICE=<ip-or-host>, e.g. make ota-gd32 DEVICE=htram-9436b0.local)
+	$(error TARGET_DEVICE is not set. Usage: make ota-gd32 DEVICE=<alias|ip>, e.g. make ota-gd32 DEVICE=office)
 endif
 	@echo "==> Flashing GD32 firmware via OTA to $(TARGET_DEVICE)..."
 	$(PYTHON) tools/swd/flash.py --ota $(TARGET_DEVICE)
 
+pack-assets:
+	@echo "==> Packing graphic assets into flash_assets.bin..."
+	$(PYTHON) tools/pack_flash_assets.py
+
+flash-assets: pack-assets
+ifeq ($(strip $(TARGET_DEVICE)),)
+	$(error TARGET_DEVICE is not set. Usage: make flash-assets DEVICE=<alias|ip>, e.g. make flash-assets DEVICE=office)
+endif
+	@echo "==> Uploading graphic assets to $(TARGET_DEVICE)..."
+	$(PYTHON) tools/flash_assets.py $(TARGET_DEVICE)
+
 status:
 ifeq ($(strip $(TARGET_DEVICE)),)
-	$(error TARGET_DEVICE is not set. Usage: make status DEVICE=<ip-or-host>, e.g. make status DEVICE=кабінет)
+	$(error TARGET_DEVICE is not set. Usage: make status DEVICE=<alias|ip>, e.g. make status DEVICE=office)
 endif
 	@$(PYTHON) tools/swd/flash.py --status $(TARGET_DEVICE)
 

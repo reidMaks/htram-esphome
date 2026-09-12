@@ -42,6 +42,8 @@ import serial
 import requests
 from requests.auth import HTTPDigestAuth
 
+from tools.device import resolve_device_address
+
 SWD = REPO / "tools/swd"
 PYOCD = REPO / ".venv/bin/pyocd"
 FW_IMAGE = REPO / "firmware/gd32/build/gd32_firmware.bin"
@@ -386,12 +388,12 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.status:
-        return check_status(args.status)
+        return check_status(resolve_device_address(args.status))
 
     if args.assets:
         from tools.flash_assets import upload_assets
 
-        return upload_assets(args.assets)
+        return upload_assets(resolve_device_address(args.assets))
 
     if args.factory:
         img_path = FACTORY_IMAGE
@@ -412,7 +414,8 @@ def main() -> int:
     print(f"[img] {img_path.name}: {len(img)} bytes, host CRC=0x{host_crc:04X}")
 
     if args.ota:
-        url = f"http://{args.ota}/gd32_ota"
+        target_host = resolve_device_address(args.ota)
+        url = f"http://{target_host}/gd32_ota"
         if args.on_battery:
             url += "?on_battery=1"
         user = args.user or web_credentials()[0]
@@ -429,7 +432,7 @@ def main() -> int:
             # on an empty GET leaves the session holding a nonce, so the POST
             # below goes out signed, once.
             try:
-                sess.get(f"http://{args.ota}/", timeout=10)
+                sess.get(f"http://{target_host}/", timeout=10)
             except requests.RequestException as e:
                 print(f"[ota] Could not reach the device to authenticate: {e}", file=sys.stderr)
                 return 1
