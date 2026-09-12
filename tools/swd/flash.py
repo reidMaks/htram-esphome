@@ -12,6 +12,7 @@ The ESP config sets name_add_mac_suffix, so the node announces itself with the
 MAC suffix -- "htram-9436b0.local" for the unit this was developed on, never a
 plain "htram.local".
 """
+
 import argparse
 import os
 import struct
@@ -34,9 +35,14 @@ VENV_PYTHON = REPO / ".venv" / "bin" / "python3"
 if not sys.prefix.startswith(str(REPO / ".venv")) and VENV_PYTHON.exists():
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), os.path.abspath(__file__)] + sys.argv[1:])
 
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 import serial
 import requests
 from requests.auth import HTTPDigestAuth
+
+from tools.device import resolve_device_address
 
 SWD = REPO / "tools/swd"
 PYOCD = REPO / ".venv/bin/pyocd"
@@ -79,6 +85,7 @@ def crc16_ccitt(data: bytes) -> int:
 def check_status(host: str) -> int:
     """Query live device telemetry and print a summary."""
     import asyncio
+
     try:
         from aioesphomeapi import APIClient
     except ImportError:
@@ -136,7 +143,6 @@ def check_status(host: str) -> int:
     return asyncio.run(_query())
 
 
-
 def pyocd(*cmds, freq="100k", timeout=60):
     args = [str(PYOCD), "cmd", "-t", "cortex_m", "-f", freq]
     for c in cmds:
@@ -147,14 +153,25 @@ def pyocd(*cmds, freq="100k", timeout=60):
 def build_writer() -> tuple[Path, str]:
     elf, binf = SWD / "flash_writer.elf", SWD / "flash_writer.bin"
     subprocess.run(
-        ["arm-none-eabi-gcc", "-mcpu=cortex-m3", "-mthumb", "-Os", "-nostdlib",
-         "-nostartfiles", "-ffreestanding", "-T", str(SWD / "sram.ld"),
-         "-Wl,--entry=main", "-o", str(elf), str(SWD / "flash_writer.c")],
-        check=True)
-    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)],
-                   check=True)
-    nm = subprocess.run(["arm-none-eabi-nm", str(elf)],
-                        capture_output=True, text=True).stdout
+        [
+            "arm-none-eabi-gcc",
+            "-mcpu=cortex-m3",
+            "-mthumb",
+            "-Os",
+            "-nostdlib",
+            "-nostartfiles",
+            "-ffreestanding",
+            "-T",
+            str(SWD / "sram.ld"),
+            "-Wl,--entry=main",
+            "-o",
+            str(elf),
+            str(SWD / "flash_writer.c"),
+        ],
+        check=True,
+    )
+    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
+    nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
     entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
     pc = f"0x{int(entry, 16) | 1:08X}"
     print(f"[build] writer {binf.stat().st_size} B, entry {pc}")
@@ -170,14 +187,25 @@ def build_swd_writer() -> tuple[Path, int]:
     """Build swd_flash_writer.c for SRAM exec; return (bin path, thumb entry PC int)."""
     elf, binf = SWD / "swd_flash_writer.elf", SWD / "swd_flash_writer.bin"
     subprocess.run(
-        ["arm-none-eabi-gcc", "-mcpu=cortex-m3", "-mthumb", "-Os", "-nostdlib",
-         "-nostartfiles", "-ffreestanding", "-T", str(SWD / "sram.ld"),
-         "-Wl,--entry=main", "-o", str(elf), str(SWD / "swd_flash_writer.c")],
-        check=True)
-    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)],
-                   check=True)
-    nm = subprocess.run(["arm-none-eabi-nm", str(elf)],
-                        capture_output=True, text=True).stdout
+        [
+            "arm-none-eabi-gcc",
+            "-mcpu=cortex-m3",
+            "-mthumb",
+            "-Os",
+            "-nostdlib",
+            "-nostartfiles",
+            "-ffreestanding",
+            "-T",
+            str(SWD / "sram.ld"),
+            "-Wl,--entry=main",
+            "-o",
+            str(elf),
+            str(SWD / "swd_flash_writer.c"),
+        ],
+        check=True,
+    )
+    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
+    nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
     entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
     pc = int(entry, 16) | 1
     print(f"[build] swd_writer {binf.stat().st_size} B, entry 0x{pc:08X}")
@@ -200,8 +228,7 @@ def flash_via_swd_mem(img: bytes, no_reset: bool, host_crc: int) -> int:
         try:
             print(f"[pyocd] connecting via SWD @ 10kHz (attempt {attempt}/5)...")
             s = ConnectHelper.session_with_chosen_probe(
-                target_override="cortex_m",
-                options={'connect_mode': 'attach', 'frequency': 10000}
+                target_override="cortex_m", options={"connect_mode": "attach", "frequency": 10000}
             )
             s.open()
             target = s.board.target
@@ -229,9 +256,9 @@ def flash_via_swd_mem(img: bytes, no_reset: bool, host_crc: int) -> int:
         target.write_memory_block8(0x20000000, bin_data)
 
         core = target.selected_core
-        core.write_core_register_raw('sp', 0x20002000)
-        core.write_core_register_raw('pc', pc)
-        core.write_core_register_raw('xpsr', 0x01000000)
+        core.write_core_register_raw("sp", 0x20002000)
+        core.write_core_register_raw("pc", pc)
+        core.write_core_register_raw("xpsr", 0x01000000)
         target.resume()
 
         # Wait for writer initialization
@@ -255,7 +282,7 @@ def flash_via_swd_mem(img: bytes, no_reset: bool, host_crc: int) -> int:
         t_start = time.time()
 
         for off in range(0, total, CHUNK_SIZE):
-            chunk = list(img[off:off + CHUNK_SIZE])
+            chunk = list(img[off : off + CHUNK_SIZE])
             target_addr = FLASH_BASE + off
 
             # Write chunk data into mailbox buf
@@ -279,27 +306,39 @@ def flash_via_swd_mem(img: bytes, no_reset: bool, host_crc: int) -> int:
                     break
                 elif status == 2:
                     err = target.read16(MAILBOX_ADDR + 0x16)
-                    print(f"\n[pyocd] ERROR writing chunk at 0x{target_addr:08X}: code {err}", file=sys.stderr)
+                    print(
+                        f"\n[pyocd] ERROR writing chunk at 0x{target_addr:08X}: code {err}",
+                        file=sys.stderr,
+                    )
                     return 1
                 time.sleep(0.05)
 
             if not ok:
-                print(f"\n[pyocd] Timeout waiting for chunk at 0x{target_addr:08X}", file=sys.stderr)
+                print(
+                    f"\n[pyocd] Timeout waiting for chunk at 0x{target_addr:08X}", file=sys.stderr
+                )
                 return 1
 
             sent += len(chunk)
-            print(f"\r[swd-mem] Flashed {sent}/{total} bytes ({sent*100//total}%)", end="", flush=True)
+            print(
+                f"\r[swd-mem] Flashed {sent}/{total} bytes ({sent * 100 // total}%)",
+                end="",
+                flush=True,
+            )
 
         print()
         dev_crc = target.read16(MAILBOX_ADDR + 0x14)
         target.write32(MAILBOX_ADDR + 0x04, 2)  # DONE
 
         dt = time.time() - t_start
-        print(f"[swd-mem] Flashed {total} bytes in {dt:.2f}s ({total/dt/1024:.1f} KB/s)")
+        print(f"[swd-mem] Flashed {total} bytes in {dt:.2f}s ({total / dt / 1024:.1f} KB/s)")
         print(f"[dev] CRC=0x{dev_crc:04X}, host CRC=0x{host_crc:04X}")
 
         if dev_crc != host_crc:
-            print(f"[pyocd] CRC MISMATCH: host 0x{host_crc:04X} != dev 0x{dev_crc:04X}", file=sys.stderr)
+            print(
+                f"[pyocd] CRC MISMATCH: host 0x{host_crc:04X} != dev 0x{dev_crc:04X}",
+                file=sys.stderr,
+            )
             return 1
         print(f"[ok] CRC match 0x{host_crc:04X}!")
 
@@ -314,28 +353,47 @@ def flash_via_swd_mem(img: bytes, no_reset: bool, host_crc: int) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Flash a GD32F150 image over SWD or OTA.")
-    ap.add_argument("image", nargs="?", help="raw image at 0x08000000 "
-                    "(default: our firmware build)")
-    ap.add_argument("--factory", action="store_true",
-                    help="flash the factory dump (tools/swd/gd32_flash.bin)")
+    ap.add_argument(
+        "image", nargs="?", help="raw image at 0x08000000 (default: our firmware build)"
+    )
+    ap.add_argument(
+        "--factory", action="store_true", help="flash the factory dump (tools/swd/gd32_flash.bin)"
+    )
     ap.add_argument("--port", default="/dev/ttyACM0", help="UART bridge port (for SWD)")
-    ap.add_argument("--ota", help="IP or hostname of ESP32 for OTA flashing "
-                                  "(e.g. 192.168.0.78 or htram-9436b0.local)")
+    ap.add_argument(
+        "--ota",
+        help="IP or hostname of ESP32 for OTA flashing (e.g. 192.168.0.78 or htram-9436b0.local)",
+    )
     ap.add_argument("--user", help="web_server username (default: from esphome/secrets.yaml)")
     ap.add_argument("--password", help="web_server password (default: from esphome/secrets.yaml)")
-    ap.add_argument("--on-battery", action="store_true",
-                    help="allow GD32 OTA without USB power. The device refuses by "
-                         "default: losing power between erase and write leaves the "
-                         "GD32 with neither firmware nor flasher, which also drops "
-                         "PB3 and takes the ESP down with it")
-    ap.add_argument("--swd-mem", action="store_true",
-                    help="flash via SWD memory mailbox (no UART required)")
-    ap.add_argument("--status", metavar="HOST",
-                    help="query live device telemetry and services over Native API")
+    ap.add_argument(
+        "--on-battery",
+        action="store_true",
+        help="allow GD32 OTA without USB power. The device refuses by "
+        "default: losing power between erase and write leaves the "
+        "GD32 with neither firmware nor flasher, which also drops "
+        "PB3 and takes the ESP down with it",
+    )
+    ap.add_argument(
+        "--swd-mem", action="store_true", help="flash via SWD memory mailbox (no UART required)"
+    )
+    ap.add_argument(
+        "--status", metavar="HOST", help="query live device telemetry and services over Native API"
+    )
+    ap.add_argument(
+        "--assets",
+        metavar="HOST",
+        help="upload graphic assets (flash_assets.bin) to SPI Flash via ESP32 (/gd32_assets)",
+    )
     args = ap.parse_args()
 
     if args.status:
-        return check_status(args.status)
+        return check_status(resolve_device_address(args.status))
+
+    if args.assets:
+        from tools.flash_assets import upload_assets
+
+        return upload_assets(resolve_device_address(args.assets))
 
     if args.factory:
         img_path = FACTORY_IMAGE
@@ -343,20 +401,21 @@ def main() -> int:
         img_path = Path(args.image)
     else:
         img_path = FW_IMAGE
-    
+
     if not img_path.exists():
         print(f"image not found: {img_path}", file=sys.stderr)
         return 1
-        
+
     img = img_path.read_bytes()
     # PADDING NOT REQUIRED FOR OTA (ESPHome handles it), but harmless. We'll pad for both
     if len(img) & 1:
-        img += b"\xFF"
+        img += b"\xff"
     host_crc = crc16_ccitt(img)
     print(f"[img] {img_path.name}: {len(img)} bytes, host CRC=0x{host_crc:04X}")
 
     if args.ota:
-        url = f"http://{args.ota}/gd32_ota"
+        target_host = resolve_device_address(args.ota)
+        url = f"http://{target_host}/gd32_ota"
         if args.on_battery:
             url += "?on_battery=1"
         user = args.user or web_credentials()[0]
@@ -373,14 +432,16 @@ def main() -> int:
             # on an empty GET leaves the session holding a nonce, so the POST
             # below goes out signed, once.
             try:
-                sess.get(f"http://{args.ota}/", timeout=10)
+                sess.get(f"http://{target_host}/", timeout=10)
             except requests.RequestException as e:
-                print(f"[ota] Could not reach the device to authenticate: {e}",
-                      file=sys.stderr)
+                print(f"[ota] Could not reach the device to authenticate: {e}", file=sys.stderr)
                 return 1
         else:
-            print("[ota] no web credentials found; if the device has web_server "
-                  "auth enabled this will fail with 401", file=sys.stderr)
+            print(
+                "[ota] no web credentials found; if the device has web_server "
+                "auth enabled this will fail with 401",
+                file=sys.stderr,
+            )
         print(f"[ota] POSTing image to {url} ... (this will take 5-10 seconds)")
         try:
             # Connect timeout only; no read timeout on the response.
@@ -393,34 +454,43 @@ def main() -> int:
             # update failed will retry into a write that is still in flight.
             #
             # A connect timeout is safe: nothing has been erased yet.
-            resp = sess.post(url, files={'file': ('firmware.bin', img)},
-                             timeout=(10, None))
+            resp = sess.post(url, files={"file": ("firmware.bin", img)}, timeout=(10, None))
         except requests.RequestException as e:
             print(f"[ota] Request failed: {e}", file=sys.stderr)
-            print("[ota] The device may still be writing. Do NOT retry until "
-                  "you have checked the GD32 firmware sensor -- a retry into a "
-                  "write in flight is how a chip gets bricked.", file=sys.stderr)
+            print(
+                "[ota] The device may still be writing. Do NOT retry until "
+                "you have checked the GD32 firmware sensor -- a retry into a "
+                "write in flight is how a chip gets bricked.",
+                file=sys.stderr,
+            )
             return 1
 
         if resp.status_code == 401:
-            print("[ota] HTTP 401: wrong or missing web_server credentials "
-                  "(web_username / web_password in esphome/secrets.yaml)",
-                  file=sys.stderr)
+            print(
+                "[ota] HTTP 401: wrong or missing web_server credentials "
+                "(web_username / web_password in esphome/secrets.yaml)",
+                file=sys.stderr,
+            )
             return 1
         if resp.status_code != 200:
             print(f"[ota] HTTP {resp.status_code}: {resp.text}", file=sys.stderr)
             return 1
-            
+
         try:
             res_json = resp.json()
             print(f"[ota] Response: {res_json}")
             if res_json.get("result") != "ok":
-                print(f"[ota] Flashing failed: {res_json.get('reason', 'unknown')}", file=sys.stderr)
+                print(
+                    f"[ota] Flashing failed: {res_json.get('reason', 'unknown')}", file=sys.stderr
+                )
                 return 1
             staged_crc = res_json.get("staged_crc")
             if staged_crc is not None and staged_crc != host_crc:
-                print(f"[ota] CRC mismatch: host=0x{host_crc:04X} "
-                      f"esp=0x{staged_crc:04X} (upload corrupted)", file=sys.stderr)
+                print(
+                    f"[ota] CRC mismatch: host=0x{host_crc:04X} "
+                    f"esp=0x{staged_crc:04X} (upload corrupted)",
+                    file=sys.stderr,
+                )
                 return 1
             print(f"[ok] OTA successful! Bytes written: {res_json.get('bytes_written')}")
             return 0
@@ -447,8 +517,14 @@ def main() -> int:
     pyocd("reset halt")
     time.sleep(0.5)
     print("[pyocd] load writer to 0x20000000 and run")
-    pyocd("halt", f"loadmem 0x20000000 {binf}", "wreg sp 0x20002000",
-          f"wreg pc {pc}", "wreg xpsr 0x01000000", "c")
+    pyocd(
+        "halt",
+        f"loadmem 0x20000000 {binf}",
+        "wreg sp 0x20002000",
+        f"wreg pc {pc}",
+        "wreg xpsr 0x01000000",
+        "c",
+    )
 
     ser = serial.Serial(args.port, 115200, timeout=3)
     t0, banner = time.time(), b""
@@ -463,14 +539,13 @@ def main() -> int:
 
     sent = 0
     for off in range(0, len(img), CHUNK):
-        piece = img[off:off + CHUNK]
+        piece = img[off : off + CHUNK]
         ser.write(struct.pack("<H", len(piece)))
         ser.write(piece)
         ser.flush()
         ack = ser.read(1)
         if ack != b"\x06":
-            print(f"\n[NAK] at offset {off}: got {ack!r}, tail={ser.read(200)!r}",
-                  file=sys.stderr)
+            print(f"\n[NAK] at offset {off}: got {ack!r}, tail={ser.read(200)!r}", file=sys.stderr)
             return 1
         sent += len(piece)
         print(f"\r[stream] {sent}/{len(img)}", end="", flush=True)
@@ -486,8 +561,7 @@ def main() -> int:
     if "crc=" in done:
         dev_crc = int(done.split("crc=")[1].split()[0], 16)
     if dev_crc is not None and dev_crc != host_crc:
-        print(f"CRC MISMATCH: host 0x{host_crc:04X} != device 0x{dev_crc:04X}",
-              file=sys.stderr)
+        print(f"CRC MISMATCH: host 0x{host_crc:04X} != device 0x{dev_crc:04X}", file=sys.stderr)
         return 1
     print(f"[ok] CRC match 0x{host_crc:04X}")
 

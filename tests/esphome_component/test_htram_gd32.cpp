@@ -38,6 +38,7 @@ static sensor::Sensor* g_hum_s = nullptr;
 static sensor::Sensor* g_batt_s = nullptr;
 static sensor::Sensor* g_batt_lvl_s = nullptr;
 static text_sensor::TextSensor* g_fw_s = nullptr;
+static text_sensor::TextSensor* g_flash_s = nullptr;
 static text_sensor::TextSensor* g_btn_act_s = nullptr;
 static binary_sensor::BinarySensor* g_usb_s = nullptr;
 static binary_sensor::BinarySensor* g_chrg_s = nullptr;
@@ -54,6 +55,7 @@ void setUp(void) {
   g_batt_s = new sensor::Sensor();
   g_batt_lvl_s = new sensor::Sensor();
   g_fw_s = new text_sensor::TextSensor();
+  g_flash_s = new text_sensor::TextSensor();
   g_btn_act_s = new text_sensor::TextSensor();
   g_usb_s = new binary_sensor::BinarySensor();
   g_chrg_s = new binary_sensor::BinarySensor();
@@ -70,6 +72,7 @@ void setUp(void) {
   g_comp->set_battery_sensor(g_batt_s);
   g_comp->set_battery_level_sensor(g_batt_lvl_s);
   g_comp->set_fw_version_sensor(g_fw_s);
+  g_comp->set_spi_flash_sensor(g_flash_s);
   g_comp->set_button_action_sensor(g_btn_act_s);
   g_comp->set_usb_binary_sensor(g_usb_s);
   g_comp->set_charging_binary_sensor(g_chrg_s);
@@ -84,6 +87,7 @@ void tearDown(void) {
   delete g_batt_s;
   delete g_batt_lvl_s;
   delete g_fw_s;
+  delete g_flash_s;
   delete g_btn_act_s;
   delete g_usb_s;
   delete g_chrg_s;
@@ -132,6 +136,13 @@ void test_crc16_ccitt_vector(void) {
   TEST_ASSERT_EQUAL_HEX16(0x0000, crc16_ccitt(nullptr, 0));
 }
 
+void test_crc32_ieee_vector(void) {
+  const uint8_t data[] = "123456789";
+  uint32_t crc = crc32_ieee(data, 9);
+  TEST_ASSERT_EQUAL_HEX32(0xCBF43926, crc);
+  TEST_ASSERT_EQUAL_HEX32(0x00000000, crc32_ieee(nullptr, 0));
+}
+
 // ---------------------------------------------------------------------------
 // 3. Head Packet Length
 // ---------------------------------------------------------------------------
@@ -152,6 +163,15 @@ void test_head_packet_len_cases(void) {
 
   g_comp->rx_buffer_ = {0xAA, 0x55, 0x04};
   TEST_ASSERT_EQUAL(6, g_comp->head_packet_len_());
+
+  g_comp->rx_buffer_ = {0xAA, 0x55, 0x05};
+  TEST_ASSERT_EQUAL(10, g_comp->head_packet_len_());
+
+  g_comp->rx_buffer_ = {0xAA, 0x55, 0x06};
+  TEST_ASSERT_EQUAL(11, g_comp->head_packet_len_());
+
+  g_comp->rx_buffer_ = {0xAA, 0x55, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00};
+  TEST_ASSERT_EQUAL(16, g_comp->head_packet_len_());
 
   g_comp->rx_buffer_ = {0xAA, 0x55, 0x99, 0x01, 0x02};
   TEST_ASSERT_EQUAL(0, g_comp->head_packet_len_());
@@ -275,6 +295,93 @@ void test_hello_packet_parsing(void) {
 
   TEST_ASSERT_TRUE(g_comp->consume_gd32_boot());
   TEST_ASSERT_FALSE(g_comp->consume_gd32_boot());
+}
+
+static std::vector<uint8_t> make_flash_info_pkt(uint8_t is_det, uint8_t mfg, uint8_t type, uint8_t cap,
+                                                uint8_t status1) {
+  std::vector<uint8_t> pkt(10);
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x05;
+  pkt[3] = is_det;
+  pkt[4] = mfg;
+  pkt[5] = type;
+  pkt[6] = cap;
+  pkt[7] = status1;
+  uint16_t crc = crc16_ccitt(pkt.data() + 2, 6);
+  pkt[8] = crc & 0xFF;
+  pkt[9] = crc >> 8;
+  return pkt;
+}
+
+void test_flash_info_packet_parsing(void) {
+  auto pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(pkt.data(), pkt.size());
+
+  TEST_ASSERT_TRUE(g_flash_s->has_state);
+  TEST_ASSERT_NOT_NULL(strstr(g_flash_s->state.c_str(), "W25Q32 4MB"));
+  TEST_ASSERT_NOT_NULL(strstr(g_flash_s->state.c_str(), "EF 40 16"));
+
+  auto pkt_fail = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(pkt_fail.data(), pkt_fail.size());
+  TEST_ASSERT_NOT_NULL(strstr(g_flash_s->state.c_str(), "Not detected"));
+}
+
+static std::vector<uint8_t> make_flash_ack_pkt(uint8_t cmd, uint8_t status, uint32_t addr) {
+  std::vector<uint8_t> pkt(11);
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x06;
+  pkt[3] = cmd;
+  pkt[4] = status;
+  pkt[5] = addr & 0xFF;
+  pkt[6] = (addr >> 8) & 0xFF;
+  pkt[7] = (addr >> 16) & 0xFF;
+  pkt[8] = (addr >> 24) & 0xFF;
+  uint16_t crc = crc16_ccitt(pkt.data() + 2, 7);
+  pkt[9] = crc & 0xFF;
+  pkt[10] = crc >> 8;
+  return pkt;
+}
+
+void test_flash_ack_packet_parsing(void) {
+  auto pkt = make_flash_ack_pkt(0x21, 0x00, 0x00001000);
+  g_comp->process_packet_(pkt.data(), pkt.size());
+
+  TEST_ASSERT_EQUAL_HEX8(0x21, g_comp->last_flash_ack_cmd());
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->last_flash_ack_status());
+  TEST_ASSERT_EQUAL_HEX32(0x00001000, g_comp->last_flash_ack_addr());
+}
+
+static std::vector<uint8_t> make_flash_data_pkt(uint8_t status, uint32_t addr, const std::vector<uint8_t>& payload) {
+  std::vector<uint8_t> pkt(12 + payload.size());
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x07;
+  pkt[3] = status;
+  pkt[4] = addr & 0xFF;
+  pkt[5] = (addr >> 8) & 0xFF;
+  pkt[6] = (addr >> 16) & 0xFF;
+  pkt[7] = (addr >> 24) & 0xFF;
+  uint16_t len = payload.size();
+  pkt[8] = len & 0xFF;
+  pkt[9] = (len >> 8) & 0xFF;
+  std::copy(payload.begin(), payload.end(), pkt.begin() + 10);
+  uint16_t crc = crc16_ccitt(pkt.data() + 2, 8 + len);
+  pkt[10 + len] = crc & 0xFF;
+  pkt[11 + len] = crc >> 8;
+  return pkt;
+}
+
+void test_flash_data_packet_parsing(void) {
+  std::vector<uint8_t> test_bytes = {0xDE, 0xAD, 0xBE, 0xEF, 0x42};
+  auto pkt = make_flash_data_pkt(0x00, 0x00002000, test_bytes);
+  g_comp->process_packet_(pkt.data(), pkt.size());
+
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->last_flash_read_status());
+  TEST_ASSERT_EQUAL_HEX32(0x00002000, g_comp->last_flash_read_addr());
+  TEST_ASSERT_EQUAL(5, g_comp->last_flash_read_data().size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(test_bytes.data(), g_comp->last_flash_read_data().data(), 5);
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +565,11 @@ void test_outgoing_commands(void) {
   TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
 
   g_comp->mock_clear_tx();
+  g_comp->send_get_flash_info();
+  TEST_ASSERT_EQUAL(5, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x20, g_comp->mock_tx_bytes[2]);
+
+  g_comp->mock_clear_tx();
   g_comp->send_enter_bootloader();
   TEST_ASSERT_EQUAL(9, g_comp->mock_tx_bytes.size());
   TEST_ASSERT_EQUAL_HEX8(0x1F, g_comp->mock_tx_bytes[2]);
@@ -469,6 +581,105 @@ void test_outgoing_commands(void) {
   TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[2]);
   TEST_ASSERT_EQUAL(10, g_comp->mock_tx_bytes[3]);
   TEST_ASSERT_EQUAL(20, g_comp->mock_tx_bytes[4]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_draw_cached_asset(2, 84, 70, 0xF800, 0x0000, 1);
+  TEST_ASSERT_EQUAL(14, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x55, g_comp->mock_tx_bytes[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x15, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_UINT16(2, g_comp->mock_tx_bytes[3] | (g_comp->mock_tx_bytes[4] << 8));
+  TEST_ASSERT_EQUAL(84, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL(70, g_comp->mock_tx_bytes[6]);
+  TEST_ASSERT_EQUAL_HEX16(0xF800, g_comp->mock_tx_bytes[7] | (g_comp->mock_tx_bytes[8] << 8));
+  TEST_ASSERT_EQUAL_HEX16(0x0000, g_comp->mock_tx_bytes[9] | (g_comp->mock_tx_bytes[10] << 8));
+  TEST_ASSERT_EQUAL(1, g_comp->mock_tx_bytes[11]);
+  uint16_t exp_asset_crc = crc16_ccitt(&g_comp->mock_tx_bytes[2], 10);
+  uint16_t act_asset_crc = g_comp->mock_tx_bytes[12] | (g_comp->mock_tx_bytes[13] << 8);
+  TEST_ASSERT_EQUAL_HEX16(exp_asset_crc, act_asset_crc);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_erase_sector(0x00001000);
+  TEST_ASSERT_EQUAL(9, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x55, g_comp->mock_tx_bytes[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x21, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[6]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_erase_block(0x00010000);
+  TEST_ASSERT_EQUAL(9, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x24, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[6]);
+
+  g_comp->mock_clear_tx();
+  uint8_t wdata[4] = {1, 2, 3, 4};
+  g_comp->send_flash_write_chunk(0x00001000, wdata, 4);
+  TEST_ASSERT_EQUAL(15, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x22, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(4, g_comp->mock_tx_bytes[7]);
+  TEST_ASSERT_EQUAL_HEX8(0, g_comp->mock_tx_bytes[8]);
+  TEST_ASSERT_EQUAL_HEX8(1, g_comp->mock_tx_bytes[9]);
+  TEST_ASSERT_EQUAL_HEX8(4, g_comp->mock_tx_bytes[12]);
+
+  // Zero-length or oversized write chunk ignored
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_write_chunk(0x00001000, wdata, 0);
+  TEST_ASSERT_EQUAL(0, g_comp->mock_tx_bytes.size());
+  uint8_t big_chunk[257];
+  g_comp->send_flash_write_chunk(0x00001000, big_chunk, 257);
+  TEST_ASSERT_EQUAL(0, g_comp->mock_tx_bytes.size());
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_verify_crc(0x00001000, 256, 0x12345678);
+  TEST_ASSERT_EQUAL(17, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x23, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[7]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[8]);
+  TEST_ASSERT_EQUAL_HEX8(0x78, g_comp->mock_tx_bytes[11]);
+  TEST_ASSERT_EQUAL_HEX8(0x56, g_comp->mock_tx_bytes[12]);
+  TEST_ASSERT_EQUAL_HEX8(0x34, g_comp->mock_tx_bytes[13]);
+  TEST_ASSERT_EQUAL_HEX8(0x12, g_comp->mock_tx_bytes[14]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_read(0x00001000, 64);
+  TEST_ASSERT_EQUAL(11, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x25, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0x10, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(64, g_comp->mock_tx_bytes[7]);
+  TEST_ASSERT_EQUAL_HEX8(0, g_comp->mock_tx_bytes[8]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_backup_fw(1);
+  TEST_ASSERT_EQUAL(6, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x26, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[3]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_confirm_boot();
+  TEST_ASSERT_EQUAL(5, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x27, g_comp->mock_tx_bytes[2]);
+
+  g_comp->mock_clear_tx();
+  g_comp->send_flash_restore_fw(1);
+  TEST_ASSERT_EQUAL(10, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0x28, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL_HEX8(0x01, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL_HEX8(0xEF, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0xBE, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL_HEX8(0xAD, g_comp->mock_tx_bytes[6]);
+  TEST_ASSERT_EQUAL_HEX8(0xDE, g_comp->mock_tx_bytes[7]);
 
   class TestableLedSwitch : public HtramLedSwitch {
    public:
@@ -650,6 +861,87 @@ void test_execute_ota_safety_gates(void) {
   g_comp->on_write = nullptr;
 }
 
+void test_execute_ota_with_spi_flash_success(void) {
+  std::vector<uint8_t> fw(256, 0x5A);
+  g_comp->last_batt_mv_ = 4000;
+  g_comp->last_status_ = 0x02;  // USB present
+  g_comp->mock_clear_rx();
+
+  // Set SPI flash as detected
+  auto info_pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(info_pkt.data(), info_pkt.size());
+
+  g_comp->on_write = [](const uint8_t* data, size_t len) {
+    if (len >= 3 && data[2] == 0x26) {
+      // Flash backup fw command ack
+      auto ack = make_flash_ack_pkt(0x26, 0x00, 0x11223344);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x24) {
+      auto ack = make_flash_ack_pkt(0x24, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x22) {
+      auto ack = make_flash_ack_pkt(0x22, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x23) {
+      // Flash verify crc command ack
+      auto ack = make_flash_ack_pkt(0x23, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len == 9 && data[2] == 0x1F) {
+      uint8_t ack[] = {0xAA, 0x55, 0x1F, 0x79};
+      g_comp->mock_push_rx(ack, 4);
+    } else {
+      g_comp->mock_push_rx_byte(0x79);
+    }
+  };
+
+  std::string res = g_comp->execute_ota(fw, true);
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"ok\""));
+  TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
+  TEST_ASSERT_FALSE(g_comp->consume_display_refresh());
+  g_comp->on_write = nullptr;
+
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+}
+
+void test_execute_ota_with_spi_flash_staging_failure(void) {
+  std::vector<uint8_t> fw(256, 0x5A);
+  g_comp->last_batt_mv_ = 4000;
+  g_comp->last_status_ = 0x02;  // USB present
+  g_comp->mock_clear_rx();
+
+  // Set SPI flash as detected
+  auto info_pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(info_pkt.data(), info_pkt.size());
+
+  g_comp->on_write = [](const uint8_t* data, size_t len) {
+    if (len >= 3 && data[2] == 0x26) {
+      auto ack = make_flash_ack_pkt(0x26, 0x00, 0x11223344);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x24) {
+      auto ack = make_flash_ack_pkt(0x24, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x22) {
+      auto ack = make_flash_ack_pkt(0x22, 0x00, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x23) {
+      // Staging CRC verify fails!
+      auto ack = make_flash_ack_pkt(0x23, 0x03, 0x00030000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    }
+  };
+
+  std::string res = g_comp->execute_ota(fw, true);
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"stage\":\"staging_verify\""));
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"error\""));
+  TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  g_comp->on_write = nullptr;
+
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+}
+
 // ---------------------------------------------------------------------------
 // 13. Display Methods
 // ---------------------------------------------------------------------------
@@ -678,6 +970,17 @@ void test_display_pixel_drawing(void) {
   g_comp->mock_clear_tx();
   disp.draw_pixels_at(0, 0, 2, 2, test_pixels, display::COLOR_ORDER_RGB, display::COLOR_BITNESS_565, false, 0, 0, 0);
   TEST_ASSERT_GREATER_THAN(0, g_comp->mock_tx_bytes.size());
+
+  // draw_pixels_at and draw_pixel_at are suppressed during ota_mode
+  g_comp->set_ota_mode(true);
+  TEST_ASSERT_TRUE(g_comp->is_ota_mode());
+  g_comp->mock_clear_tx();
+  disp.draw_pixel_at(10, 20, Color(255, 255, 255));
+  disp.draw_pixels_at(0, 0, 2, 2, test_pixels, display::COLOR_ORDER_RGB, display::COLOR_BITNESS_565, true, 0, 0, 0);
+  TEST_ASSERT_EQUAL(0, g_comp->mock_tx_bytes.size());
+  g_comp->set_ota_mode(false);
+  TEST_ASSERT_FALSE(g_comp->is_ota_mode());
+  TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
 }
 
 // ---------------------------------------------------------------------------
@@ -701,6 +1004,79 @@ void test_ota_web_handler(void) {
   empty_handler.handleRequest(&req);
 }
 
+void test_execute_assets_upload_safety_and_validation(void) {
+  std::vector<uint8_t> tiny(10, 0x00);
+  std::string res1 = g_comp->execute_assets_upload(tiny);
+  TEST_ASSERT_NOT_NULL(strstr(res1.c_str(), "invalid assets size"));
+
+  std::vector<uint8_t> bad_magic(64, 0x00);
+  std::string res2 = g_comp->execute_assets_upload(bad_magic);
+  TEST_ASSERT_NOT_NULL(strstr(res2.c_str(), "invalid assets container magic"));
+
+  std::vector<uint8_t> valid_magic(64, 0x00);
+  uint64_t magic = 0x545353414D525448ULL;
+  memcpy(valid_magic.data(), &magic, 8);
+
+  // No SPI flash detected
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+  std::string res3 = g_comp->execute_assets_upload(valid_magic);
+  TEST_ASSERT_NOT_NULL(strstr(res3.c_str(), "SPI flash not detected"));
+}
+
+void test_execute_assets_upload_success(void) {
+  std::vector<uint8_t> assets(512, 0xAA);
+  uint64_t magic = 0x545353414D525448ULL;
+  memcpy(assets.data(), &magic, 8);
+
+  // Mark SPI flash as detected
+  auto info_pkt = make_flash_info_pkt(1, 0xEF, 0x40, 0x16, 0x00);
+  g_comp->process_packet_(info_pkt.data(), info_pkt.size());
+
+  g_comp->on_write = [](const uint8_t* data, size_t len) {
+    if (len >= 3 && data[2] == 0x24) {
+      // Erase ACK
+      auto ack = make_flash_ack_pkt(0x24, 0x00, 0x00040000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x22) {
+      // Write Chunk ACK
+      auto ack = make_flash_ack_pkt(0x22, 0x00, 0x00040000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    } else if (len >= 3 && data[2] == 0x23) {
+      // Verify CRC ACK
+      auto ack = make_flash_ack_pkt(0x23, 0x00, 0x00040000);
+      g_comp->mock_push_rx(ack.data(), ack.size());
+    }
+  };
+
+  std::string res = g_comp->execute_assets_upload(assets);
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"result\":\"ok\""));
+  TEST_ASSERT_NOT_NULL(strstr(res.c_str(), "\"bytes_written\":512"));
+  TEST_ASSERT_FALSE(g_comp->ota_mode_);
+  TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
+  TEST_ASSERT_FALSE(g_comp->consume_display_refresh());
+  g_comp->on_write = nullptr;
+
+  auto info_reset = make_flash_info_pkt(0, 0x00, 0x00, 0x00, 0x00);
+  g_comp->process_packet_(info_reset.data(), info_reset.size());
+}
+
+void test_assets_web_handler(void) {
+  Gd32AssetsHandler handler(g_comp);
+  AsyncWebServerRequest req;
+
+  // Upload simulation
+  uint8_t chunk[64] = {0x00};
+  uint64_t magic = 0x545353414D525448ULL;
+  memcpy(chunk, &magic, 8);
+  handler.handleUpload(&req, "flash_assets.bin", 0, chunk, sizeof(chunk), false);
+  handler.handleUpload(&req, "flash_assets.bin", 64, chunk, sizeof(chunk), true);
+
+  // Empty handler test
+  Gd32AssetsHandler empty_handler(g_comp);
+  empty_handler.handleRequest(&req);
+}
+
 // ---------------------------------------------------------------------------
 // 15. Setup and Dump Config
 // ---------------------------------------------------------------------------
@@ -715,18 +1091,22 @@ void test_setup_and_dump_config(void) {
   esphome::web_server_base::WebServerBase srv;
   esphome::web_server_base::global_web_server_base = &srv;
   g_comp->setup();
-  TEST_ASSERT_EQUAL(1, srv.handlers.size());
+  TEST_ASSERT_EQUAL(2, srv.handlers.size());
 }
 
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_batt_mv_to_pct_logic);
   RUN_TEST(test_crc16_ccitt_vector);
+  RUN_TEST(test_crc32_ieee_vector);
   RUN_TEST(test_head_packet_len_cases);
   RUN_TEST(test_telemetry_packet_parsing_normal);
   RUN_TEST(test_telemetry_packet_corrupt_crc);
   RUN_TEST(test_telemetry_packet_flags_suppression);
   RUN_TEST(test_hello_packet_parsing);
+  RUN_TEST(test_flash_info_packet_parsing);
+  RUN_TEST(test_flash_ack_packet_parsing);
+  RUN_TEST(test_flash_data_packet_parsing);
   RUN_TEST(test_flow_control_packet);
   RUN_TEST(test_wait_for_flow_unpauses_or_times_out);
   RUN_TEST(test_button_pressed_and_long_press);
@@ -736,8 +1116,13 @@ int main(void) {
   RUN_TEST(test_rtttl_parser_notes_and_durations);
   RUN_TEST(test_rom_bootloader_primitives);
   RUN_TEST(test_execute_ota_safety_gates);
+  RUN_TEST(test_execute_ota_with_spi_flash_success);
+  RUN_TEST(test_execute_ota_with_spi_flash_staging_failure);
   RUN_TEST(test_display_pixel_drawing);
   RUN_TEST(test_ota_web_handler);
+  RUN_TEST(test_execute_assets_upload_safety_and_validation);
+  RUN_TEST(test_execute_assets_upload_success);
+  RUN_TEST(test_assets_web_handler);
   RUN_TEST(test_setup_and_dump_config);
   return UNITY_END();
 }

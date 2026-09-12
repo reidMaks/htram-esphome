@@ -187,6 +187,20 @@ void gpio_cfg_out_pp(uint32_t base, uint8_t pin);
 void gpio_cfg_in(uint32_t base, uint8_t pin, uint8_t pud);
 int gpio_get(uint32_t base, uint8_t pin);
 
+static inline void gpio_set(uint32_t base, int pin, int val) {
+  if (base < 4) {
+    if (val) {
+      mock_gpios[base].bop |= (1U << pin);
+      mock_gpios[base].bc &= ~(1U << pin);
+      mock_gpios[base].octl |= (1U << pin);
+    } else {
+      mock_gpios[base].bc |= (1U << pin);
+      mock_gpios[base].bop &= ~(1U << pin);
+      mock_gpios[base].octl &= ~(1U << pin);
+    }
+  }
+}
+
 /* TX capture buffer for UART1 */
 #define TX_CAPTURE_MAX 4096
 extern uint8_t mock_tx_capture[TX_CAPTURE_MAX];

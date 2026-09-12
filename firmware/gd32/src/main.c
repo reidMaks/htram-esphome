@@ -15,6 +15,7 @@
 #include "display.h"
 #include "sensors.h"
 #include "periph.h"
+#include "spi_flash.h"
 
 #ifndef GD32_UART_BAUD
 #define GD32_UART_BAUD 921600UL
@@ -93,6 +94,9 @@ int main(void)
     /* 3. Initialize Sensors (SHT30 + CRIR M1 CO2) */
     sensors_init();
 
+    /* 3b. Safe Probe of Winbond 25Q32 SPI Flash (PA4..PA7) */
+    spi_flash_init();
+
 #endif
 
     /* The backlight comes up dark (display_init leaves PWM duty at 0) and
@@ -119,7 +123,20 @@ int main(void)
      * backlight again. (An ESP that boots *with* us cannot hear this either,
      * being mid-boot itself; that case is covered by staying off the panel
      * entirely, below.) */
-    protocol_send_hello_flags(HELLO_FLAG_BOOT);
+    uint8_t boot_flags = HELLO_FLAG_BOOT;
+    const spi_flash_info_t *flash_info = spi_flash_get_info();
+    if (flash_info->is_detected) {
+        boot_flags |= HELLO_FLAG_FLASH_OK;
+        spi_flash_boot_guard_check();
+    } else {
+        boot_flags |= HELLO_FLAG_FLASH_FAIL;
+    }
+    protocol_send_hello_flags(boot_flags);
+
+    /* Send dedicated flash info packet right at startup */
+    protocol_send_flash_info(flash_info->is_detected, flash_info->mfg_id,
+                             flash_info->memory_type, flash_info->capacity,
+                             flash_info->status_reg1);
 
     /* Live Status Loop Variables */
     int16_t temp_001c = 0;

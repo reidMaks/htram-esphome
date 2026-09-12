@@ -37,6 +37,10 @@ def compile_c_crc_lib():
         }
         return crc;
     }
+
+    uint32_t c_crc32_ieee(const uint8_t *data, size_t len) {
+        return crc32_ieee(data, len);
+    }
     """
     subprocess.run(cmd, input=c_code, text=True, check=True)
     yield
@@ -55,6 +59,14 @@ def call_c_crc(data: bytes) -> int:
     return lib.c_crc16_ccitt(arr, len(data))
 
 
+def call_c_crc32(data: bytes) -> int:
+    lib = ctypes.CDLL(str(LIB_SO))
+    lib.c_crc32_ieee.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
+    lib.c_crc32_ieee.restype = ctypes.c_uint32
+    arr = (ctypes.c_uint8 * len(data))(*data)
+    return lib.c_crc32_ieee(arr, len(data))
+
+
 def test_known_crc_vectors():
     # Empty
     assert py_crc16_ccitt(b"") == 0x0000
@@ -64,9 +76,23 @@ def test_known_crc_vectors():
     assert py_crc16_ccitt(b"123456789") == 0x31C3
     assert call_c_crc(b"123456789") == 0x31C3
 
+    # CRC-32 IEEE 802.3
+    import zlib
+
+    assert call_c_crc32(b"") == zlib.crc32(b"")
+    assert call_c_crc32(b"123456789") == 0xCBF43926
+    assert call_c_crc32(b"123456789") == zlib.crc32(b"123456789")
+
 
 @given(st.binary(min_size=0, max_size=2048))
 def test_python_and_c_crc_equivalence(data: bytes):
     py_result = py_crc16_ccitt(data)
     c_result = call_c_crc(data)
     assert py_result == c_result
+
+
+@given(st.binary(min_size=0, max_size=2048))
+def test_python_and_c_crc32_equivalence(data: bytes):
+    import zlib
+
+    assert call_c_crc32(data) == zlib.crc32(data)

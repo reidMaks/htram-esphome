@@ -16,6 +16,35 @@
 namespace esphome {
 namespace htram_gd32 {
 
+enum FlashAssetId : uint16_t {
+  ASSET_ID_TRYZUB = 0,
+  ASSET_ID_BELL = 1,
+  ASSET_ID_ALERT = 2,
+  ASSET_ID_ALERT_SMALL = 3,
+  ASSET_ID_THREAT_BALLISTIC = 4,
+  ASSET_ID_THREAT_KAB = 5,
+  ASSET_ID_THREAT_MISSILE = 6,
+  ASSET_ID_THREAT_DRONE = 7,
+  ASSET_ID_THREAT_RECON = 8,
+  ASSET_ID_WEATHER_SUNNY = 9,
+  ASSET_ID_WEATHER_PARTLYCLOUDY_SUN = 10,
+  ASSET_ID_WEATHER_PARTLYCLOUDY_CLOUD = 11,
+  ASSET_ID_WEATHER_CLOUDY = 12,
+  ASSET_ID_WEATHER_RAINY_CLOUD = 13,
+  ASSET_ID_WEATHER_RAINY_DROPS = 14,
+  ASSET_ID_WEATHER_LIGHTNING_CLOUD = 15,
+  ASSET_ID_WEATHER_LIGHTNING_BOLT = 16,
+  ASSET_ID_WEATHER_SNOWY_CLOUD = 17,
+  ASSET_ID_WEATHER_SNOWY_FLAKES = 18,
+  ASSET_ID_WEATHER_FOG = 19,
+  ASSET_ID_WEATHER_WINDY = 20,
+  ASSET_ID_WEATHER_RAINY = 21,
+  ASSET_ID_WEATHER_PARTLYCLOUDY = 22,
+  ASSET_ID_WEATHER_LIGHTNING = 23,
+  ASSET_ID_WEATHER_SNOWY = 24,
+  ASSET_ID_COUNT = 25
+};
+
 class HtramGd32Component : public Component, public uart::UARTDevice {
  public:
   void setup() override;
@@ -34,11 +63,26 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void set_battery_sensor(sensor::Sensor *s) { batt_sensor_ = s; }
   void set_battery_level_sensor(sensor::Sensor *s) { batt_level_sensor_ = s; }
   void set_fw_version_sensor(text_sensor::TextSensor *s) { fw_version_sensor_ = s; }
+  void set_spi_flash_sensor(text_sensor::TextSensor *s) { spi_flash_sensor_ = s; }
   void set_usb_binary_sensor(binary_sensor::BinarySensor *s) { usb_sensor_ = s; }
   void set_charging_binary_sensor(binary_sensor::BinarySensor *s) { charging_sensor_ = s; }
   void set_led_switch(uint8_t channel, switch_::Switch *s) {
     if (channel < 3) led_switch_[channel] = s;
   }
+
+  void send_get_flash_info();
+  void send_flash_erase_sector(uint32_t addr);
+  void send_flash_erase_block(uint32_t addr);
+  void send_flash_write_chunk(uint32_t addr, const uint8_t *data, size_t len);
+  void send_flash_verify_crc(uint32_t addr, uint32_t len, uint32_t expected_crc32);
+  void send_flash_read(uint32_t addr, uint16_t len);
+
+  uint8_t last_flash_ack_cmd() const { return last_flash_ack_cmd_; }
+  uint8_t last_flash_ack_status() const { return last_flash_ack_status_; }
+  uint32_t last_flash_ack_addr() const { return last_flash_ack_addr_; }
+  uint8_t last_flash_read_status() const { return last_flash_read_status_; }
+  uint32_t last_flash_read_addr() const { return last_flash_read_addr_; }
+  const std::vector<uint8_t> &last_flash_read_data() const { return last_flash_read_data_; }
 
   void send_beep(uint16_t freq, uint16_t dur);
   void send_backlight(uint8_t brightness);
@@ -49,6 +93,30 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void send_stop();                          // silence / cancel current melody
   void play_rtttl(const std::string &song);  // parse RTTTL, stream to GD32
   void send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *pixel_data, size_t len);
+  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
+  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 0) {
+    this->send_draw_cached_asset(asset_id, x, y, display::ColorUtil::color_to_565(fg_color), display::ColorUtil::color_to_565(bg_color), flags);
+  }
+  void send_flash_backup_fw(uint8_t slot);
+  void send_flash_confirm_boot();
+  void send_flash_restore_fw(uint8_t slot);
+
+  bool is_ota_mode() const { return ota_mode_; }
+
+  void set_ota_mode(bool enable) {
+    if (this->ota_mode_ != enable) {
+      this->ota_mode_ = enable;
+      if (!enable) {
+        this->needs_display_refresh_ = true;
+      }
+    }
+  }
+
+  bool consume_display_refresh() {
+    bool b = this->needs_display_refresh_;
+    this->needs_display_refresh_ = false;
+    return b;
+  }
 
   /* True once per GD32 restart, and cleared by the read.
    *
@@ -75,6 +143,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
 
   // Returns JSON string with result
   std::string execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery);
+  std::string execute_assets_upload(const std::vector<uint8_t> &assets_data);
 
  protected:
   bool flow_paused_{false};
@@ -88,6 +157,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   sensor::Sensor *batt_sensor_{nullptr};
   sensor::Sensor *batt_level_sensor_{nullptr};
   text_sensor::TextSensor *fw_version_sensor_{nullptr};
+  text_sensor::TextSensor *spi_flash_sensor_{nullptr};
   text_sensor::TextSensor *button_action_sensor_{nullptr};
   binary_sensor::BinarySensor *usb_sensor_{nullptr};
   binary_sensor::BinarySensor *charging_sensor_{nullptr};
@@ -96,11 +166,19 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   switch_::Switch *led_switch_[3]{nullptr, nullptr, nullptr};  // 0=red 1=yellow 2=green
   bool led_state_[3]{false, false, false};
   std::string fw_version_;  // last published, to avoid redundant updates
+  std::string spi_flash_status_;
+  uint8_t last_flash_ack_cmd_{0};
+  uint8_t last_flash_ack_status_{0};
+  uint32_t last_flash_ack_addr_{0};
+  uint8_t last_flash_read_status_{0};
+  uint32_t last_flash_read_addr_{0};
+  std::vector<uint8_t> last_flash_read_data_;
 
   std::vector<uint8_t> rx_buffer_;
   uint16_t last_batt_mv_{0};
   uint8_t last_status_{0};
   bool ota_mode_{false};
+  bool needs_display_refresh_{false};
 
   void process_packet_(const uint8_t *data, size_t len);
 
@@ -225,6 +303,41 @@ class Gd32OtaHandler : public AsyncWebHandler {
   HtramGd32Component *parent_;
   std::vector<uint8_t> firmware_;
   bool staging_failed_{false};
+};
+
+class Gd32AssetsHandler : public AsyncWebHandler {
+ public:
+  Gd32AssetsHandler(HtramGd32Component *parent) : parent_(parent) {}
+
+  bool canHandle(AsyncWebServerRequest *request) const override {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    return request->url() == "/gd32_assets" && request->method() == HTTP_POST;
+#pragma GCC diagnostic pop
+  }
+
+  void handleRequest(AsyncWebServerRequest *request) override {
+    if (this->assets_data_.empty()) {
+      request->send(400, "application/json", "{\"result\":\"error\",\"reason\":\"no file uploaded\"}");
+      return;
+    }
+    std::string res = this->parent_->execute_assets_upload(this->assets_data_);
+    request->send(200, "application/json", res.c_str());
+    std::vector<uint8_t>().swap(this->assets_data_);
+  }
+
+  void handleUpload(AsyncWebServerRequest *request, const PlatformString &filename, size_t index, uint8_t *data, size_t len, bool final) override {
+    if (index == 0) {
+      std::vector<uint8_t>().swap(this->assets_data_);
+    }
+    if (len > 0) {
+      this->assets_data_.insert(this->assets_data_.end(), data, data + len);
+    }
+  }
+
+ private:
+  HtramGd32Component *parent_;
+  std::vector<uint8_t> assets_data_;
 };
 
 }  // namespace htram_gd32

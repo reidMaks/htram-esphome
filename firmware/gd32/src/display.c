@@ -1,5 +1,7 @@
 #include "display.h"
 #include "gd32f150.h"
+#include "spi_flash.h"
+#include "flash_assets.h"
 
 /*
  * ST7789 Pinout (GPIOB):
@@ -389,4 +391,96 @@ void display_draw_string(uint8_t x, uint8_t y, const char *s, uint16_t color, ui
         display_draw_char(x, y, *s++, color, bg);
         x += 8;
     }
+}
+
+int display_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags)
+{
+    const spi_flash_info_t *flash = spi_flash_get_info();
+    if (!flash || !flash->is_detected) {
+        return -1;
+    }
+
+    flash_assets_header_t hdr;
+    if (spi_flash_read_data(SPI_FLASH_ASSETS_ADDR, (uint8_t *)&hdr, sizeof(hdr)) != 0) {
+        return -1;
+    }
+    if (hdr.magic != FLASH_ASSETS_MAGIC || asset_id >= hdr.asset_count) {
+        return -1;
+    }
+
+    uint32_t entry_addr = SPI_FLASH_ASSETS_ADDR + sizeof(flash_assets_header_t) + (uint32_t)asset_id * sizeof(flash_asset_entry_t);
+    flash_asset_entry_t entry;
+    if (spi_flash_read_data(entry_addr, (uint8_t *)&entry, sizeof(entry)) != 0) {
+        return -1;
+    }
+    if (entry.asset_id != asset_id || entry.width == 0 || entry.height == 0 || entry.stride == 0) {
+        return -1;
+    }
+
+    if (x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT) {
+        return -1;
+    }
+
+    uint16_t draw_w = entry.width;
+    uint16_t draw_h = entry.height;
+    if ((uint16_t)x + draw_w > DISPLAY_WIDTH) {
+        draw_w = DISPLAY_WIDTH - x;
+    }
+    if ((uint16_t)y + draw_h > DISPLAY_HEIGHT) {
+        draw_h = DISPLAY_HEIGHT - y;
+    }
+
+    uint32_t data_addr = SPI_FLASH_ASSETS_ADDR + entry.data_offset;
+    uint8_t row_buf[40]; /* Max stride for 320px is 40 bytes; entry.stride <= 40 */
+    if (entry.stride > sizeof(row_buf)) {
+        return -1;
+    }
+
+    if (flags & 0x01) {
+        /* Transparent mode: draw only foreground 1-bits in runs to preserve background */
+        for (uint16_t row = 0; row < draw_h; row++) {
+            if (spi_flash_read_data(data_addr + (uint32_t)row * entry.stride, row_buf, entry.stride) != 0) {
+                return -1;
+            }
+            uint16_t col = 0;
+            while (col < draw_w) {
+                while (col < draw_w && !(row_buf[col >> 3] & (0x80 >> (col & 7)))) {
+                    col++;
+                }
+                if (col >= draw_w) break;
+                uint16_t start_col = col;
+                while (col < draw_w && (row_buf[col >> 3] & (0x80 >> (col & 7)))) {
+                    col++;
+                }
+                uint16_t run_len = col - start_col;
+                display_set_window((uint8_t)(x + start_col), (uint8_t)(y + row), (uint8_t)run_len, 1);
+                LCD_CS_LOW();
+                for (uint16_t k = 0; k < run_len; k++) {
+                    lcd_send_pixel_raw(fg_color);
+                }
+                LCD_CS_HIGH();
+            }
+        }
+    } else {
+        /* Solid / opaque mode: stream the full rectangular box */
+        display_set_window(x, y, (uint8_t)draw_w, (uint8_t)draw_h);
+        LCD_CS_LOW();
+        for (uint16_t row = 0; row < draw_h; row++) {
+            if (spi_flash_read_data(data_addr + (uint32_t)row * entry.stride, row_buf, entry.stride) != 0) {
+                LCD_CS_HIGH();
+                return -1;
+            }
+            for (uint16_t col = 0; col < draw_w; col++) {
+                uint8_t b = row_buf[col >> 3];
+                if (b & (0x80 >> (col & 7))) {
+                    lcd_send_pixel_raw(fg_color);
+                } else {
+                    lcd_send_pixel_raw(bg_color);
+                }
+            }
+        }
+        LCD_CS_HIGH();
+    }
+
+    return 0;
 }

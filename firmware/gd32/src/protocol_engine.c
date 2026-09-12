@@ -3,6 +3,7 @@
 #include "display.h"
 #include "periph.h"
 #include "flasher.h"
+#include "spi_flash.h"
 #include "build_info.h"  /* generated per build: BUILD_EPOCH/BUILD_GIT_HASH/BUILD_DIRTY */
 
 /* ── Low-Level UART1 (PA2=TX, PA3=RX) ── */
@@ -148,7 +149,9 @@ void protocol_send_telemetry(uint16_t co2, int16_t temp, uint16_t hum, uint16_t 
 
 void protocol_send_hello(void)
 {
-    protocol_send_hello_flags(0);
+    const spi_flash_info_t *flash = spi_flash_get_info();
+    uint8_t flags = flash->is_detected ? HELLO_FLAG_FLASH_OK : HELLO_FLAG_FLASH_FAIL;
+    protocol_send_hello_flags(flags);
 }
 
 void protocol_send_hello_flags(uint8_t extra_flags)
@@ -192,6 +195,63 @@ void protocol_send_flow(uint8_t resume)
     uart1_write((const uint8_t *)&pkt, sizeof(pkt));
 }
 
+void protocol_send_flash_info(uint8_t is_detected, uint8_t mfg, uint8_t type, uint8_t cap, uint8_t status1)
+{
+    pkt_flash_info_t pkt;
+    pkt.magic0 = PROTOCOL_MAGIC0;
+    pkt.magic1 = PROTOCOL_MAGIC1;
+    pkt.type = PKT_TYPE_FLASH_INFO;
+    pkt.is_detected = is_detected;
+    pkt.mfg_id = mfg;
+    pkt.memory_type = type;
+    pkt.capacity = cap;
+    pkt.status_reg1 = status1;
+    pkt.crc16 = crc16_ccitt(&pkt.type, sizeof(pkt) - 4);
+
+    uart1_write((const uint8_t *)&pkt, sizeof(pkt));
+}
+
+void protocol_send_flash_ack(uint8_t cmd, uint8_t status, uint32_t addr)
+{
+    pkt_flash_ack_t pkt;
+    pkt.magic0 = PROTOCOL_MAGIC0;
+    pkt.magic1 = PROTOCOL_MAGIC1;
+    pkt.type = PKT_TYPE_FLASH_ACK;
+    pkt.cmd = cmd;
+    pkt.status = status;
+    pkt.addr = addr;
+    pkt.crc16 = crc16_ccitt(&pkt.type, sizeof(pkt) - 4);
+
+    uart1_write((const uint8_t *)&pkt, sizeof(pkt));
+}
+
+void protocol_send_flash_data(uint8_t status, uint32_t addr, const uint8_t *data, uint16_t len)
+{
+    pkt_flash_data_hdr_t hdr;
+    hdr.magic0 = PROTOCOL_MAGIC0;
+    hdr.magic1 = PROTOCOL_MAGIC1;
+    hdr.type = PKT_TYPE_FLASH_DATA;
+    hdr.status = status;
+    hdr.addr = addr;
+    hdr.length = len;
+
+    /* CRC over type, status, addr, length, plus data */
+    uint16_t crc = crc16_ccitt(&hdr.type, sizeof(hdr) - 2);
+    if (data && len > 0) {
+        for (uint16_t i = 0; i < len; i++) {
+            crc = crc16_ccitt_update(crc, data[i]);
+        }
+    }
+
+    uart1_write((const uint8_t *)&hdr, sizeof(hdr));
+    if (data && len > 0) {
+        uart1_write(data, len);
+    }
+    uint8_t crc_bytes[2] = { (uint8_t)(crc & 0xFF), (uint8_t)(crc >> 8) };
+    uart1_write(crc_bytes, 2);
+}
+
+
 /* ── RX Parsing State Machine ── */
 
 typedef enum {
@@ -201,6 +261,7 @@ typedef enum {
     STATE_HEADER,
     STATE_PIXELS,
     STATE_MELODY,
+    STATE_FLASH_CHUNK,
     STATE_CRC0,
     STATE_CRC1
 } rx_state_t;
@@ -229,6 +290,12 @@ static uint8_t melody_buf[MELODY_MAX_NOTES * 4];
 static uint8_t melody_count = 0;   /* stored (clamped) note count */
 static uint16_t melody_idx = 0;    /* byte index while streaming */
 static uint16_t melody_bytes_left = 0;
+
+/* CMD_FLASH_WRITE_CHUNK */
+static uint32_t flash_chunk_addr = 0;
+static uint16_t flash_chunk_len = 0;
+static uint16_t flash_chunk_idx = 0;
+static uint8_t flash_chunk_buf[256];
 
 static inline void reset_rx_state(void)
 {
@@ -291,8 +358,35 @@ void protocol_process_rx(void)
             } else if (current_cmd == CMD_TYPE_PLAY_MELODY) {
                 cmd_buf_expected = 1; /* Count (1); notes stream after */
                 rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_DRAW_CACHED_ASSET) {
+                cmd_buf_expected = 9; /* Asset ID (2), X (1), Y (1), FG (2), BG (2), Flags (1) */
+                rx_state = STATE_HEADER;
             } else if (current_cmd == CMD_TYPE_ENTER_BOOTLOADER) {
                 cmd_buf_expected = 4; /* Key (4) */
+                rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_GET_FLASH_INFO) {
+                cmd_buf_expected = 0;
+                rx_state = STATE_CRC0;
+            } else if (current_cmd == CMD_TYPE_FLASH_ERASE_SECTOR || current_cmd == CMD_TYPE_FLASH_ERASE_BLOCK) {
+                cmd_buf_expected = 4; /* Addr (4) */
+                rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_FLASH_WRITE_CHUNK) {
+                cmd_buf_expected = 6; /* Addr (4), Len (2) */
+                rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_FLASH_VERIFY_CRC) {
+                cmd_buf_expected = 12; /* Addr (4), Len (4), Expected CRC32 (4) */
+                rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_FLASH_READ) {
+                cmd_buf_expected = 6; /* Addr (4), Len (2) */
+                rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_FLASH_BACKUP_FW) {
+                cmd_buf_expected = 1; /* Slot (1) */
+                rx_state = STATE_HEADER;
+            } else if (current_cmd == CMD_TYPE_FLASH_CONFIRM_BOOT) {
+                cmd_buf_expected = 0;
+                rx_state = STATE_CRC0;
+            } else if (current_cmd == CMD_TYPE_FLASH_RESTORE_FW) {
+                cmd_buf_expected = 5; /* Slot (1), Key (4) */
                 rx_state = STATE_HEADER;
             } else {
                 /* Unknown command */
@@ -329,6 +423,14 @@ void protocol_process_rx(void)
                     melody_idx = 0;
                     melody_bytes_left = (uint16_t)cmd_buf[0] * 4; /* stream full count for CRC */
                     rx_state = (melody_bytes_left == 0) ? STATE_CRC0 : STATE_MELODY;
+                } else if (current_cmd == CMD_TYPE_FLASH_WRITE_CHUNK) {
+                    flash_chunk_addr = (uint32_t)cmd_buf[0] |
+                                       ((uint32_t)cmd_buf[1] << 8) |
+                                       ((uint32_t)cmd_buf[2] << 16) |
+                                       ((uint32_t)cmd_buf[3] << 24);
+                    flash_chunk_len = (uint16_t)cmd_buf[4] | ((uint16_t)cmd_buf[5] << 8);
+                    flash_chunk_idx = 0;
+                    rx_state = (flash_chunk_len == 0) ? STATE_CRC0 : STATE_FLASH_CHUNK;
                 } else {
                     rx_state = STATE_CRC0;
                 }
@@ -342,6 +444,17 @@ void protocol_process_rx(void)
             }
             melody_idx++;
             if (--melody_bytes_left == 0) {
+                rx_state = STATE_CRC0;
+            }
+            break;
+
+        case STATE_FLASH_CHUNK:
+            calc_crc = crc16_ccitt_update(calc_crc, b);
+            if (flash_chunk_idx < sizeof(flash_chunk_buf)) {
+                flash_chunk_buf[flash_chunk_idx] = b;
+            }
+            flash_chunk_idx++;
+            if (flash_chunk_idx >= flash_chunk_len) {
                 rx_state = STATE_CRC0;
             }
             break;
@@ -406,6 +519,15 @@ void protocol_process_rx(void)
                     periph_beep(freq, dur);
                 } else if (current_cmd == CMD_TYPE_PLAY_MELODY) {
                     periph_play_melody(melody_buf, melody_count);
+                } else if (current_cmd == CMD_TYPE_DRAW_CACHED_ASSET) {
+                    uint16_t asset_id = (uint16_t)cmd_buf[0] | ((uint16_t)cmd_buf[1] << 8);
+                    uint8_t x = cmd_buf[2];
+                    uint8_t y = cmd_buf[3];
+                    uint16_t fg_color = (uint16_t)cmd_buf[4] | ((uint16_t)cmd_buf[5] << 8);
+                    uint16_t bg_color = (uint16_t)cmd_buf[6] | ((uint16_t)cmd_buf[7] << 8);
+                    uint8_t flags = cmd_buf[8];
+                    g_external_display_active = 1;
+                    display_draw_cached_asset(asset_id, x, y, fg_color, bg_color, flags);
                 } else if (current_cmd == CMD_TYPE_ENTER_BOOTLOADER) {
                     uint32_t key = (uint32_t)cmd_buf[0] |
                                    ((uint32_t)cmd_buf[1] << 8) |
@@ -420,6 +542,162 @@ void protocol_process_rx(void)
                         while (!(USART1_STAT & USART_TC))
                             ;
                         flasher_run();
+                    }
+                } else if (current_cmd == CMD_TYPE_GET_FLASH_INFO) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    protocol_send_flash_info(info->is_detected, info->mfg_id, info->memory_type, info->capacity, info->status_reg1);
+                } else if (current_cmd == CMD_TYPE_FLASH_ERASE_SECTOR || current_cmd == CMD_TYPE_FLASH_ERASE_BLOCK) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    uint32_t addr = (uint32_t)cmd_buf[0] |
+                                    ((uint32_t)cmd_buf[1] << 8) |
+                                    ((uint32_t)cmd_buf[2] << 16) |
+                                    ((uint32_t)cmd_buf[3] << 24);
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, addr);
+                    } else if (current_cmd == CMD_TYPE_FLASH_ERASE_SECTOR) {
+                        if (addr >= SPI_FLASH_TOTAL_SIZE || (addr & 0xFFF) != 0) {
+                            protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_ADDR, addr);
+                        } else {
+                            protocol_send_flow(0);
+                            while (!(USART1_STAT & USART_TC))
+                                ;
+                            int res = spi_flash_sector_erase_4k(addr);
+                            protocol_send_flow(1);
+                            uint8_t status = (res == 0) ? FLASH_ACK_OK : FLASH_ACK_ERR_TIMEOUT;
+                            protocol_send_flash_ack(current_cmd, status, addr);
+                        }
+                    } else { /* CMD_TYPE_FLASH_ERASE_BLOCK */
+                        if (addr >= SPI_FLASH_TOTAL_SIZE || (addr & 0xFFFF) != 0) {
+                            protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_ADDR, addr);
+                        } else {
+                            protocol_send_flow(0);
+                            while (!(USART1_STAT & USART_TC))
+                                ;
+                            int res = spi_flash_block_erase_64k(addr);
+                            protocol_send_flow(1);
+                            uint8_t status = (res == 0) ? FLASH_ACK_OK : FLASH_ACK_ERR_TIMEOUT;
+                            protocol_send_flash_ack(current_cmd, status, addr);
+                        }
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_WRITE_CHUNK) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, flash_chunk_addr);
+                    } else if (flash_chunk_len == 0 || flash_chunk_len > SPI_FLASH_PAGE_SIZE) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_LEN, flash_chunk_addr);
+                    } else if (flash_chunk_addr >= SPI_FLASH_TOTAL_SIZE || ((flash_chunk_addr & 0xFF) + flash_chunk_len > SPI_FLASH_PAGE_SIZE)) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_ADDR, flash_chunk_addr);
+                    } else {
+                        int res = spi_flash_page_program(flash_chunk_addr, flash_chunk_buf, flash_chunk_len);
+                        uint8_t status = (res == 0) ? FLASH_ACK_OK : FLASH_ACK_ERR_TIMEOUT;
+                        protocol_send_flash_ack(current_cmd, status, flash_chunk_addr);
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_VERIFY_CRC) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    uint32_t addr = (uint32_t)cmd_buf[0] |
+                                    ((uint32_t)cmd_buf[1] << 8) |
+                                    ((uint32_t)cmd_buf[2] << 16) |
+                                    ((uint32_t)cmd_buf[3] << 24);
+                    uint32_t len = (uint32_t)cmd_buf[4] |
+                                   ((uint32_t)cmd_buf[5] << 8) |
+                                   ((uint32_t)cmd_buf[6] << 16) |
+                                   ((uint32_t)cmd_buf[7] << 24);
+                    uint32_t exp_crc = (uint32_t)cmd_buf[8] |
+                                       ((uint32_t)cmd_buf[9] << 8) |
+                                       ((uint32_t)cmd_buf[10] << 16) |
+                                       ((uint32_t)cmd_buf[11] << 24);
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, addr);
+                    } else if (addr >= SPI_FLASH_TOTAL_SIZE || addr + len > SPI_FLASH_TOTAL_SIZE) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_ADDR, addr);
+                    } else {
+                        if (len > 1024) {
+                            protocol_send_flow(0);
+                            while (!(USART1_STAT & USART_TC))
+                                ;
+                        }
+                        int res = spi_flash_verify_crc32(addr, len, exp_crc);
+                        if (len > 1024) {
+                            protocol_send_flow(1);
+                        }
+                        uint8_t status = (res == 0) ? FLASH_ACK_OK : ((res == -2) ? FLASH_ACK_ERR_VERIFY : FLASH_ACK_ERR_ADDR);
+                        protocol_send_flash_ack(current_cmd, status, addr);
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_READ) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    uint32_t addr = (uint32_t)cmd_buf[0] |
+                                    ((uint32_t)cmd_buf[1] << 8) |
+                                    ((uint32_t)cmd_buf[2] << 16) |
+                                    ((uint32_t)cmd_buf[3] << 24);
+                    uint16_t len = (uint16_t)cmd_buf[4] | ((uint16_t)cmd_buf[5] << 8);
+                    if (!info->is_detected) {
+                        protocol_send_flash_data(FLASH_ACK_ERR_NO_FLASH, addr, NULL, 0);
+                    } else if (len > 256) {
+                        protocol_send_flash_data(FLASH_ACK_ERR_LEN, addr, NULL, 0);
+                    } else if (addr >= SPI_FLASH_TOTAL_SIZE || addr + len > SPI_FLASH_TOTAL_SIZE) {
+                        protocol_send_flash_data(FLASH_ACK_ERR_ADDR, addr, NULL, 0);
+                    } else {
+                        uint8_t read_buf[256];
+                        int res = spi_flash_read_data(addr, read_buf, len);
+                        if (res == 0) {
+                            protocol_send_flash_data(FLASH_ACK_OK, addr, read_buf, len);
+                        } else {
+                            protocol_send_flash_data(FLASH_ACK_ERR_TIMEOUT, addr, NULL, 0);
+                        }
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_BACKUP_FW) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    uint8_t slot = cmd_buf[0];
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, 0);
+                    } else if (slot > 2) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_SLOT, 0);
+                    } else {
+                        protocol_send_flow(0);
+                        while (!(USART1_STAT & USART_TC))
+                            ;
+                        uint32_t crc32 = 0;
+                        int res = spi_flash_backup_firmware(slot, &crc32);
+                        protocol_send_flow(1);
+                        uint8_t status = (res == 0) ? FLASH_ACK_OK : ((res == -2) ? FLASH_ACK_ERR_VERIFY : FLASH_ACK_ERR_ADDR);
+                        protocol_send_flash_ack(current_cmd, status, crc32);
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_CONFIRM_BOOT) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, 0);
+                    } else {
+                        int res = spi_flash_confirm_boot();
+                        uint8_t status = (res == 0) ? FLASH_ACK_OK : FLASH_ACK_ERR_VERIFY;
+                        protocol_send_flash_ack(current_cmd, status, 0);
+                    }
+                } else if (current_cmd == CMD_TYPE_FLASH_RESTORE_FW) {
+                    const spi_flash_info_t *info = spi_flash_get_info();
+                    uint8_t slot = cmd_buf[0];
+                    uint32_t key = (uint32_t)cmd_buf[1] |
+                                   ((uint32_t)cmd_buf[2] << 8) |
+                                   ((uint32_t)cmd_buf[3] << 16) |
+                                   ((uint32_t)cmd_buf[4] << 24);
+                    if (!info->is_detected) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_NO_FLASH, 0);
+                    } else if (key != BOOTLOADER_MAGIC_KEY) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_VERIFY, 0);
+                    } else if (slot > 2) {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_ERR_SLOT, 0);
+                    } else {
+                        protocol_send_flash_ack(current_cmd, FLASH_ACK_OK, 0);
+                        while (!(USART1_STAT & USART_TC))
+                            ;
+                        uint32_t slot_addr = (slot == 0) ? SPI_FLASH_SLOT_A_ADDR :
+                                             ((slot == 1) ? SPI_FLASH_SLOT_B_ADDR : SPI_FLASH_SLOT_STAGING_ADDR);
+                        spi_flash_superblock_t sb;
+                        uint32_t size = 65536;
+                        if (spi_flash_read_superblock(&sb) == 0) {
+                            if (slot == 0 && sb.fw_slot_a_size > 0) size = sb.fw_slot_a_size;
+                            else if (slot == 1 && sb.fw_slot_b_size > 0) size = sb.fw_slot_b_size;
+                            else if (slot == 2 && sb.staging_size > 0) size = sb.staging_size;
+                        }
+                        flasher_restore_and_reboot(slot_addr, size);
                     }
                 }
             }

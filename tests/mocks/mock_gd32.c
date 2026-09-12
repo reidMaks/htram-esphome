@@ -4,6 +4,7 @@
 #include <sys/mman.h>
 
 static void __attribute__((constructor)) init_mock_hardware_memory(void) {
+  mmap((void*)0x08000000, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   mmap((void*)0x40020000, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   mmap((void*)0xE000E000, 0x1000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 }
@@ -166,8 +167,5 @@ void gpio_cfg_in(uint32_t base, uint8_t pin, uint8_t pud) {
 }
 
 int gpio_get(uint32_t base, uint8_t pin) {
-  if (base < 4) {
-    return (mock_gpios[base].istat & (1U << pin)) ? 1 : 0;
-  }
-  return 0;
+  return (mock_get_gpio_istat(base) & (1U << pin)) ? 1 : 0;
 }

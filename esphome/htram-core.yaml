@@ -164,11 +164,8 @@ external_components:
   # The GD32 driver is this repository's own -- it is meaningless without the
   # firmware in firmware/gd32/, so it stays beside it.
   - source:
-      type: git
-      url: https://github.com/reidMaks/htram-esphome
-      ref: main
-      path: esphome/custom_components
-    refresh: 0s
+      type: local
+      path: custom_components
     components: [htram_gd32]
   # The alert map client never touched this hardware, so it lives on its own
   # and any ESP-IDF device can use it. Pinned to a tag, not main: this config
@@ -269,16 +266,6 @@ image:
   - platform: file
     file: "${repo_url}/images/threat_recon_mask.png"
     id: img_recon
-    type: BINARY
-
-  # Малий Державний Герб. Джерело — SVG користувача, з якого взято сам знак
-  # (у файлі він темний на світлому полі щита) і збережено як однобітну маску:
-  # у LVGL вона стає LV_COLOR_FORMAT_A1, тобто силуетом без власного кольору.
-  # 2 КБ замість 32 КБ, які коштувало б те саме зображення в RGB565, а колір
-  # накладає refresh_face. Державні символи не є об'єктом авторського права.
-  - platform: file
-    file: "${repo_url}/images/tryzub_mask.png"
-    id: img_tryzub
     type: BINARY
 
 font:
@@ -477,6 +464,11 @@ script:
           // lv_label_set_text invalidates unconditionally, so each digit is
           // written only when it actually changed.
           static int prev[4] = {-1, -1, -1, -1};
+          static int last_face = -1;
+          if (id(face_state) != last_face) {
+            last_face = id(face_state);
+            prev[0] = prev[1] = prev[2] = prev[3] = -1;
+          }
           const int cur[4] = {now.hour / 10, now.hour % 10,
                               now.minute / 10, now.minute % 10};
           lv_obj_t *const lbl[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
@@ -511,7 +503,7 @@ script:
           lv_obj_t *const hide[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
                                     id(ui_slot), id(ui_pocket), id(ui_msg),
                                     id(ui_msg_cap), id(ui_msg2),
-                                    id(ui_ap_card), id(ui_ap_qr)};
+                                    id(ui_ap_card), id(ui_ap_qr), id(ui_alert)};
           for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
@@ -527,6 +519,7 @@ script:
       - script.execute: refresh_clock
       - script.execute: refresh_slot
       - script.execute: refresh_pocket
+      - script.execute: refresh_alert_icon
 
   # A clock with no time is dashes, and dashes look like a broken screen rather
   # than an explanation. Whenever the time is not set, the face says why instead.
@@ -552,21 +545,30 @@ script:
           // the minute of silence, then the ordinary faces.
           const int want = ap ? 3 : (id(silence_active) ? 4 : (have_time ? 0 : (net ? 1 : 2)));
           if (want != 3) id(ap_manual) = false;
-          if (want == id(face_state)) return;
+          const int prev_face = id(face_state);
+          if (want == prev_face) return;
           id(face_state) = want;
+          if (prev_face == 4 && want != 4) {
+            lv_obj_invalidate(id(ui_root));
+          }
 
           lv_obj_t *const face[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
                                     id(ui_slot)};
           for (auto *o : face) {
-            if (want == 0)
+            if (want == 0) {
               lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-            else
+              lv_obj_invalidate(o);
+            } else {
               lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+            }
           }
 
           lv_obj_t *const msg[] = {id(ui_msg_cap), id(ui_msg), id(ui_msg_sub),
                                    id(ui_msg2), id(ui_ap_card), id(ui_ap_qr)};
           for (auto *o : msg) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+          if (want != 0) {
+            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
+          }
 
           id(on_face_changed).execute(want);
 
@@ -580,26 +582,24 @@ script:
                                     LV_PART_MAIN);
 
           if (want == 4) {
-            // The emblem carries no colour of its own -- A1 is a silhouette --
-            // so it is tinted here rather than baked into the asset.
-            lv_image_set_src(id(ui_tryzub), id(img_tryzub)->get_lv_image_dsc());
-            lv_obj_set_style_image_recolor(id(ui_tryzub), lv_color_hex(${silence_fg}),
-                                           LV_PART_MAIN);
-            lv_obj_set_style_image_recolor_opa(id(ui_tryzub), LV_OPA_COVER,
-                                               LV_PART_MAIN);
-            lv_obj_align(id(ui_tryzub), LV_ALIGN_CENTER, 0, 0);
-            lv_obj_move_foreground(id(ui_tryzub));
-            lv_obj_remove_flag(id(ui_tryzub), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_invalidate(id(ui_tryzub));
+            // Emblem is rendered directly from GD32 external SPI Flash via CMD_DRAW_CACHED_ASSET.
+            // Zero ESP32 DRAM allocation, zero UART streaming overhead (14 bytes vs 14.4 KB).
+            id(htram_core)->send_draw_cached_asset(
+                htram_gd32::ASSET_ID_TRYZUB, 84, 70,
+                Color(${silence_fg}), Color(0x000000), 0);
             // Nothing else is shown. The seconds dot is already circling, and
             // starting at 09:00:00 it completes exactly one revolution as the
             // minute runs out -- motion that costs nothing and means the right
             // thing.
             return;
           }
-          lv_obj_add_flag(id(ui_tryzub), LV_OBJ_FLAG_HIDDEN);
 
-          if (want == 0) return;
+          if (want == 0) {
+            id(refresh_clock).execute();
+            id(refresh_slot).execute();
+            id(refresh_alert_icon).execute();
+            return;
+          }
 
           if (want == 3) {
             // Both strings come from the running config rather than being
@@ -783,6 +783,10 @@ script:
   - id: refresh_alert_icon
     then:
       - lambda: |-
+          if (id(face_state) != 0 || id(slot_hold)) {
+            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
+            return;
+          }
           const bool alert = id(alert_active);
           if (alert) {
             auto *src = id(img_alert);
@@ -918,6 +922,17 @@ interval:
   - interval: 20ms
     then:
       - lambda: |-
+          static int last_ui_sec = -1;
+          static int last_min = -1;
+          if (id(htram_core)->consume_display_refresh()) {
+            last_ui_sec = -1;
+            last_min = -1;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+            lv_obj_invalidate(lv_screen_active());
+          }
+          if (id(htram_core)->is_ota_mode()) return;
+
           timeval tv;
           gettimeofday(&tv, nullptr);
           auto now = id(ha_time).now();
@@ -957,7 +972,6 @@ interval:
           }
 
           // 2. Exact-second LCD updates (orbiting seconds dot & clock minute flip)
-          static int last_ui_sec = -1;
           if ((int) tv.tv_sec != last_ui_sec) {
             last_ui_sec = (int) tv.tv_sec;
             // Moving the dot invalidates only where it was and where it lands.
@@ -965,7 +979,6 @@ interval:
             lv_obj_set_pos(id(ui_secdot),
                            (lv_coord_t) lroundf(120.0f + 113.0f * cosf(a) - 3.5f),
                            (lv_coord_t) lroundf(120.0f + 113.0f * sinf(a) - 3.5f));
-            static int last_min = -1;
             if (now.minute != last_min) {
               last_min = now.minute;
               id(refresh_clock).execute();
@@ -995,12 +1008,14 @@ interval:
   - interval: 7s
     then:
       - lambda: |-
+          if (id(htram_core)->is_ota_mode()) return;
           int max_slots = id(slot_extra_text).empty() ? 2 : 3;
           id(slot_idx) = (id(slot_idx) + 1) % max_slots;
-      - script.execute: refresh_slot
+          id(refresh_slot).execute();
       # Same rhythm flips the AP face between the QR and the typed credentials,
       # until somebody takes the wheel with the button.
       - lambda: |-
+          if (id(htram_core)->is_ota_mode()) return;
           if (id(face_state) == 3 && !id(ap_manual)) {
             id(ap_page) ^= 1;
             id(face_state) = -1;   // force refresh_face to repaint
@@ -1061,9 +1076,9 @@ time:
                 - script.execute: minute_of_silence
     on_time_sync:
       then:
+        - script.execute: refresh_face
         - script.execute: refresh_clock
         - script.execute: refresh_slot
-        - script.execute: refresh_face
 
   # The face is a clock, and until now the only thing that could set it was Home
   # Assistant -- so a unit that rebooted while HA was down showed dashes forever.
@@ -1074,9 +1089,9 @@ time:
     timezone: "Europe/Kyiv"
     on_time_sync:
       then:
+        - script.execute: refresh_face
         - script.execute: refresh_clock
         - script.execute: refresh_slot
-        - script.execute: refresh_face
 
 lvgl:
   displays:
@@ -1242,14 +1257,6 @@ lvgl:
               x: 74
               y: -26
               src: img_alert
-              hidden: true
-
-          - image:
-              id: ui_tryzub
-              align: center
-              x: 0
-              y: 0
-              src: img_tryzub
               hidden: true
 
           - label:
@@ -1456,6 +1463,9 @@ text_sensor:
   - platform: htram_gd32
     firmware_version:
       name: "GD32 Firmware"
+      entity_category: diagnostic
+    spi_flash:
+      name: "GD32 SPI Flash"
       entity_category: diagnostic
     button_action:
       name: "Button Action"

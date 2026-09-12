@@ -163,7 +163,6 @@ script:
       - lambda: |-
           const int state = id(timer_state);
           const int rem = id(timer_remaining_seconds);
-          const bool alert = id(alert_active);
           const bool silence = id(silence_active);
           const bool slot_held = id(slot_hold);
 
@@ -175,8 +174,8 @@ script:
           static const char *prev_cap = nullptr;
           static uint32_t prev_cap_col = 0;
 
-          // 1. If alert, silence, or overlay active: hide timer UI
-          if (alert || silence || slot_held || id(face_state) != 0) {
+          // 1. If silence or overlay active, or not on normal clock face: hide timer UI
+          if (silence || slot_held || id(face_state) != 0) {
             if (last_screen_mode != 2) {
               last_screen_mode = 2;
               lv_obj_add_flag(id(ui_timer_tick), LV_OBJ_FLAG_HIDDEN);
@@ -202,8 +201,8 @@ script:
           if (want_screen_mode != last_screen_mode) {
             last_screen_mode = want_screen_mode;
             if (want_screen_mode == 1) {
-              // Switch to TIMER screen: hide clock widgets and secdot
-              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot)};
+              // Switch to TIMER screen: hide clock widgets, secdot, and alert icon
+              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot), id(ui_alert)};
               for (auto *o : clk) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
               // Show timer widgets
               lv_obj_remove_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
@@ -225,6 +224,7 @@ script:
               for (auto *o : clk) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
               id(refresh_clock).execute();
               id(refresh_slot).execute();
+              id(refresh_alert_icon).execute();
             }
           }
 
@@ -476,6 +476,7 @@ script:
       - script.execute: refresh_timer_ui
       - script.execute: refresh_clock
       - script.execute: refresh_slot
+      - script.execute: refresh_alert_icon
 
   - id: timer_ring
     mode: single
@@ -506,6 +507,7 @@ script:
       - script.execute: refresh_timer_ui
       - script.execute: refresh_clock
       - script.execute: refresh_slot
+      - script.execute: refresh_alert_icon
 
   - id: timer_hold_detector
     mode: restart

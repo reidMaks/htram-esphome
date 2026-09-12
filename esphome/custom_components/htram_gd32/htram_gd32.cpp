@@ -30,6 +30,26 @@ static uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
   return crc;
 }
 
+static inline uint32_t crc32_ieee_update(uint32_t crc, uint8_t byte) {
+  crc ^= byte;
+  for (int j = 0; j < 8; j++) {
+    if (crc & 1) {
+      crc = (crc >> 1) ^ 0xEDB88320UL;
+    } else {
+      crc >>= 1;
+    }
+  }
+  return crc;
+}
+
+static uint32_t crc32_ieee(const uint8_t *data, size_t len) {
+  uint32_t crc = 0xFFFFFFFFUL;
+  for (size_t i = 0; i < len; i++) {
+    crc = crc32_ieee_update(crc, data[i]);
+  }
+  return ~crc;
+}
+
 // Single-cell Li-ion voltage (mV) -> state-of-charge %, piecewise-linear.
 //
 // The top point is 4180 mV, not the nominal 4200. The charger ends its CV
@@ -60,13 +80,19 @@ void HtramGd32Component::setup() {
   ESP_LOGI(TAG, "Setup HTRAM GD32 component...");
   if (esphome::web_server_base::global_web_server_base != nullptr) {
     esphome::web_server_base::global_web_server_base->add_handler(new Gd32OtaHandler(this));
+    esphome::web_server_base::global_web_server_base->add_handler(new Gd32AssetsHandler(this));
     ESP_LOGI(TAG, "GD32 OTA HTTP handler registered at /gd32_ota");
+    ESP_LOGI(TAG, "GD32 Assets HTTP handler registered at /gd32_assets");
   } else {
     ESP_LOGW(TAG, "web_server_base is null, OTA will not be available!");
   }
 }
 
-void HtramGd32Component::loop() { this->pump_rx_(false); }
+void HtramGd32Component::loop() {
+  if (ota_mode_)
+    return;
+  this->pump_rx_(false);
+}
 
 /* Length of the packet at the head of the buffer, or 0 if it is not complete
    (or not yet identifiable). Clears the buffer on an unknown type. */
@@ -85,6 +111,20 @@ size_t HtramGd32Component::head_packet_len_() {
     case 0x04:
       // magic(2)+type(1)+resume(1)+crc16(2)
       return 6;
+    case 0x05:
+      // magic(2)+type(1)+is_detected(1)+mfg(1)+type(1)+cap(1)+status1(1)+crc16(2)
+      return 10;
+    case 0x06:
+      // PKT_TYPE_FLASH_ACK: magic(2)+type(1)+cmd(1)+status(1)+addr(4)+crc16(2)
+      return 11;
+    case 0x07:
+      // PKT_TYPE_FLASH_DATA: magic(2)+type(1)+status(1)+addr(4)+length(2)+data(N)+crc16(2)
+      if (rx_buffer_.size() < 10)
+        return 0;
+      {
+        uint16_t data_len = rx_buffer_[8] | (rx_buffer_[9] << 8);
+        return 10 + data_len + 2;
+      }
     default:
       ESP_LOGW(TAG, "Unknown packet type: 0x%02X", rx_buffer_[2]);
       rx_buffer_.clear();
@@ -99,9 +139,6 @@ size_t HtramGd32Component::head_packet_len_() {
    re-entrancy crashed the ESP in lv_inv_area. So anything that is not a flow
    packet is left in the buffer for the next ordinary loop(). */
 void HtramGd32Component::pump_rx_(bool flow_only) {
-  if (ota_mode_)
-    return;
-
   for (;;) {
     size_t need = this->head_packet_len_();
     if (need != 0 && rx_buffer_.size() >= need) {
@@ -134,6 +171,9 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
   uint16_t calculated_crc = crc16_ccitt(data + 2, len - 4);
 
   if (received_crc != calculated_crc) return;
+
+  // During OTA mode, ignore non-flash packets (telemetry, hello, button, flow)
+  if (ota_mode_ && type != 0x05 && type != 0x06 && type != 0x07) return;
 
   if (type == 0x01) {
     uint16_t co2 = data[3] | (data[4] << 8);
@@ -215,6 +255,14 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
       ESP_LOGI(TAG, "GD32 announced a restart; display and LED state need resending");
       this->gd32_booted_ = true;
     }
+    if (flags & 0x04) {
+      ESP_LOGI(TAG, "GD32 reported SPI Flash OK");
+    } else if (flags & 0x08) {
+      ESP_LOGW(TAG, "GD32 reported SPI Flash FAIL");
+    }
+    if (this->spi_flash_status_.empty()) {
+      this->send_get_flash_info();
+    }
   } else if (type == 0x04) {
     // pkt_flow_t: resume(1). 0 = hold off the pixel stream, 1 = carry on.
     this->flow_paused_ = (data[3] == 0);
@@ -270,7 +318,161 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
       ESP_LOGD(TAG, "Button pressed");
       this->cancel_timeout("button_clear");
     }
+  } else if (type == 0x05) {
+    // pkt_flash_info_t: is_detected(1) mfg(1) mem_type(1) cap(1) status1(1)
+    uint8_t is_detected = data[3];
+    uint8_t mfg = data[4];
+    uint8_t mem_type = data[5];
+    uint8_t cap = data[6];
+    uint8_t status1 = data[7];
+
+    char buf[64];
+    if (is_detected) {
+      if (mfg == 0xEF && mem_type == 0x40 && cap == 0x16) {
+        snprintf(buf, sizeof(buf), "W25Q32 4MB [EF 40 16, S=0x%02X]", status1);
+      } else {
+        snprintf(buf, sizeof(buf), "Flash [%02X %02X %02X, S=0x%02X]", mfg, mem_type, cap, status1);
+      }
+      ESP_LOGI(TAG, "GD32 SPI Flash detected: %s", buf);
+    } else {
+      snprintf(buf, sizeof(buf), "Not detected [%02X %02X %02X]", mfg, mem_type, cap);
+      ESP_LOGW(TAG, "GD32 SPI Flash NOT detected: %s", buf);
+    }
+    if (this->spi_flash_sensor_ != nullptr && this->spi_flash_status_ != buf) {
+      this->spi_flash_status_ = buf;
+      this->spi_flash_sensor_->publish_state(buf);
+    }
+  } else if (type == 0x06) {
+    // pkt_flash_ack_t: cmd(1) status(1) addr(4 LE)
+    uint8_t cmd = data[3];
+    uint8_t status = data[4];
+    uint32_t addr = (uint32_t)data[5] | ((uint32_t)data[6] << 8) | ((uint32_t)data[7] << 16) | ((uint32_t)data[8] << 24);
+    this->last_flash_ack_cmd_ = cmd;
+    this->last_flash_ack_status_ = status;
+    this->last_flash_ack_addr_ = addr;
+    ESP_LOGD(TAG, "GD32 Flash ACK: cmd=0x%02X status=0x%02X addr=0x%08X", cmd, status, (unsigned)addr);
+  } else if (type == 0x07) {
+    // pkt_flash_data_hdr_t: status(1) addr(4 LE) length(2 LE)
+    uint8_t status = data[3];
+    uint32_t addr = (uint32_t)data[4] | ((uint32_t)data[5] << 8) | ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
+    uint16_t data_len = (uint16_t)data[8] | ((uint16_t)data[9] << 8);
+    this->last_flash_read_status_ = status;
+    this->last_flash_read_addr_ = addr;
+    this->last_flash_read_data_.assign(data + 10, data + 10 + data_len);
+    ESP_LOGD(TAG, "GD32 Flash Data: status=0x%02X addr=0x%08X len=%u", status, (unsigned)addr, (unsigned)data_len);
   }
+}
+
+void HtramGd32Component::send_get_flash_info() {
+  uint8_t pkt[5] = {0xAA, 0x55, 0x20};
+  uint16_t crc = crc16_ccitt(&pkt[2], 1);
+  pkt[3] = crc & 0xFF;
+  pkt[4] = crc >> 8;
+  this->write_array(pkt, 5);
+}
+
+void HtramGd32Component::send_flash_erase_sector(uint32_t addr) {
+  uint8_t pkt[9] = {0xAA, 0x55, 0x21};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 5);
+  pkt[7] = (uint8_t)(crc & 0xFF);
+  pkt[8] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 9);
+}
+
+void HtramGd32Component::send_flash_erase_block(uint32_t addr) {
+  uint8_t pkt[9] = {0xAA, 0x55, 0x24};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 5);
+  pkt[7] = (uint8_t)(crc & 0xFF);
+  pkt[8] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 9);
+}
+
+void HtramGd32Component::send_flash_write_chunk(uint32_t addr, const uint8_t *data, size_t len) {
+  if (len == 0 || len > 256)
+    return;
+  std::vector<uint8_t> pkt(11 + len);
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x22;
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  pkt[7] = (uint8_t)(len & 0xFF);
+  pkt[8] = (uint8_t)((len >> 8) & 0xFF);
+  if (data && len > 0) {
+    memcpy(&pkt[9], data, len);
+  }
+  uint16_t crc = crc16_ccitt(&pkt[2], 7 + len);
+  pkt[9 + len] = (uint8_t)(crc & 0xFF);
+  pkt[10 + len] = (uint8_t)(crc >> 8);
+  this->write_array(pkt.data(), pkt.size());
+}
+
+void HtramGd32Component::send_flash_verify_crc(uint32_t addr, uint32_t len, uint32_t expected_crc32) {
+  uint8_t pkt[17] = {0xAA, 0x55, 0x23};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  pkt[7] = (uint8_t)(len & 0xFF);
+  pkt[8] = (uint8_t)((len >> 8) & 0xFF);
+  pkt[9] = (uint8_t)((len >> 16) & 0xFF);
+  pkt[10] = (uint8_t)((len >> 24) & 0xFF);
+  pkt[11] = (uint8_t)(expected_crc32 & 0xFF);
+  pkt[12] = (uint8_t)((expected_crc32 >> 8) & 0xFF);
+  pkt[13] = (uint8_t)((expected_crc32 >> 16) & 0xFF);
+  pkt[14] = (uint8_t)((expected_crc32 >> 24) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 13);
+  pkt[15] = (uint8_t)(crc & 0xFF);
+  pkt[16] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 17);
+}
+
+void HtramGd32Component::send_flash_read(uint32_t addr, uint16_t len) {
+  uint8_t pkt[11] = {0xAA, 0x55, 0x25};
+  pkt[3] = (uint8_t)(addr & 0xFF);
+  pkt[4] = (uint8_t)((addr >> 8) & 0xFF);
+  pkt[5] = (uint8_t)((addr >> 16) & 0xFF);
+  pkt[6] = (uint8_t)((addr >> 24) & 0xFF);
+  pkt[7] = (uint8_t)(len & 0xFF);
+  pkt[8] = (uint8_t)((len >> 8) & 0xFF);
+  uint16_t crc = crc16_ccitt(&pkt[2], 7);
+  pkt[9] = (uint8_t)(crc & 0xFF);
+  pkt[10] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 11);
+}
+
+void HtramGd32Component::send_flash_backup_fw(uint8_t slot) {
+  uint8_t pkt[6] = {0xAA, 0x55, 0x26, slot};
+  uint16_t crc = crc16_ccitt(&pkt[2], 2);
+  pkt[4] = (uint8_t)(crc & 0xFF);
+  pkt[5] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 6);
+}
+
+void HtramGd32Component::send_flash_confirm_boot() {
+  uint8_t pkt[5] = {0xAA, 0x55, 0x27};
+  uint16_t crc = crc16_ccitt(&pkt[2], 1);
+  pkt[3] = (uint8_t)(crc & 0xFF);
+  pkt[4] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 5);
+}
+
+void HtramGd32Component::send_flash_restore_fw(uint8_t slot) {
+  uint8_t pkt[10] = {0xAA, 0x55, 0x28, slot, 0xEF, 0xBE, 0xAD, 0xDE};
+  uint16_t crc = crc16_ccitt(&pkt[2], 6);
+  pkt[8] = (uint8_t)(crc & 0xFF);
+  pkt[9] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, 10);
 }
 
 void HtramGd32Component::dump_config() {
@@ -659,31 +861,117 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   ESP_LOGI(TAG, "[OTA] Image size: %d bytes, Staged CRC16: 0x%04X, Battery: %d mV, Status: 0x%02X",
            (int)firmware.size(), staged_crc, last_batt_mv_, last_status_);
 
-  // Say something before going deaf. Once ota_mode_ is set, send_draw_rect()
-  // returns early and the panel keeps whatever frame it had -- so to an
-  // onlooker the device is indistinguishable from one that has hung, and the
-  // reasonable reaction to a hung device is to pull its power. Doing that
-  // between the erase and the last write is precisely how this chip gets
-  // bricked, and with no bench in reach that is the end of both OTA paths.
-  //
-  // All three LEDs at once is a combination the CO2 logic never produces, so
-  // it cannot be mistaken for a reading. Deliberately not an LVGL overlay:
-  // this runs on the HTTP task, and mutating LVGL off the render loop is what
-  // crashed this firmware in lv_inv_area before (see pump_rx_). One UART
-  // command, no allocation, no re-entrancy.
+  // Suppress LVGL screen updates and light all LEDs to indicate OTA mode
   send_leds(1, 1, 1, 1);
-
-  ota_mode_ = true;
+  this->set_ota_mode(true);
 
   // Drain any pending telemetry in RX buffer
-  int pre_drained = 0;
   while (this->available()) {
     uint8_t dummy;
     this->read_byte(&dummy);
-    pre_drained++;
   }
-  if (pre_drained > 0) {
-    ESP_LOGD(TAG, "[OTA] Flushed %d old bytes from RX buffer", pre_drained);
+
+  // Phase 4 Safety: Check if SPI Flash is detected and operational
+  bool has_spi_flash = (this->spi_flash_sensor_ != nullptr &&
+                        !this->spi_flash_status_.empty() &&
+                        this->spi_flash_status_.find("Not detected") == std::string::npos);
+
+  if (has_spi_flash) {
+    ESP_LOGI(TAG, "[OTA 0/6] Backing up running GD32 firmware to SPI Flash Slot B (0x020000)...");
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
+    this->send_flash_backup_fw(1);
+    this->flush();
+    uint32_t bk_start = millis();
+    while (millis() - bk_start < 2000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x26)
+        break;
+      App.feed_wdt();
+      delay(10);
+    }
+    if (this->last_flash_ack_cmd_ == 0x26 && this->last_flash_ack_status_ == 0x00) {
+      ESP_LOGI(TAG, "[OTA 0/6] Firmware backup SUCCESS: CRC32=0x%08X", (unsigned)this->last_flash_ack_addr_);
+    } else {
+      ESP_LOGW(TAG, "[OTA 0/6] Firmware backup warning: status=0x%02X", this->last_flash_ack_status_);
+    }
+
+    ESP_LOGI(TAG, "[OTA 0/6] Staging new firmware into SPI Flash (0x030000)...");
+    uint32_t host_crc32 = crc32_ieee(firmware.data(), firmware.size());
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
+    this->send_flash_erase_block(0x00030000);
+    this->flush();
+    uint32_t e_start = millis();
+    while (millis() - e_start < 3000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x24)
+        break;
+      App.feed_wdt();
+      delay(10);
+    }
+    if (this->last_flash_ack_cmd_ != 0x24 || this->last_flash_ack_status_ != 0x00) {
+      ESP_LOGE(TAG, "[OTA 0/6] Staging block erase failed: status=0x%02X", this->last_flash_ack_status_);
+      this->set_ota_mode(false);
+      resend_leds();
+      snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_erase\",\"reason\":\"Block erase failed\"}");
+      return buf;
+    }
+
+    for (size_t offset = 0; offset < firmware.size(); offset += 256) {
+      size_t chunk_len = std::min((size_t)256, firmware.size() - offset);
+      this->last_flash_ack_cmd_ = 0;
+      this->last_flash_ack_status_ = 0xFF;
+      this->send_flash_write_chunk(0x00030000 + offset, firmware.data() + offset, chunk_len);
+      this->flush();
+      uint32_t w_start = millis();
+      while (millis() - w_start < 500) {
+        this->pump_rx_(false);
+        if (this->last_flash_ack_cmd_ == 0x22)
+          break;
+        App.feed_wdt();
+        delay(2);
+      }
+      if (this->last_flash_ack_cmd_ != 0x22 || this->last_flash_ack_status_ != 0x00) {
+        ESP_LOGE(TAG, "[OTA 0/6] Staging chunk at offset 0x%04X failed: status=0x%02X", (unsigned)offset, this->last_flash_ack_status_);
+        this->set_ota_mode(false);
+        resend_leds();
+        snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"staging_chunk\",\"offset\":%u,\"status\":%u,\"reason\":\"Chunk write failed\"}",
+                 (unsigned)offset, (unsigned)this->last_flash_ack_status_);
+        return buf;
+      }
+      App.feed_wdt();
+    }
+
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
+    this->send_flash_verify_crc(0x00030000, firmware.size(), host_crc32);
+    this->flush();
+    uint32_t vstart = millis();
+    while (millis() - vstart < 3000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x23)
+        break;
+      App.feed_wdt();
+      delay(10);
+    }
+    if (this->last_flash_ack_cmd_ == 0x23 && this->last_flash_ack_status_ == 0x00) {
+      ESP_LOGI(TAG, "[OTA 0/6] Staging verified! CRC32=0x%08X matches host.", (unsigned)host_crc32);
+    } else {
+      ESP_LOGE(TAG, "[OTA 0/6] Staging verification FAILED! CRC status=0x%02X. Aborting OTA.",
+               this->last_flash_ack_status_);
+      this->set_ota_mode(false);
+      resend_leds();
+      snprintf(buf, sizeof(buf),
+               "{\"result\":\"error\",\"stage\":\"staging_verify\",\"reason\":\"Staging CRC mismatch in SPI flash\"}");
+      return buf;
+    }
+  }
+
+  // Drain any pending telemetry in RX buffer
+  while (this->available()) {
+    uint8_t dummy;
+    this->read_byte(&dummy);
   }
 
   // 1. Trigger bootloader
@@ -741,8 +1029,8 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   if (!synced) {
     ESP_LOGE(TAG, "[OTA 3/6] FAILED: Could not sync with flasher after 10 attempts!");
     rx_buffer_.clear();
-    ota_mode_ = false;
-  resend_leds();
+    this->set_ota_mode(false);
+    resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"rom_sync\",\"reason\":\"No ACK from flasher (timeout on 0x7F)\"}");
     return buf;
   }
@@ -753,8 +1041,8 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   std::string erase_err;
   if (!rom_erase(erase_err)) {
     rx_buffer_.clear();
-    ota_mode_ = false;
-  resend_leds();
+    this->set_ota_mode(false);
+    resend_leds();
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"erase\",\"reason\":\"%s\"}", erase_err.c_str());
     return buf;
   }
@@ -796,7 +1084,7 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   }
 
   rx_buffer_.clear();
-  ota_mode_ = false;
+  this->set_ota_mode(false);
   resend_leds();
 
   if (!success) {
@@ -806,6 +1094,128 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     snprintf(buf, sizeof(buf), "{\"result\":\"ok\",\"bytes_written\":%d,\"staged_crc\":%d}", 
              bytes_written, staged_crc);
   }
+  return buf;
+}
+
+std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t> &assets_data) {
+  char buf[256];
+  if (assets_data.size() < 20 || assets_data.size() > 65536) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"invalid assets size (%d bytes)\"}", (int)assets_data.size());
+    return buf;
+  }
+
+  // Validate magic: "HTRMASST" = 0x545353414D525448ULL
+  uint64_t magic = 0;
+  memcpy(&magic, assets_data.data(), sizeof(magic));
+  if (magic != 0x545353414D525448ULL) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"invalid assets container magic\"}");
+    return buf;
+  }
+
+  bool has_spi_flash = (this->spi_flash_sensor_ != nullptr &&
+                        !this->spi_flash_status_.empty() &&
+                        this->spi_flash_status_.find("Not detected") == std::string::npos);
+  if (!has_spi_flash) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"SPI flash not detected\"}");
+    return buf;
+  }
+
+  ESP_LOGI(TAG, "[ASSETS] Starting graphic assets upload: %d bytes", (int)assets_data.size());
+
+  // Suppress LVGL screen updates and light LEDs to indicate asset upload mode
+  send_leds(1, 1, 0, 1);
+  this->set_ota_mode(true);
+
+  // Drain any pending telemetry in RX buffer
+  while (this->available()) {
+    uint8_t dummy;
+    this->read_byte(&dummy);
+  }
+
+  // 1. Erase SPI Flash Block 4 (0x00040000, 64 KB)
+  ESP_LOGI(TAG, "[ASSETS 1/3] Erasing SPI Flash Block 4 (0x00040000)...");
+  this->last_flash_ack_cmd_ = 0;
+  this->last_flash_ack_status_ = 0xFF;
+  this->send_flash_erase_block(0x00040000);
+  this->flush();
+
+  uint32_t e_start = millis();
+  while (millis() - e_start < 3000) {
+    this->pump_rx_(false);
+    if (this->last_flash_ack_cmd_ == 0x24)
+      break;
+    App.feed_wdt();
+    delay(10);
+  }
+  if (this->last_flash_ack_cmd_ != 0x24 || this->last_flash_ack_status_ != 0x00) {
+    ESP_LOGE(TAG, "[ASSETS 1/3] Block erase failed: status=0x%02X", this->last_flash_ack_status_);
+    this->set_ota_mode(false);
+    resend_leds();
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"erase\",\"reason\":\"Block erase failed\"}");
+    return buf;
+  }
+
+  // 2. Write Chunks (up to 256 bytes each)
+  ESP_LOGI(TAG, "[ASSETS 2/3] Writing %d bytes in 256B chunks to 0x00040000...", (int)assets_data.size());
+  for (size_t offset = 0; offset < assets_data.size(); offset += 256) {
+    size_t chunk_len = std::min((size_t)256, assets_data.size() - offset);
+    this->last_flash_ack_cmd_ = 0;
+    this->last_flash_ack_status_ = 0xFF;
+    this->send_flash_write_chunk(0x00040000 + offset, assets_data.data() + offset, chunk_len);
+    this->flush();
+
+    uint32_t wstart = millis();
+    while (millis() - wstart < 1000) {
+      this->pump_rx_(false);
+      if (this->last_flash_ack_cmd_ == 0x22)
+        break;
+      App.feed_wdt();
+      delay(2);
+    }
+    if (this->last_flash_ack_cmd_ != 0x22 || this->last_flash_ack_status_ != 0x00) {
+      ESP_LOGE(TAG, "[ASSETS 2/3] Chunk write failed at offset 0x%04X: status=0x%02X", (unsigned)offset, this->last_flash_ack_status_);
+      this->set_ota_mode(false);
+      resend_leds();
+      snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"chunk_write\",\"offset\":%u,\"status\":%u}",
+               (unsigned)offset, (unsigned)this->last_flash_ack_status_);
+      return buf;
+    }
+    App.feed_wdt();
+  }
+
+  // 3. Verify CRC32
+  ESP_LOGI(TAG, "[ASSETS 3/3] Verifying CRC32 on SPI Flash...");
+  uint32_t host_crc32 = crc32_ieee(assets_data.data(), assets_data.size());
+  this->last_flash_ack_cmd_ = 0;
+  this->last_flash_ack_status_ = 0xFF;
+  this->send_flash_verify_crc(0x00040000, assets_data.size(), host_crc32);
+  this->flush();
+
+  uint32_t vstart = millis();
+  while (millis() - vstart < 3000) {
+    this->pump_rx_(false);
+    if (this->last_flash_ack_cmd_ == 0x23)
+      break;
+    App.feed_wdt();
+    delay(10);
+  }
+  if (this->last_flash_ack_cmd_ != 0x23 || this->last_flash_ack_status_ != 0x00) {
+    ESP_LOGE(TAG, "[ASSETS 3/3] CRC32 verification failed! status=0x%02X", this->last_flash_ack_status_);
+    this->set_ota_mode(false);
+    resend_leds();
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"stage\":\"verify\",\"reason\":\"CRC32 mismatch in SPI flash\"}");
+    return buf;
+  }
+
+  ESP_LOGI(TAG, "[ASSETS] Upload and verification SUCCESSFUL! (%d bytes, CRC32=0x%08X)",
+           (int)assets_data.size(), (unsigned)host_crc32);
+
+  rx_buffer_.clear();
+  this->set_ota_mode(false);
+  resend_leds();
+
+  snprintf(buf, sizeof(buf), "{\"result\":\"ok\",\"bytes_written\":%d,\"crc32\":%u}",
+           (int)assets_data.size(), (unsigned)host_crc32);
   return buf;
 }
 
@@ -836,6 +1246,29 @@ void HtramGd32Component::send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t
   this->write_array(crc_bytes, 2);
 }
 
+void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y,
+                                                uint16_t fg_color, uint16_t bg_color,
+                                                uint8_t flags) {
+  if (ota_mode_) return;
+  uint8_t pkt[14];
+  pkt[0] = 0xAA;
+  pkt[1] = 0x55;
+  pkt[2] = 0x15;  // CMD_TYPE_DRAW_CACHED_ASSET
+  pkt[3] = (uint8_t)(asset_id & 0xFF);
+  pkt[4] = (uint8_t)((asset_id >> 8) & 0xFF);
+  pkt[5] = x;
+  pkt[6] = y;
+  pkt[7] = (uint8_t)(fg_color & 0xFF);
+  pkt[8] = (uint8_t)((fg_color >> 8) & 0xFF);
+  pkt[9] = (uint8_t)(bg_color & 0xFF);
+  pkt[10] = (uint8_t)((bg_color >> 8) & 0xFF);
+  pkt[11] = flags;
+  uint16_t crc = crc16_ccitt(&pkt[2], 10);
+  pkt[12] = (uint8_t)(crc & 0xFF);
+  pkt[13] = (uint8_t)(crc >> 8);
+  this->write_array(pkt, sizeof(pkt));
+}
+
 void HtramGd32Display::dump_config() {
   LOG_DISPLAY("", "HTRAM GD32 Display", this);
 }
@@ -846,6 +1279,7 @@ void HtramGd32Display::update() {
 
 void HtramGd32Display::draw_pixel_at(int x, int y, Color color) {
   if (this->parent_ == nullptr) return;
+  if (this->parent_->is_ota_mode()) return;
   if (x < 0 || x >= 240 || y < 0 || y >= 240) return;
   uint16_t c = display::ColorUtil::color_to_565(color);
   uint8_t data[2] = {(uint8_t)(c >> 8), (uint8_t)(c & 0xFF)};
@@ -863,7 +1297,7 @@ void HtramGd32Component::wait_for_flow(uint32_t timeout_ms) {
   }
   if (this->flow_paused_) {
     // A lost RESUME must not wedge the display for good.
-    ESP_LOGW(TAG, "flow control still paused after %u ms, resuming anyway", timeout_ms);
+    ESP_LOGW(TAG, "flow control still paused after %u ms, resuming anyway", (unsigned)timeout_ms);
     this->flow_paused_ = false;
   }
 }
@@ -872,6 +1306,7 @@ void HtramGd32Display::draw_pixels_at(int x_start, int y_start, int w, int h, co
                                       display::ColorOrder order, display::ColorBitness bitness,
                                       bool big_endian, int x_offset, int y_offset, int x_pad) {
   if (this->parent_ == nullptr || ptr == nullptr) return;
+  if (this->parent_->is_ota_mode()) return;
   if (w <= 0 || h <= 0) return;
   if (x_start >= 240 || y_start >= 240) return;
 

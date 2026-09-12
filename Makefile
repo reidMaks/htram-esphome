@@ -31,11 +31,13 @@ TEST_DIR := tests
 TEST_BIN_PROTOCOL := $(TEST_DIR)/test_protocol_engine_bin
 TEST_BIN_SENSORS  := $(TEST_DIR)/test_sensors_bin
 TEST_BIN_PERIPH   := $(TEST_DIR)/test_periph_bin
+TEST_BIN_SPI_FLASH:= $(TEST_DIR)/test_spi_flash_bin
 TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
 .PHONY: all test test-gd32 test-esphome test-tools test-configs \
         lint lint-c lint-py lint-yaml format format-check \
-        coverage coverage-html build-gd32 ota-gd32 status build-esp install-hooks clean help \
+        coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
+        status build-esp install-hooks clean help \
         device device-silence device-status device-beep \
         container-build container-run container-stop
 
@@ -58,11 +60,14 @@ help:
 	@echo "  make coverage-html - Generate HTML coverage report in coverage_html/"
 	@echo "  make install-hooks - Configure git to use repository pre-commit hook"
 	@echo "  make build-gd32    - Build GD32 target firmware via arm-none-eabi-gcc"
-	@echo "  make ota-gd32      - Flash GD32 firmware via OTA (Usage: make ota-gd32 DEVICE=<ip|host>)"
+	@echo "  make ota-gd32      - Flash GD32 firmware via OTA (Usage: make ota-gd32 DEVICE=<alias|ip>)"
+	@echo "  make pack-assets   - Pack and validate UI monochrome bitmaps into flash_assets.bin"
+	@echo "  make validate-assets- Validate graphic assets container for geometry and memory safety"
+	@echo "  make flash-assets  - Pack, validate, and upload graphic assets to SPI Flash: make flash-assets DEVICE=<alias|ip>"
 	@echo "  make build-esp     - Compile ESPHome ESP32 firmware"
-	@echo "  make device        - Control device API: make device DEVICE=<ip|alias> CMD=<cmd>"
-	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<ip|alias>"
-	@echo "  make device-silence- Trigger minute of silence test: make device-silence DEVICE=<ip|alias>"
+	@echo "  make device        - Control device API: make device DEVICE=<alias|ip> CMD=<cmd>"
+	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<alias|ip>"
+	@echo "  make device-silence- Trigger minute of silence test: make device-silence DEVICE=<alias|ip>"
 	@echo "  make container-build- Build dev container Docker image"
 	@echo "  make container-run  - Launch dev container shell (Docker)"
 	@echo "  make container-stop - Stop and remove dev container"
@@ -75,13 +80,15 @@ test: test-gd32 test-esphome test-tools test-configs
 	@echo "========================================================"
 
 # ── GD32 Firmware Tests ─────────────────────────────────────────────────────
-test-gd32: $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH)
+test-gd32: $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH) $(TEST_BIN_SPI_FLASH)
 	@echo "==> Running GD32 Firmware Protocol Engine Tests..."
 	./$(TEST_BIN_PROTOCOL)
 	@echo "==> Running GD32 Firmware Sensor Drivers Tests..."
 	./$(TEST_BIN_SENSORS)
 	@echo "==> Running GD32 Firmware Peripheral & HAL Tests..."
 	./$(TEST_BIN_PERIPH)
+	@echo "==> Running GD32 Firmware SPI Flash Driver Tests..."
+	./$(TEST_BIN_SPI_FLASH)
 
 $(TEST_BIN_PROTOCOL): $(TEST_DIR)/firmware_gd32/test_protocol_engine.c \
                       $(GD32_SRC)/protocol_engine.c \
@@ -101,6 +108,13 @@ $(TEST_BIN_PERIPH): $(TEST_DIR)/firmware_gd32/test_periph.c \
                    $(UNITY_DIR)/unity.c
 	$(CC) $(CFLAGS) $^ -o $@
 
+$(TEST_BIN_SPI_FLASH): $(TEST_DIR)/firmware_gd32/test_spi_flash.c \
+                      $(GD32_SRC)/spi_flash.c \
+                      $(MOCKS_DIR)/mock_gd32.c \
+                      $(MOCKS_DIR)/mock_periph_display.c \
+                      $(UNITY_DIR)/unity.c
+	$(CC) $(CFLAGS) $^ -o $@
+
 # ── ESPHome Component Tests ─────────────────────────────────────────────────
 test-esphome: $(TEST_BIN_ESPHOME)
 	@echo "==> Running ESPHome C++ Component Tests..."
@@ -108,8 +122,10 @@ test-esphome: $(TEST_BIN_ESPHOME)
 
 $(TEST_BIN_ESPHOME): $(TEST_DIR)/esphome_component/test_htram_gd32.cpp \
                      $(MOCKS_DIR)/mock_esphome.cpp \
-                     $(UNITY_DIR)/unity.c
-	$(CXX) $(CXXFLAGS) $^ -o $@
+                     $(UNITY_DIR)/unity.c \
+                     esphome/custom_components/htram_gd32/htram_gd32.cpp \
+                     esphome/custom_components/htram_gd32/htram_gd32.h
+	$(CXX) $(CXXFLAGS) $(TEST_DIR)/esphome_component/test_htram_gd32.cpp $(MOCKS_DIR)/mock_esphome.cpp $(UNITY_DIR)/unity.c -o $@
 
 # ── Python Tools Tests ──────────────────────────────────────────────────────
 test-tools:
@@ -132,6 +148,7 @@ lint-c:
 	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/protocol_engine.c
 	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/sensors.c
 	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/periph.c
+	$(CC) -fanalyzer -Wall -Wextra -Wpedantic -fsyntax-only -I$(MOCKS_DIR) -I$(GD32_INC) $(GD32_SRC)/spi_flash.c
 	@echo "==> Running G++ -fanalyzer on ESPHome C++ component..."
 	$(CXX) -fanalyzer -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -fsyntax-only \
 	      -I. -I$(UNITY_DIR) -I$(MOCKS_DIR) -I$(MOCKS_DIR)/esphome -I$(ESPHOME_COMP) \
@@ -161,11 +178,12 @@ format:
 	$(CLANG_FORMAT) -i tests/firmware_gd32/*.c tests/esphome_component/*.cpp tests/mocks/*.c tests/mocks/*.cpp
 
 # ── Code Coverage ────────────────────────────────────────────────────────────
-coverage: clean $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH) $(TEST_BIN_ESPHOME)
+coverage: clean $(TEST_BIN_PROTOCOL) $(TEST_BIN_SENSORS) $(TEST_BIN_PERIPH) $(TEST_BIN_SPI_FLASH) $(TEST_BIN_ESPHOME)
 	@echo "==> Running test binaries for coverage collection..."
 	./$(TEST_BIN_PROTOCOL) > /dev/null
 	./$(TEST_BIN_SENSORS) > /dev/null
 	./$(TEST_BIN_PERIPH) > /dev/null
+	./$(TEST_BIN_SPI_FLASH) > /dev/null
 	./$(TEST_BIN_ESPHOME) > /dev/null
 	@echo "\n========================================================"
 	@echo "  C / C++ FIRMWARE & COMPONENT COVERAGE (gcovr)"
@@ -195,23 +213,56 @@ build-gd32:
 	$(MAKE) -C firmware/gd32 flash
 
 TARGET_DEVICE := $(strip $(if $(DEVICE),$(DEVICE),$(if $(HOST),$(HOST),$(IP))))
+ifeq ($(TARGET_DEVICE),office)
+  override TARGET_DEVICE := 192.168.0.78
+endif
 ifeq ($(TARGET_DEVICE),кабінет)
-  override TARGET_DEVICE := htram-9436b0.local
+  override TARGET_DEVICE := 192.168.0.78
 endif
 ifeq ($(TARGET_DEVICE),cabinet)
-  override TARGET_DEVICE := htram-9436b0.local
+  override TARGET_DEVICE := 192.168.0.78
+endif
+ifeq ($(TARGET_DEVICE),bedroom)
+  override TARGET_DEVICE := 192.168.0.159
+endif
+ifeq ($(TARGET_DEVICE),спальня)
+  override TARGET_DEVICE := 192.168.0.159
+endif
+ifeq ($(TARGET_DEVICE),living)
+  override TARGET_DEVICE := 192.168.0.185
+endif
+ifeq ($(TARGET_DEVICE),livingroom)
+  override TARGET_DEVICE := 192.168.0.185
+endif
+ifeq ($(TARGET_DEVICE),вітальня)
+  override TARGET_DEVICE := 192.168.0.185
 endif
 
 ota-gd32: build-gd32
 ifeq ($(strip $(TARGET_DEVICE)),)
-	$(error TARGET_DEVICE is not set. Usage: make ota-gd32 DEVICE=<ip-or-host>, e.g. make ota-gd32 DEVICE=htram-9436b0.local)
+	$(error TARGET_DEVICE is not set. Usage: make ota-gd32 DEVICE=<alias|ip>, e.g. make ota-gd32 DEVICE=office)
 endif
 	@echo "==> Flashing GD32 firmware via OTA to $(TARGET_DEVICE)..."
 	$(PYTHON) tools/swd/flash.py --ota $(TARGET_DEVICE)
 
+pack-assets:
+	@echo "==> Packing and validating graphic assets into flash_assets.bin..."
+	$(PYTHON) tools/pack_flash_assets.py
+
+validate-assets:
+	@echo "==> Validating graphic assets binary container..."
+	$(PYTHON) tools/pack_flash_assets.py --validate
+
+flash-assets: pack-assets validate-assets
+ifeq ($(strip $(TARGET_DEVICE)),)
+	$(error TARGET_DEVICE is not set. Usage: make flash-assets DEVICE=<alias|ip>, e.g. make flash-assets DEVICE=office)
+endif
+	@echo "==> Uploading validated graphic assets to $(TARGET_DEVICE)..."
+	$(PYTHON) tools/flash_assets.py $(TARGET_DEVICE)
+
 status:
 ifeq ($(strip $(TARGET_DEVICE)),)
-	$(error TARGET_DEVICE is not set. Usage: make status DEVICE=<ip-or-host>, e.g. make status DEVICE=кабінет)
+	$(error TARGET_DEVICE is not set. Usage: make status DEVICE=<alias|ip>, e.g. make status DEVICE=office)
 endif
 	@$(PYTHON) tools/swd/flash.py --status $(TARGET_DEVICE)
 
