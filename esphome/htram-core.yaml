@@ -513,7 +513,7 @@ script:
           lv_obj_t *const hide[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
                                     id(ui_slot), id(ui_pocket), id(ui_msg),
                                     id(ui_msg_cap), id(ui_msg2),
-                                    id(ui_ap_card), id(ui_ap_qr)};
+                                    id(ui_ap_card), id(ui_ap_qr), id(ui_alert)};
           for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
@@ -529,6 +529,7 @@ script:
       - script.execute: refresh_clock
       - script.execute: refresh_slot
       - script.execute: refresh_pocket
+      - script.execute: refresh_alert_icon
 
   # A clock with no time is dashes, and dashes look like a broken screen rather
   # than an explanation. Whenever the time is not set, the face says why instead.
@@ -571,6 +572,9 @@ script:
           lv_obj_t *const msg[] = {id(ui_msg_cap), id(ui_msg), id(ui_msg_sub),
                                    id(ui_msg2), id(ui_ap_card), id(ui_ap_qr)};
           for (auto *o : msg) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+          if (want != 0) {
+            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
+          }
 
           id(on_face_changed).execute(want);
 
@@ -606,6 +610,7 @@ script:
           if (want == 0) {
             id(refresh_clock).execute();
             id(refresh_slot).execute();
+            id(refresh_alert_icon).execute();
             return;
           }
 
@@ -791,6 +796,10 @@ script:
   - id: refresh_alert_icon
     then:
       - lambda: |-
+          if (id(face_state) != 0 || id(slot_hold)) {
+            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
+            return;
+          }
           const bool alert = id(alert_active);
           if (alert) {
             auto *src = id(img_alert);
