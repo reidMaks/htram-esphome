@@ -45,6 +45,27 @@ The script `tools/device.py` automatically:
 2. Resolves aliases (`office`, `bedroom`, `living` / `c1da24`).
 3. Encodes non-ASCII button paths (UTF-8 URL quoting) and sets `Content-Length: 0`.
 
+## Multi-Device Fleet Flashing
+
+Update all three nodes in sequence:
+```bash
+make update-all        # Flashes ESPHome firmware on office -> bedroom -> living
+make ota-gd32-all     # Flashes GD32 v1.2.0 on all nodes
+make flash-assets-all # Uploads 25 SPI Flash assets to all nodes
+make status-all       # Verifies live telemetry across all devices
+```
+
+For individual devices:
+```bash
+make ota-esp DEVICE=office     # or bedroom, living, <ip>
+```
+
+## SPI Flash Detection After Reboot
+
+Immediately following an ESP32 reboot, `spi_flash_status_` is initialized as empty.
+GD32 sends `HELLO` (with flash status flags) every 5 seconds over UART, triggering JEDEC ID polling.
+Calling `/gd32_assets` in the first 1–3 seconds will return `{"result":"error","reason":"SPI flash not detected"}`. Wait ~5–10 seconds after boot until `make device-status` shows `GD32 SPI Flash: W25Q32 4MB` before uploading assets.
+
 ## Reading live state manually (low-level curl fallback)
 
 The web server exposes a server-sent-event stream that dumps every entity's

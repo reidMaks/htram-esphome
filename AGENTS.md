@@ -13,6 +13,25 @@
 - **Font Consolidation**: Never declare duplicate fonts of the same size/face in feature packages. Reuse and extend the unified `font_msg` (22 px) in `htram-core.yaml` with explicit glyph lists. Never attach `glyphsets: [GF_Cyrillic_Core]` to 22 px fonts (wastes ~15–20 KB Flash on 100+ unneeded glyphs).
 
 
+## Multi-Device Fleet Operations
+- The physical fleet consists of three primary nodes: `office` (`192.168.0.78`), `bedroom` (`192.168.0.159`), `living` (`192.168.0.185`).
+- When deploying firmware fixes or updates across all devices, use `make update-all` (or `make ota-esp-all`) instead of manual single-device commands.
+- For GD32 firmware and graphic assets, use `make ota-gd32-all` and `make flash-assets-all`.
+- Always inspect fleet telemetry with `make status-all` or `tools/device.py <alias> status`.
+
+## Feature Decoupling & Central Arbiter
+- **Zero Cross-Feature Dependencies**: Feature packages in `esphome/features/*.yaml` must NEVER include or directly invoke scripts from sibling features.
+- **Central Arbiter**: All screen mode requests (`request_screen`), sound playback (`play_rtttl`, `play_beep`), and gesture events (`button_single`, `button_double`, `button_long`) MUST route through `htram_arbiter`.
+- **Modal Screen Isolation**:
+  - Clock and status slot updates (`refresh_clock`, `refresh_slot`, `refresh_pocket`, `refresh_face`, minute rollover, and 7s slot cycling) must ALWAYS check:
+    `if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;`
+  - Modal screens (weather, timer, alert, silence) must call `lv_obj_invalidate(id(ui_root))` on both activation and deactivation to clear ST7789 hardware GRAM and avoid ghosting over transparent containers.
+  - Modal screens should provide symmetrical dismiss gestures (e.g. double click toggles weather open and closed).
+
+## Diagnostic Entity Separation
+- Do NOT add mock buttons, click simulation entities, or excessive low-level diagnostics directly to `htram-core.yaml` or physical device YAMLs.
+- Keep developer-only diagnostics and simulator helpers in `esphome/features/debug.yaml`, included in `htram-sim.yaml` for testing.
+
 ## Hardware Safety & Branching Discipline
 - When diagnosing network drops or regressions that degrade the physical device, immediately flash the working base from `main` back to the device.
 - All experimental work, fixes, and features must be developed on a dedicated `feature/*` or `fix/*` branch before being tested on hardware.

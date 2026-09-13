@@ -155,3 +155,27 @@ shearing about the middle of cap height so digits keep their optical centre.
 Licences for all bundled fonts live in `esphome/fonts/`.
 Reuse the unified `font_msg` (22 px) in `htram-core.yaml` with explicit glyph lists.
 Never attach `glyphsets: [GF_Cyrillic_Core]` to 22 px fonts (wastes ~15–20 KB Flash).
+
+## 8. Modal Screen Lifecycles & ST7789 GRAM Ghosting Prevention
+
+The ST7789 display controller maintains an internal Graphics RAM (GRAM). Pixels remain visible until explicitly overwritten with new data.
+
+### The Ghosting Trap with Transparent Containers
+When a modal screen (such as `ui_weather_face`) is configured with `bg_opa: TRANSP`, LVGL does not paint a solid background.
+If the modal is hidden (`lv_obj_add_flag(..., LV_OBJ_FLAG_HIDDEN)`), LVGL only invalidates dirty bounding boxes. If `ui_root` is not marked dirty:
+- The clock digits only overwrite their narrow bounding boxes (`x=-46, y=44` etc.).
+- Modal elements outside those bounding boxes (e.g. weather condition icons at `y=124..150`, temperatures, titles) **never get overwritten** and remain permanently visible on the physical display!
+
+### Golden Rules for Modal Screens:
+1. **Guard Clock & Slot Routines**:
+   ```cpp
+   if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
+   ```
+   `refresh_clock`, `refresh_slot`, `refresh_pocket`, `refresh_face`, the minute tick, and the 7-second slot cycle MUST abort if `get_screen_mode() != 0`.
+2. **Invalidate `ui_root` on Transitions**:
+   Both on modal entrance (`show_*`) and modal exit (`hide_*`), call:
+   ```cpp
+   lv_obj_invalidate(id(ui_root));
+   ```
+   This forces LVGL to send a complete background fill, flushing all previous graphics from ST7789 GRAM.
+
