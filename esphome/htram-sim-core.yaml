@@ -1,0 +1,311 @@
+# HTRAM Simulator Core Configuration (Linux Native Host Platform)
+# Emulates ESP32 firmware on Linux host binary, sharing identical UI (core-ui.yaml)
+# and hardware arbiter architecture.
+
+substitutions:
+  name: htram-sim
+  friendly_name: "HTRAM Simulator"
+  repo_url: "."
+  ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
+
+packages:
+  ui: !include core-ui.yaml
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    - priority: 600
+      then:
+        - text_sensor.template.publish:
+            id: device_id
+            state: "sim001"
+        - text_sensor.template.publish:
+            id: wifi_ip
+            state: "127.0.0.1"
+    - priority: -100
+      then:
+        - lambda: |-
+            id(htram_arbiter_hub)->set_core(id(htram_core));
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+
+host:
+
+logger:
+  level: DEBUG
+
+api:
+  port: 6053
+  services:
+    - service: inject_button
+      variables:
+        action: string
+      then:
+        - lambda: |-
+            id(htram_arbiter_hub)->dispatch_button_action(action);
+
+    - service: inject_event
+      variables:
+        event: string
+      then:
+        - lambda: |-
+            id(htram_arbiter_hub)->dispatch_event(event);
+
+    - service: play_rtttl
+      variables:
+        song: string
+      then:
+        - lambda: |-
+            id(htram_core)->play_rtttl(song);
+
+    - service: stop_melody
+      then:
+        - lambda: |-
+            id(htram_core)->send_stop();
+
+    - service: beep
+      variables:
+        freq: int
+        duration: int
+      then:
+        - lambda: |-
+            id(htram_core)->send_beep(freq, duration);
+
+    - service: take_screenshot
+      variables:
+        filename: string
+      then:
+        - lambda: |-
+            id(htram_core)->dump_ppm(filename);
+            ESP_LOGI("sim", "Screenshot dumped to %s", filename.c_str());
+
+    - service: simulate_telemetry
+      variables:
+        temp: float
+        hum: float
+        co2: float
+        batt_pct: float
+        usb: bool
+      then:
+        - lambda: |-
+            if (!isnan(temp)) id(sensor_temp).publish_state(temp);
+            if (!isnan(hum)) id(sensor_hum).publish_state(hum);
+            if (!isnan(co2)) id(sensor_co2).publish_state(co2);
+            if (!isnan(batt_pct)) id(sensor_batt_level).publish_state(batt_pct);
+            id(sensor_usb).publish_state(usb);
+            id(refresh_slot).execute();
+            id(refresh_pocket).execute();
+
+    - service: show_device_id
+      then:
+        - script.execute: show_device_id
+
+    - service: show_network
+      then:
+        - script.execute: show_network
+
+    - service: simulate_boot_state
+      variables:
+        net_ok: int
+        time_ok: int
+      then:
+        - lambda: |-
+            id(sim_override_net) = net_ok;
+            id(sim_override_time) = time_ok;
+            id(face_state) = -1;
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+
+    - service: simulate_reboot_resync
+      then:
+        - lambda: |-
+            id(sim_override_net) = -1;
+            id(sim_override_time) = -1;
+            id(face_state) = -1;
+            id(htram_arbiter_hub)->release_screen("overlay");
+            id(htram_arbiter_hub)->release_screen("weather");
+            id(htram_arbiter_hub)->release_screen("timer");
+            id(htram_arbiter_hub)->reset_audio();
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+        - script.execute: refresh_pocket
+
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [htram_gd32, htram_arbiter]
+
+uart:
+  id: uart_bus
+  baud_rate: 921600
+  port: /dev/null
+
+htram_gd32:
+  id: htram_core
+  uart_id: uart_bus
+  simulation_mode: true
+
+htram_arbiter:
+  id: htram_arbiter_hub
+  events:
+    - event: button_single
+      context: clock
+      priority: 10
+      name: core_cycle_slot
+      then:
+        - lambda: |-
+            int max_slots = id(slot_extra_text).empty() ? 2 : 3;
+            id(slot_idx) = (id(slot_idx) + 1) % max_slots;
+            id(refresh_slot).execute();
+    - event: button_triple
+      context: any
+      priority: 10
+      name: core_show_device_id
+      then:
+        - script.execute: show_device_id
+    - event: button_single
+      context: modal_ap
+      priority: 100
+      name: core_toggle_ap_page
+      then:
+        - lambda: |-
+            id(ap_manual) = true;
+            id(ap_page) ^= 1;
+            id(face_state) = -1;
+        - script.execute: refresh_face
+    - event: button_single
+      context: modal_overlay
+      priority: 100
+      name: core_dismiss_overlay
+      then:
+        - script.stop: show_device_id
+        - lambda: |-
+            id(htram_arbiter_hub)->release_screen("overlay");
+            lv_obj_add_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
+            id(slot_hold) = false;
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+        - script.execute: refresh_pocket
+    - event: screen_preempted
+      context: modal_overlay
+      priority: 100
+      name: core_preempt_overlay
+      then:
+        - script.stop: show_device_id
+        - lambda: |-
+            id(htram_arbiter_hub)->release_screen("overlay");
+            lv_obj_add_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
+            id(slot_hold) = false;
+
+time:
+  - platform: host
+    id: ha_time
+    timezone: "Europe/Kyiv"
+    on_time_sync:
+      then:
+        - lambda: id(face_state) = -1;
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+  - platform: host
+    id: net_time
+    timezone: "Europe/Kyiv"
+
+globals:
+  - id: led_auto
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: t_from_gd32
+    type: float
+    restore_value: false
+    initial_value: "21.5"
+
+script:
+  - id: refresh_leds
+    then: []
+
+sensor:
+  - platform: template
+    id: sensor_co2
+    name: "CO2"
+    accuracy_decimals: 0
+    unit_of_measurement: "ppm"
+
+  - platform: template
+    id: sensor_temp
+    name: "Temperature"
+    accuracy_decimals: 1
+    unit_of_measurement: "°C"
+
+  - platform: template
+    id: sensor_hum
+    name: "Humidity"
+    accuracy_decimals: 0
+    unit_of_measurement: "%"
+
+  - platform: template
+    id: sensor_batt_level
+    name: "Battery"
+    accuracy_decimals: 0
+    unit_of_measurement: "%"
+
+  - platform: template
+    id: sensor_batt_mv
+    name: "Battery Voltage"
+    accuracy_decimals: 0
+    unit_of_measurement: "mV"
+
+binary_sensor:
+  - platform: template
+    id: sensor_usb
+    name: "USB Power"
+
+  - platform: template
+    id: sensor_chrg
+    name: "Charging"
+
+  - platform: template
+    id: htram_button
+    name: "Button"
+
+text_sensor:
+  - platform: template
+    id: wifi_ip
+    name: "IP Address"
+
+  - platform: template
+    id: device_id
+    name: "Device ID"
+
+
+number:
+  - platform: template
+    name: "Screen Brightness"
+    id: screen_brightness
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    optimistic: true
+
+  - platform: template
+    name: "Підстроювання температури"
+    id: temp_trim
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    initial_value: 0
+    optimistic: true

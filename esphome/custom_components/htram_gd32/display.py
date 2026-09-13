@@ -27,6 +27,7 @@ async def to_code(config):
 
     await display.register_display(var, config)
     cg.add(var.set_parent(hub))
+    cg.add(hub.set_display(var))
 
     if (lambda_config := config.get(CONF_LAMBDA)) is not None:
         lambda_ = await cg.process_lambda(

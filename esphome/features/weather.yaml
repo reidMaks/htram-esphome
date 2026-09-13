@@ -497,18 +497,21 @@ script:
           then:
             - script.execute: fetch_weather_forecast
       - lambda: |-
+          if (!id(htram_arbiter_hub)->request_screen(1, "weather")) {
+            ESP_LOGW("weather", "Cannot show weather: screen rejected by arbiter");
+            return;
+          }
           id(weather_shown) = true;
-          id(slot_hold) = true;
           id(face_state) = -1;
           lv_obj_t *const hide[] = {
               id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
               id(ui_slot), id(ui_pocket), id(ui_msg),
               id(ui_msg_sub), id(ui_msg_cap), id(ui_msg2),
-              id(ui_ap_card), id(ui_ap_qr), id(ui_devid), id(ui_devid_cap),
-              id(ui_alert)
+              id(ui_ap_card), id(ui_ap_qr), id(ui_devid), id(ui_devid_cap)
           };
           for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_weather_ui
       - script.execute: hide_weather_timeout
 
@@ -518,13 +521,14 @@ script:
       - script.stop: hide_weather_timeout
       - lambda: |-
           id(weather_shown) = false;
+          id(htram_arbiter_hub)->release_screen("weather");
           lv_obj_add_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
-          id(slot_hold) = false;
+          id(face_state) = -1;
+          lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_face
       - script.execute: refresh_clock
       - script.execute: refresh_slot
       - script.execute: refresh_pocket
-      - script.execute: refresh_alert_icon
 
   # Точки інтеграції
   - id: !extend on_face_changed
@@ -534,21 +538,6 @@ script:
             id(hide_weather).execute();
           }
 
-  - id: !extend handle_feature_button
-    then:
-      - if:
-          condition:
-            lambda: return id(weather_shown) && action == "single";
-          then:
-            - lambda: id(button_handled) = true;
-            - script.execute: hide_weather
-      - if:
-          condition:
-            lambda: return !id(button_handled) && action == "double" && id(face_state) == 0;
-          then:
-            - lambda: id(button_handled) = true;
-            - script.execute: show_weather
-
   - id: !extend on_alarm_started
     then:
       - script.execute: fetch_weather_forecast
@@ -556,6 +545,33 @@ script:
   - id: !extend on_alarm_dismissed
     then:
       - script.execute: show_weather
+
+htram_arbiter:
+  events:
+    - event: button_double
+      context: clock
+      priority: 50
+      name: weather_open_btn
+      then:
+        - script.execute: show_weather
+    - event: button_single
+      context: modal_weather
+      priority: 50
+      name: weather_close_btn
+      then:
+        - script.execute: hide_weather
+    - event: button_double
+      context: modal_weather
+      priority: 50
+      name: weather_close_double_btn
+      then:
+        - script.execute: hide_weather
+    - event: screen_preempted
+      context: modal_weather
+      priority: 100
+      name: weather_preempted
+      then:
+        - script.execute: hide_weather
 
 interval:
   - interval: ${weather_update_interval}

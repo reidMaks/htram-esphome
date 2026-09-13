@@ -1,0 +1,210 @@
+# HTRAM Feature: Хвилина мовчання (Minute of Silence)
+#
+# Надає автономний меморіальний режим щодня о 09:00:00:
+# - Вимикач у Home Assistant (switch: silence_enabled) та кнопка тесту (button: test_silence_button);
+# - Повна заборона переривання о 09:00:00 (кнопка апаратно блокується);
+# - Метроном (30 ударів раз на 2 секунди) у низькому реєстрі (соль малої октави, 392 Гц);
+# - Гімн України (Вербицький) по завершенні хвилини;
+# - Меморіальний екран: герб Тризуб із кешованої SPI Flash та червона секундна цятка;
+# - Меморіальна темрява: світлодіоди гаснуть на весь час хвилини мовчання.
+
+substitutions:
+  silence_bg: "0x000000"
+  silence_fg: "0xC1121F"
+  silence_tick_seconds: "2"
+  silence_tick_hz: "392"
+  silence_tick_ms: "240"
+  anthem_rtttl: "UkraineAnthem:d=4,o=5,b=200:2d5,4d5,32p,4d5,32p,4d5,32p,4c5,4d5,4d#5,2f5,32p,4f5,4d#5,2d5,2c5,2a#4,2d5,2a4,2d5,1g4,32p,1g4"
+
+globals:
+  - id: silence_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: silence_ticking
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: silence_beep_count
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: silence_last_tick_sec
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  - id: silence_is_test
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+switch:
+  - platform: template
+    name: "Хвилина мовчання"
+    id: silence_enabled
+    icon: "mdi:candle"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+button:
+  - platform: template
+    id: test_silence_button
+    name: "Хвилина мовчання: перевірка"
+    icon: "mdi:candle"
+    entity_category: diagnostic
+    disabled_by_default: true
+    on_press:
+      - script.execute:
+          id: start_minute_of_silence
+          is_test: true
+
+htram_arbiter:
+  events:
+    - event: button_single
+      context: silence_test
+      priority: 100
+      name: silence_test_abort
+      then:
+        - script.execute: stop_silence_test
+    - event: button_long
+      context: silence_test
+      priority: 100
+      name: silence_test_abort_long
+      then:
+        - script.execute: stop_silence_test
+
+script:
+  - id: start_minute_of_silence
+    mode: single
+    parameters:
+      is_test: bool
+    then:
+      - lambda: |-
+          ESP_LOGI("silence", "Starting Minute of Silence (is_test=%s)", is_test ? "true" : "false");
+          id(silence_active) = true;
+          id(silence_is_test) = is_test;
+          id(silence_beep_count) = 0;
+
+          if (is_test) {
+            id(htram_arbiter_hub)->set_silence_test(true);
+          } else {
+            // Sacred 09:00:00 silence: lock all button inputs unconditionally!
+            id(htram_arbiter_hub)->set_silence_sacred(true);
+          }
+
+          id(htram_arbiter_hub)->request_screen(4, "silence");
+          id(htram_arbiter_hub)->set_leds(30, "silence", 0, 0, 0, 0);
+
+          timeval tv;
+          gettimeofday(&tv, nullptr);
+          if ((tv.tv_sec % 2 == 0) && (tv.tv_usec < 250000)) {
+            id(silence_last_tick_sec) = -1;
+          } else {
+            id(silence_last_tick_sec) = (int) tv.tv_sec;
+          }
+          id(silence_ticking) = true;
+
+      - script.execute: refresh_face
+      - delay: 300ms
+      - lambda: |-
+          // Blit Tryzub coat of arms directly from GD32 external SPI Flash (zero DRAM overhead)
+          // Delayed by 300ms so LVGL flushes the black background and hidden digits first!
+          id(htram_core)->send_draw_cached_asset(
+              htram_gd32::ASSET_ID_TRYZUB, 66, 45,
+              Color(${silence_fg}), Color(0x000000), 0);
+
+      # Wait until the 60s ticking completes (30 beeps on atomic even seconds).
+      - wait_until:
+          condition:
+            lambda: return !id(silence_ticking) || !id(silence_active);
+          timeout: 75s
+
+      # If canceled early (in test mode), skip anthem and exit
+      - if:
+          condition:
+            lambda: return !id(silence_active);
+          then:
+            - script.execute: finish_silence
+            - script.stop: start_minute_of_silence
+
+      # At tick 30 completion, play Anthem of Ukraine
+      - lambda: |-
+          id(htram_arbiter_hub)->play_rtttl(20, "silence", "${anthem_rtttl}");
+
+      # Anthem lasts ~9.8 s
+      - delay: 11s
+
+      - script.execute: finish_silence
+
+  - id: finish_silence
+    then:
+      - lambda: |-
+          ESP_LOGI("silence", "Minute of silence completed.");
+          id(silence_active) = false;
+          id(silence_ticking) = false;
+          id(silence_is_test) = false;
+          id(htram_arbiter_hub)->set_silence_sacred(false);
+          id(htram_arbiter_hub)->set_silence_test(false);
+          id(htram_arbiter_hub)->release_screen("silence");
+          id(htram_arbiter_hub)->release_leds("silence");
+          id(htram_arbiter_hub)->reset_audio();
+          id(htram_core)->clear_persistent_asset();
+          id(face_state) = -1;
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
+      - script.execute: refresh_leds
+
+  - id: stop_silence_test
+    then:
+      - if:
+          condition:
+            lambda: return id(silence_is_test);
+          then:
+            - lambda: |-
+                ESP_LOGI("silence", "Stopping test minute of silence.");
+                id(silence_active) = false;
+                id(silence_ticking) = false;
+                id(htram_arbiter_hub)->stop_sound("silence");
+            - script.stop: start_minute_of_silence
+            - script.execute: finish_silence
+
+interval:
+  - interval: 20ms
+    then:
+      - lambda: |-
+          timeval tv;
+          gettimeofday(&tv, nullptr);
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) now = id(net_time).now();
+          if (!now.is_valid()) {
+            time_t t = ::time(nullptr);
+            if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+          }
+          if (!now.is_valid()) return;
+
+          // Synchronized minute of silence metronome
+          if (id(silence_ticking) && (now.second % ${silence_tick_seconds} == 0)) {
+            if ((int) tv.tv_sec != id(silence_last_tick_sec)) {
+              id(silence_last_tick_sec) = (int) tv.tv_sec;
+              if (id(silence_beep_count) < 30) {
+                id(silence_beep_count)++;
+                id(htram_arbiter_hub)->play_beep(20, "silence", ${silence_tick_hz}, ${silence_tick_ms});
+              } else {
+                // 30 ticks completed (60s). Hand over to anthem.
+                id(silence_ticking) = false;
+              }
+            }
+          }
+
+          // Trigger automatic 09:00:00 minute of silence
+          if (now.hour == 9 && now.minute == 0 && now.second == 0) {
+            static int last_auto_silence_day = -1;
+            if (now.day_of_year != last_auto_silence_day) {
+              last_auto_silence_day = now.day_of_year;
+              if (id(silence_enabled).state && !id(silence_active)) {
+                id(start_minute_of_silence).execute(false);
+              }
+            }
+          }

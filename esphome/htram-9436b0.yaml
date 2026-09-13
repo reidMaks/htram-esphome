@@ -1,4 +1,4 @@
-# HTRAM — Кабінет (htram-9436b0, без будильника)
+# HTRAM — Кабінет (htram-9436b0)
 #
 # Локальна збірка / прошивка:
 #   uv run esphome run esphome/htram-9436b0.yaml
@@ -20,6 +20,9 @@
 #       ref: main
 #       files:
 #         - esphome/htram-core.yaml
+#         - esphome/features/silence.yaml
+#         - esphome/features/alert.yaml
+#         - esphome/features/alarm.yaml
 #         - esphome/features/weather.yaml
 #         - esphome/features/timer.yaml
 #       refresh: 0s
@@ -36,5 +39,8 @@ esphome:
 
 packages:
   core: !include htram-core.yaml
+  silence: !include features/silence.yaml
+  alert: !include features/alert.yaml
+  alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml

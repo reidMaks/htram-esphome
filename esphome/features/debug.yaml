@@ -1,0 +1,100 @@
+# HTRAM Feature: Налагодження та симуляція (Debug & Simulation Tools)
+#
+# Підключається за потреби для розробки, діагностики та тестування:
+# - Симуляція жестів кнопки через Home Assistant (Single, Double, Triple, Long Press);
+# - Ручний виклик системного оверлею Device ID;
+# - Тестові кнопки звуку (Beep, OTA Chime);
+# - Моніторинг внутрішнього стану арбітра (Arbiter Context);
+# - Профілювання пам'яті Heap та циклу loop_time;
+# - Інформація про чип та причину перезавантаження.
+
+substitutions:
+  ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
+
+debug:
+
+sensor:
+  - platform: debug
+    free:
+      name: "Free heap"
+    block:
+      name: "Largest free block"
+    loop_time:
+      name: "Loop time"
+
+text_sensor:
+  - platform: debug
+    device:
+      name: "Device info"
+    reset_reason:
+      name: "Reset reason"
+
+  - platform: template
+    id: arbiter_context_sensor
+    name: "Arbiter Context"
+    icon: "mdi:state-machine"
+    entity_category: diagnostic
+    lambda: return id(htram_arbiter_hub)->get_active_context();
+    update_interval: 1s
+
+button:
+  - platform: template
+    name: "Show Device ID"
+    icon: "mdi:identifier"
+    entity_category: diagnostic
+    on_press:
+      - script.execute: show_device_id
+
+  - platform: template
+    name: "Simulate Single Click"
+    id: btn_sim_single
+    icon: "mdi:gesture-tap-button"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("single");
+
+  - platform: template
+    name: "Simulate Double Click"
+    id: btn_sim_double
+    icon: "mdi:gesture-double-tap"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("double");
+
+  - platform: template
+    name: "Simulate Triple Click"
+    id: btn_sim_triple
+    icon: "mdi:gesture-tap"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("triple");
+
+  - platform: template
+    name: "Simulate Long Press"
+    id: btn_sim_long
+    icon: "mdi:gesture-tap-hold"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("long");
+
+  - platform: template
+    id: beep_button
+    name: "Beep"
+    icon: "mdi:volume-high"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_core)->send_beep(2000, 200);
+
+  - platform: template
+    id: test_ota_chime_button
+    name: "Сигнал оновлення OTA"
+    icon: "mdi:bell-check"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_core)->play_rtttl("${ota_done_rtttl}");

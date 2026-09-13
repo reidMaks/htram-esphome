@@ -34,10 +34,11 @@ TEST_BIN_PERIPH   := $(TEST_DIR)/test_periph_bin
 TEST_BIN_SPI_FLASH:= $(TEST_DIR)/test_spi_flash_bin
 TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
-.PHONY: all test test-gd32 test-esphome test-tools test-configs \
+.PHONY: all test test-gd32 test-esphome test-tools test-configs test-sim \
         lint lint-c lint-py lint-yaml format format-check \
         coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
         status build-esp install-hooks clean help \
+        ota-esp ota-esp-all ota-all update-all ota-gd32-all flash-assets-all status-all \
         device device-silence device-status device-beep \
         container-build container-run container-stop
 
@@ -65,6 +66,12 @@ help:
 	@echo "  make validate-assets- Validate graphic assets container for geometry and memory safety"
 	@echo "  make flash-assets  - Pack, validate, and upload graphic assets to SPI Flash: make flash-assets DEVICE=<alias|ip>"
 	@echo "  make build-esp     - Compile ESPHome ESP32 firmware"
+	@echo "  make ota-esp       - Flash ESPHome firmware to a device: make ota-esp DEVICE=<alias|ip>"
+	@echo "  make update-all    - Flash ESPHome firmware to ALL devices (office, bedroom, living)"
+	@echo "  make ota-esp-all   - Alias for update-all"
+	@echo "  make ota-gd32-all  - Flash GD32 firmware to ALL devices"
+	@echo "  make flash-assets-all - Upload graphic assets to ALL devices"
+	@echo "  make status-all    - Show live sensor status for ALL devices"
 	@echo "  make device        - Control device API: make device DEVICE=<alias|ip> CMD=<cmd>"
 	@echo "  make device-status - Show device sensors/status: make device-status DEVICE=<alias|ip>"
 	@echo "  make device-silence- Trigger minute of silence test: make device-silence DEVICE=<alias|ip>"
@@ -136,6 +143,11 @@ test-tools:
 test-configs:
 	@echo "==> Validating ESPHome YAML Configurations..."
 	$(PYTEST) tests/esphome_config -v
+
+# ── Host Simulation Feature Tests & Visual Verification ─────────────────────
+test-sim:
+	@echo "==> Running Host Simulation Feature Tests & Capturing Screenshots..."
+	uv run python3 tools/test_runner.py
 
 # ── Linters & Static Analysis ────────────────────────────────────────────────
 lint: lint-c lint-yaml lint-py
@@ -222,10 +234,22 @@ endif
 ifeq ($(TARGET_DEVICE),cabinet)
   override TARGET_DEVICE := 192.168.0.78
 endif
+ifeq ($(TARGET_DEVICE),9436b0)
+  override TARGET_DEVICE := 192.168.0.78
+endif
+ifeq ($(TARGET_DEVICE),htram-9436b0)
+  override TARGET_DEVICE := 192.168.0.78
+endif
 ifeq ($(TARGET_DEVICE),bedroom)
   override TARGET_DEVICE := 192.168.0.159
 endif
 ifeq ($(TARGET_DEVICE),спальня)
+  override TARGET_DEVICE := 192.168.0.159
+endif
+ifeq ($(TARGET_DEVICE),954f48)
+  override TARGET_DEVICE := 192.168.0.159
+endif
+ifeq ($(TARGET_DEVICE),htram-954f48)
   override TARGET_DEVICE := 192.168.0.159
 endif
 ifeq ($(TARGET_DEVICE),living)
@@ -237,6 +261,77 @@ endif
 ifeq ($(TARGET_DEVICE),вітальня)
   override TARGET_DEVICE := 192.168.0.185
 endif
+ifeq ($(TARGET_DEVICE),c1da24)
+  override TARGET_DEVICE := 192.168.0.185
+endif
+ifeq ($(TARGET_DEVICE),htram-c1da24)
+  override TARGET_DEVICE := 192.168.0.185
+endif
+
+TARGET_CONFIG ?= $(CONFIG)
+ifeq ($(TARGET_CONFIG),)
+  ifeq ($(TARGET_DEVICE),192.168.0.78)
+    override TARGET_CONFIG := esphome/htram-9436b0.yaml
+  endif
+  ifeq ($(TARGET_DEVICE),192.168.0.159)
+    override TARGET_CONFIG := esphome/htram-954f48.yaml
+  endif
+  ifeq ($(TARGET_DEVICE),192.168.0.185)
+    override TARGET_CONFIG := esphome/htram-c1da24.yaml
+  endif
+endif
+
+ALL_DEVICES := office bedroom living
+
+ota-esp:
+ifeq ($(strip $(TARGET_DEVICE)),)
+	$(error TARGET_DEVICE is not set. Usage: make ota-esp DEVICE=<alias|ip>, e.g. make ota-esp DEVICE=office)
+endif
+ifeq ($(strip $(TARGET_CONFIG)),)
+	$(error Could not determine YAML config for $(TARGET_DEVICE). Usage: make ota-esp DEVICE=$(TARGET_DEVICE) CONFIG=<path/to/yaml>)
+endif
+	@echo "==> Flashing ESPHome firmware via OTA to $(TARGET_DEVICE) ($(TARGET_CONFIG))..."
+	$(ESPHOME) run $(TARGET_CONFIG) --device $(TARGET_DEVICE) --no-logs
+
+ota-esp-all:
+	@set -e; for dev in $(ALL_DEVICES); do \
+		echo ""; \
+		echo "========================================================"; \
+		echo "  Updating ESPHome on $$dev..."; \
+		echo "========================================================"; \
+		$(MAKE) ota-esp DEVICE=$$dev; \
+	done
+	@echo ""; \
+	echo "========================================================"; \
+	echo "  ALL DEVICES UPDATED SUCCESSFULLY!"; \
+	echo "========================================================"
+
+update-all: ota-esp-all
+ota-all: ota-esp-all
+
+ota-gd32-all:
+	@set -e; for dev in $(ALL_DEVICES); do \
+		echo ""; \
+		echo "========================================================"; \
+		echo "  Flashing GD32 on $$dev..."; \
+		echo "========================================================"; \
+		$(MAKE) ota-gd32 DEVICE=$$dev; \
+	done
+
+flash-assets-all:
+	@set -e; for dev in $(ALL_DEVICES); do \
+		echo ""; \
+		echo "========================================================"; \
+		echo "  Flashing graphic assets on $$dev..."; \
+		echo "========================================================"; \
+		$(MAKE) flash-assets DEVICE=$$dev; \
+	done
+
+status-all:
+	@for dev in $(ALL_DEVICES); do \
+		echo ""; \
+		$(PYTHON) tools/device.py $$dev status || true; \
+	done
 
 ota-gd32: build-gd32
 ifeq ($(strip $(TARGET_DEVICE)),)

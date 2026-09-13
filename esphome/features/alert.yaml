@@ -1,0 +1,220 @@
+# HTRAM Feature: Повітряна тривога (Air Raid Alert via JAAM WS)
+#
+# Надає інтеграцію з локальною мапою тривог JAAM (jaam-one.local:81):
+# - Отримання прапорців типів загроз (повітряна, дрони, ракети, КАБи, балістика, розвідники);
+# - Звукове сповіщення через диспетчер звуку з найвищим пріоритетом (SOUND_PRIO_ALERT = 40);
+# - Відображення піктограми загрози у верхньому статусному слоті;
+# - Тимчасове перефарбовування цифр годинника (червоний під час початку, зелений при відбої);
+# - Індикатор втрати зв'язку з сервером тривог (ui_nolink).
+
+substitutions:
+  alert_start_rtttl: "AlertOn:d=8,o=6,b=180:a,b,c7,16p,a,b,c7"
+  alert_clear_rtttl: "AlertOff:d=8,o=6,b=180:c7,b,a"
+  alert_mark_minutes: "5"
+
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [jaam_ws]
+
+jaam_ws:
+  id: jaam
+  host: jaam-one.local
+  port: 81
+  on_flags:
+    then:
+      - lambda: |-
+          // Біти з ALERT_TYPES інтеграції jaam_ha: 0 повітряна, 5 дрони,
+          // 6 ракети, 7 КАБи, 8 балістика, 10 розвідники.
+          const bool air = flags & (1u << 0);
+          id(alert_ballistic) = flags & (1u << 8);
+          id(alert_kab)       = flags & (1u << 7);
+          id(alert_missile)   = flags & (1u << 6);
+          id(alert_drone)     = flags & (1u << 5);
+          id(alert_recon)     = flags & (1u << 10);
+
+          if (air != id(alert_active)) {
+            id(alert_active) = air;
+            auto now = id(ha_time).now();
+            if (now.is_valid()) {
+              id(alert_mark_until) = now.timestamp + ${alert_mark_minutes} * 60;
+              id(alert_mark_color) = air ? 0xE5484D : 0x3DD68C;
+            }
+            id(play_alert_sound).execute(air);
+          }
+      - script.execute: refresh_alert_marks
+      - script.execute: refresh_alert_icon
+      - script.execute: on_alert_changed
+
+globals:
+  - id: alert_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: jaam_seen_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: alert_mark_until
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: alert_mark_color
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: alert_ballistic
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alert_kab
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alert_missile
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alert_drone
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alert_recon
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+image:
+  - platform: file
+    file: "${repo_url}/images/alert_mask.png"
+    id: img_alert
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/alert_small_mask.png"
+    id: img_nolink
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/threat_ballistic_mask.png"
+    id: img_ballistic
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/threat_kab_mask.png"
+    id: img_kab
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/threat_missile_mask.png"
+    id: img_missile
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/threat_drone_mask.png"
+    id: img_drone
+    type: BINARY
+  - platform: file
+    file: "${repo_url}/images/threat_recon_mask.png"
+    id: img_recon
+    type: BINARY
+
+lvgl:
+  widgets:
+    - image:
+        id: ui_alert
+        align: center
+        x: 74
+        y: -26
+        src: img_alert
+        hidden: true
+    - image:
+        id: ui_nolink
+        align: center
+        x: 89
+        y: 89
+        src: img_nolink
+        hidden: true
+
+script:
+  - id: play_alert_sound
+    parameters:
+      air: bool
+    mode: restart
+    then:
+      - lambda: |-
+          id(htram_arbiter_hub)->play_rtttl(40, "alert", air ? "${alert_start_rtttl}"
+                                                             : "${alert_clear_rtttl}");
+      - delay: 2s
+      - lambda: |-
+          id(htram_arbiter_hub)->stop_sound("alert");
+
+  - id: refresh_alert_icon
+    then:
+      - lambda: |-
+          const bool alert = id(alert_active);
+          if (alert) {
+            id(htram_arbiter_hub)->request_status_icon("alert", 100);
+            auto *src = id(img_alert);
+            if (id(alert_ballistic))     src = id(img_ballistic);
+            else if (id(alert_kab))      src = id(img_kab);
+            else if (id(alert_missile))  src = id(img_missile);
+            else if (id(alert_drone))    src = id(img_drone);
+            else if (id(alert_recon))    src = id(img_recon);
+            lv_image_set_src(id(ui_alert), src->get_lv_image_dsc());
+            lv_obj_set_style_image_recolor(id(ui_alert), lv_color_hex(0xE5484D), LV_PART_MAIN);
+            lv_obj_set_style_image_recolor_opa(id(ui_alert), LV_OPA_COVER, LV_PART_MAIN);
+          } else {
+            id(htram_arbiter_hub)->clear_status_icon("alert");
+          }
+
+          // Show only if this is the top status icon and screen is normal
+          const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
+          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          if (can_show) {
+            lv_obj_remove_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
+          }
+
+  - id: refresh_alert_marks
+    then:
+      - lambda: |-
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) return;
+          const uint32_t t = now.timestamp;
+          const bool marked = t < (uint32_t) id(alert_mark_until);
+          const uint32_t want = marked ? (uint32_t) id(alert_mark_color) : 0xF0EAE0;
+
+          static uint32_t shown = 0xF0EAE0;
+          if (want == shown) return;
+          shown = want;
+          lv_obj_t *const d[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
+          for (auto *o : d)
+            lv_obj_set_style_text_color(o, lv_color_hex(want), LV_PART_MAIN);
+
+interval:
+  - interval: 5s
+    then:
+      - lambda: |-
+          const uint32_t now_ms = millis();
+          if (id(jaam)->connected()) id(jaam_seen_ms) = now_ms;
+          const bool lost = id(jaam_seen_ms) == 0
+                                ? now_ms > 30000
+                                : (now_ms - id(jaam_seen_ms)) > 30000;
+          static int shown = -1;
+          if ((int) lost != shown) {
+            shown = lost;
+            if (lost) {
+              lv_obj_set_style_image_recolor(id(ui_nolink), lv_color_hex(0x707880), LV_PART_MAIN);
+              lv_obj_set_style_image_recolor_opa(id(ui_nolink), LV_OPA_COVER, LV_PART_MAIN);
+              lv_obj_remove_flag(id(ui_nolink), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(ui_nolink), LV_OBJ_FLAG_HIDDEN);
+            }
+          }
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_alert), id(ui_root));
+            lv_obj_set_parent(id(ui_nolink), id(ui_root));
+        - script.execute: refresh_alert_icon

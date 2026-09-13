@@ -463,6 +463,35 @@ void test_button_pressed_and_long_press(void) {
   TEST_ASSERT_EQUAL_STRING("", g_btn_act_s->state.c_str());
 }
 
+void test_button_hold_realtime_trigger(void) {
+  g_comp->mock_clear_tx();
+  auto p_down = make_btn_pkt(1, 0);
+  g_comp->process_packet_(p_down.data(), p_down.size());
+  TEST_ASSERT_TRUE(g_btn_s->has_state);
+  TEST_ASSERT_TRUE(g_btn_s->state);
+
+  // Fire 800ms hold timeout while button is still pressed
+  TEST_ASSERT_TRUE(g_comp->fire_timeout("button_hold"));
+  TEST_ASSERT_EQUAL_STRING("long", g_btn_act_s->state.c_str());
+
+  // Confirm audio feedback tone was sent (CMD_TYPE_BEEP 0x13, 2000Hz, 100ms)
+  TEST_ASSERT_TRUE(g_comp->mock_tx_bytes.size() >= 9);
+  TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x55, g_comp->mock_tx_bytes[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x13, g_comp->mock_tx_bytes[2]);
+  uint16_t beep_freq = g_comp->mock_tx_bytes[3] | (g_comp->mock_tx_bytes[4] << 8);
+  uint16_t beep_dur = g_comp->mock_tx_bytes[5] | (g_comp->mock_tx_bytes[6] << 8);
+  TEST_ASSERT_EQUAL_UINT16(2000, beep_freq);
+  TEST_ASSERT_EQUAL_UINT16(100, beep_dur);
+
+  // Release of button should be consumed without re-publishing "long"
+  g_btn_act_s->state = "unmodified";
+  auto p_up = make_btn_pkt(0, 950);
+  g_comp->process_packet_(p_up.data(), p_up.size());
+  TEST_ASSERT_FALSE(g_btn_s->state);
+  TEST_ASSERT_EQUAL_STRING("unmodified", g_btn_act_s->state.c_str());
+}
+
 void test_button_click_sequences(void) {
   auto p_click = make_btn_pkt(0, 150);
   g_comp->process_packet_(p_click.data(), p_click.size());
@@ -981,6 +1010,19 @@ void test_display_pixel_drawing(void) {
   g_comp->set_ota_mode(false);
   TEST_ASSERT_FALSE(g_comp->is_ota_mode());
   TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
+
+  // Test framebuffer pixel storage & asset drawing
+  disp.set_simulation_mode(true);
+  disp.draw_pixel_at(5, 5, Color(255, 0, 0));
+  const uint16_t* fb = disp.get_framebuffer();
+  TEST_ASSERT_NOT_NULL(fb);
+  TEST_ASSERT_EQUAL_HEX16(0xF800, fb[5 * 240 + 5]);
+
+  // Test cached asset blitting to framebuffer
+  g_comp->set_display(&disp);
+  g_comp->send_draw_cached_asset(0, 10, 10, 0xFFFF, 0x0000, 0);  // Asset 0 (tryzub)
+  TEST_ASSERT_TRUE(disp.dump_ppm("/tmp/test_dump.ppm"));
+  std::remove("/tmp/test_dump.ppm");
 }
 
 // ---------------------------------------------------------------------------
@@ -1110,6 +1152,7 @@ int main(void) {
   RUN_TEST(test_flow_control_packet);
   RUN_TEST(test_wait_for_flow_unpauses_or_times_out);
   RUN_TEST(test_button_pressed_and_long_press);
+  RUN_TEST(test_button_hold_realtime_trigger);
   RUN_TEST(test_button_click_sequences);
   RUN_TEST(test_pump_rx_resync_and_dispatch);
   RUN_TEST(test_outgoing_commands);
