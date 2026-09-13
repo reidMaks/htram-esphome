@@ -86,6 +86,34 @@ api:
       then:
         - script.execute: show_network
 
+    - service: simulate_boot_state
+      variables:
+        net_ok: int
+        time_ok: int
+      then:
+        - lambda: |-
+            id(sim_override_net) = net_ok;
+            id(sim_override_time) = time_ok;
+            id(face_state) = -1;
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+
+    - service: simulate_reboot_resync
+      then:
+        - lambda: |-
+            id(sim_override_net) = -1;
+            id(sim_override_time) = -1;
+            id(face_state) = -1;
+            id(htram_arbiter_hub)->release_screen("overlay");
+            id(htram_arbiter_hub)->release_screen("weather");
+            id(htram_arbiter_hub)->release_screen("timer");
+            id(htram_arbiter_hub)->reset_audio();
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+        - script.execute: refresh_pocket
+
 external_components:
   - source:
       type: local

@@ -1255,10 +1255,12 @@ void HtramGd32Component::send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t
 void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y,
                                                 uint16_t fg_color, uint16_t bg_color,
                                                 uint8_t flags) {
+#ifndef USE_ESP32
   if (this->display_ != nullptr) {
     this->display_->draw_cached_asset_to_fb(asset_id, x, y, fg_color, bg_color, flags);
     if (this->display_->is_simulation_mode()) return;
   }
+#endif
   if (ota_mode_) return;
   uint8_t pkt[14];
   pkt[0] = 0xAA;
@@ -1288,9 +1290,11 @@ void HtramGd32Display::update() {
 }
 
 void HtramGd32Display::draw_pixel_at(int x, int y, Color color) {
+#ifndef USE_ESP32
   if (x >= 0 && x < 240 && y >= 0 && y < 240) {
     this->framebuffer_[y * 240 + x] = display::ColorUtil::color_to_565(color);
   }
+#endif
   if (this->simulation_mode_) return;
   if (this->parent_ == nullptr) return;
   if (this->parent_->is_ota_mode()) return;
@@ -1330,6 +1334,7 @@ void HtramGd32Display::draw_pixels_at(int x_start, int y_start, int w, int h, co
   int stride = x_offset + w + x_pad;
   const int bytes_per_pixel = 2;  // RGB565
 
+#ifndef USE_ESP32
   // Update internal framebuffer (for screenshots and host simulation)
   for (int row = 0; row < h; row++) {
     int dst_y = y_start + row;
@@ -1347,6 +1352,7 @@ void HtramGd32Display::draw_pixels_at(int x_start, int y_start, int w, int h, co
       this->framebuffer_[dst_y * 240 + dst_x] = pixel;
     }
   }
+#endif
 
   if (this->simulation_mode_) return;
 
@@ -1409,6 +1415,7 @@ struct FlashAssetEntry {
   char name[32];
 } __attribute__((packed));
 
+#ifndef USE_ESP32
 void HtramGd32Display::draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y,
                                                uint16_t fg_color, uint16_t bg_color,
                                                uint8_t flags) {
@@ -1509,6 +1516,7 @@ bool HtramGd32Display::dump_ppm(const std::string &path) const {
   ESP_LOGI(TAG, "Screenshot dumped to '%s'", path.c_str());
   return true;
 }
+#endif
 
 }  // namespace htram_gd32
 }  // namespace esphome

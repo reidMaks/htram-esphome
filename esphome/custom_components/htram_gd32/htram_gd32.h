@@ -254,12 +254,16 @@ class HtramGd32Display : public display::Display {
 
   void set_simulation_mode(bool sim) { this->simulation_mode_ = sim; }
   bool is_simulation_mode() const { return this->simulation_mode_; }
+#ifndef USE_ESP32
   const uint16_t *get_framebuffer() const { return this->framebuffer_; }
   bool dump_ppm(const std::string &path) const;
   void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
+#endif
   void clear_persistent_asset() {
     this->persistent_asset_.active = false;
+#ifndef USE_ESP32
     std::fill_n(this->framebuffer_, 240 * 240, (uint16_t) 0);
+#endif
   }
 
  protected:
@@ -279,7 +283,9 @@ class HtramGd32Display : public display::Display {
   PersistentAsset persistent_asset_;
   HtramGd32Component *parent_{nullptr};
   std::vector<uint8_t> chunk_buffer_;
+#ifndef USE_ESP32
   uint16_t framebuffer_[240 * 240]{0};
+#endif
   bool simulation_mode_{false};
 };
 
@@ -298,9 +304,11 @@ inline void HtramGd32Component::set_simulation_mode(bool sim) {
 }
 
 inline bool HtramGd32Component::dump_ppm(const std::string &path) const {
+#ifndef USE_ESP32
   if (this->display_ != nullptr) {
     return this->display_->dump_ppm(path);
   }
+#endif
   return false;
 }
 

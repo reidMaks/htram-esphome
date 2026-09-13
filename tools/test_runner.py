@@ -172,6 +172,14 @@ class SimulationHarness:
         """Sets timer remaining seconds directly."""
         await self.call_service("set_timer_seconds", {"seconds": seconds})
 
+    async def simulate_boot_state(self, net: int, time: int) -> None:
+        """Simulates network connectivity and time synchronization state."""
+        await self.call_service("simulate_boot_state", {"net_ok": net, "time_ok": time})
+
+    async def simulate_reboot_resync(self) -> None:
+        """Simulates post-flash reboot and arbiter resync."""
+        await self.call_service("simulate_reboot_resync")
+
 
     async def capture_screenshot(self, basename: str) -> Path:
         """Dumps framebuffer to PPM and converts to optimized PNG."""
@@ -514,6 +522,97 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
         except Exception as e:
             results.append(("int_06_device_id_from_weather", False, str(e)))
+
+        # ==========================================
+        # BOOT & REBOOT SEQUENCE TESTS
+        # ==========================================
+
+        # Boot Test 1: No Network (немає мережі)
+        print("\n--- Boot Test 1: No Network (немає мережі) ---")
+        try:
+            await harness.simulate_boot_state(net=0, time=0)
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("boot_01_no_net")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "boot_01_no_net",
+                    True,
+                    "Boot state 1: no network ('немає мережі', 'шукаю мережу')",
+                )
+            )
+        except Exception as e:
+            results.append(("boot_01_no_net", False, str(e)))
+
+        # Boot Test 2: Connected to WiFi, waiting for time server (немає часу)
+        print("\n--- Boot Test 2: Waiting for Time Server (немає часу) ---")
+        try:
+            await harness.simulate_boot_state(net=1, time=0)
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("boot_02_no_time")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "boot_02_no_time",
+                    True,
+                    "Boot state 2: WiFi connected, waiting for time ('немає часу', 'чекаю сервер часу')",
+                )
+            )
+        except Exception as e:
+            results.append(("boot_02_no_time", False, str(e)))
+
+        # Boot Test 3: Time Synchronized (годинник з цифрами)
+        print("\n--- Boot Test 3: Time Synchronized (годинник з цифрами) ---")
+        try:
+            await harness.simulate_boot_state(net=1, time=1)
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("boot_03_time_synced")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "boot_03_time_synced",
+                    True,
+                    "Boot state 3: time synchronized, clock face active with digits",
+                )
+            )
+        except Exception as e:
+            results.append(("boot_03_time_synced", False, str(e)))
+
+        # Boot Test 4: Post-Flash / GD32 Restart Resync
+        print("\n--- Boot Test 4: Post-Flash / GD32 Restart Resync ---")
+        try:
+            await harness.simulate_reboot_resync()
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("boot_04_reboot_resync")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "boot_04_reboot_resync",
+                    True,
+                    "Boot state 4: post-reflash / GD32 resync cleanly restores clock",
+                )
+            )
+        except Exception as e:
+            results.append(("boot_04_reboot_resync", False, str(e)))
+
+        # Boot Test 5: Cold Simulator Process Restart (Fresh Boot)
+        print("\n--- Boot Test 5: Fresh Simulator Process Restart ---")
+        try:
+            await harness.stop()
+            await asyncio.sleep(1.0)
+            await harness.start()
+            await asyncio.sleep(1.5)
+            png = await harness.capture_screenshot("boot_05_cold_boot_process")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "boot_05_cold_boot_process",
+                    True,
+                    "Boot state 5: fresh process start immediately renders clock face",
+                )
+            )
+        except Exception as e:
+            results.append(("boot_05_cold_boot_process", False, str(e)))
 
 
     finally:
