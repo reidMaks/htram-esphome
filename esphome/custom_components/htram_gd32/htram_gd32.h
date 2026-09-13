@@ -8,8 +8,16 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "esphome/components/display/display.h"
-#include <esp_heap_caps.h>
 #include "esphome/components/display/display_color_utils.h"
+
+#ifdef USE_ESP32
+#include <esp_heap_caps.h>
+#else
+#ifndef MALLOC_CAP_8BIT
+#define MALLOC_CAP_8BIT 1
+inline size_t heap_caps_get_largest_free_block(uint32_t) { return 65536; }
+#endif
+#endif
 #include <string>
 #include <vector>
 

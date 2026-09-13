@@ -178,8 +178,6 @@ interval:
   - interval: 20ms
     then:
       - lambda: |-
-          if (!id(silence_ticking)) return;
-
           timeval tv;
           gettimeofday(&tv, nullptr);
           auto now = id(ha_time).now();
@@ -191,7 +189,7 @@ interval:
           if (!now.is_valid()) return;
 
           // Synchronized minute of silence metronome
-          if (now.second % ${silence_tick_seconds} == 0) {
+          if (id(silence_ticking) && (now.second % ${silence_tick_seconds} == 0)) {
             if ((int) tv.tv_sec != id(silence_last_tick_sec)) {
               id(silence_last_tick_sec) = (int) tv.tv_sec;
               if (id(silence_beep_count) < 30) {

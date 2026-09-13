@@ -47,6 +47,9 @@ lvgl:
         adjustable: false
         value: 0
         hidden: true
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
         indicator:
           arc_opa: TRANSP
         knob:
@@ -105,6 +108,16 @@ htram_arbiter:
       context: ringing
       priority: 100
       name: alarm_dismiss_btn
+      then:
+        - if:
+            condition:
+              lambda: return id(alarm_ringing) || id(alarm_snoozing);
+            then:
+              - script.execute: alarm_dismiss
+    - event: button_long
+      context: ringing
+      priority: 100
+      name: alarm_dismiss_long_btn
       then:
         - if:
             condition:

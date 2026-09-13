@@ -89,6 +89,20 @@ api:
         - lambda: |-
             id(htram_core)->send_stop();
 
+    - service: inject_button
+      variables:
+        action: string
+      then:
+        - lambda: |-
+            id(htram_arbiter_hub)->dispatch_button_action(action);
+
+    - service: inject_event
+      variables:
+        event: string
+      then:
+        - lambda: |-
+            id(htram_arbiter_hub)->dispatch_event(event);
+
 ota:
   - platform: esphome
     password: !secret ota_password
@@ -327,7 +341,8 @@ script:
           lv_obj_t *const lbl[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
           char buf[2] = {0, 0};
           for (int i = 0; i < 4; i++) {
-            if (cur[i] == prev[i]) continue;
+            const char *existing = lv_label_get_text(lbl[i]);
+            if (cur[i] == prev[i] && existing != nullptr && existing[0] == ('0' + cur[i])) continue;
             prev[i] = cur[i];
             buf[0] = '0' + cur[i];
             lv_label_set_text(lbl[i], buf);
@@ -684,6 +699,17 @@ interval:
             }
           }
 
+          // Initial boot resync: at ~1.5s after boot (when GD32 UART link is confirmed up),
+          // force a clean repaint of face and digits so boot glitches/drops are cleared immediately.
+          static bool boot_synced = false;
+          if (!boot_synced && millis() > 1500) {
+            boot_synced = true;
+            last_min = -1;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+            lv_obj_invalidate(lv_screen_active());
+          }
+
   # A GD32 that has just restarted spent its first ~700 ms with no USART1,
   # so the top of our last frame and every command we sent in that window
   # were dropped on the floor -- which is why a standby wake used to leave
@@ -740,6 +766,7 @@ time:
     timezone: "Europe/Kyiv"
     on_time_sync:
       then:
+        - lambda: id(face_state) = -1;
         - script.execute: refresh_face
         - script.execute: refresh_clock
         - script.execute: refresh_slot
@@ -753,6 +780,7 @@ time:
     timezone: "Europe/Kyiv"
     on_time_sync:
       then:
+        - lambda: id(face_state) = -1;
         - script.execute: refresh_face
         - script.execute: refresh_clock
         - script.execute: refresh_slot
@@ -1120,6 +1148,13 @@ text_sensor:
               - script.execute:
                   id: on_button_action
                   action: !lambda "return x;"
+  - platform: template
+    id: arbiter_context_sensor
+    name: "Arbiter Context"
+    icon: "mdi:state-machine"
+    entity_category: diagnostic
+    lambda: return id(htram_arbiter_hub)->get_active_context();
+    update_interval: 1s
 
 button:
   - platform: template
@@ -1130,6 +1165,41 @@ button:
     on_press:
       - script.execute: show_device_id
 
+  - platform: template
+    name: "Simulate Single Click"
+    id: btn_sim_single
+    icon: "mdi:gesture-tap-button"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("single");
+
+  - platform: template
+    name: "Simulate Double Click"
+    id: btn_sim_double
+    icon: "mdi:gesture-double-tap"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("double");
+
+  - platform: template
+    name: "Simulate Triple Click"
+    id: btn_sim_triple
+    icon: "mdi:gesture-tap"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("triple");
+
+  - platform: template
+    name: "Simulate Long Press"
+    id: btn_sim_long
+    icon: "mdi:gesture-tap-hold"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("long");
 
   - platform: template
     id: beep_button

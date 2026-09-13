@@ -1,6 +1,7 @@
 #include "htram_arbiter.h"
 #include "../htram_gd32/htram_gd32.h"
 #include "esphome/core/log.h"
+#include <algorithm>
 
 namespace esphome {
 namespace htram_arbiter {
@@ -11,7 +12,11 @@ HtramArbiter *global_htram_arbiter = nullptr;
 
 void HtramArbiter::setup() {
   global_htram_arbiter = this;
-  ESP_LOGI(TAG, "HtramArbiter initialized with %zu event handlers", this->handlers_.size());
+  std::stable_sort(this->handlers_.begin(), this->handlers_.end(),
+                   [](const ArbiterEventHandler &a, const ArbiterEventHandler &b) {
+                     return a.priority > b.priority;
+                   });
+  ESP_LOGI(TAG, "HtramArbiter initialized with %zu event handlers (sorted by priority)", this->handlers_.size());
 }
 
 void HtramArbiter::dump_config() {
@@ -64,7 +69,7 @@ bool HtramArbiter::dispatch_event(const std::string &event) {
   }
 
   const std::string ctx = this->get_active_context();
-  ESP_LOGD(TAG, "Dispatching event '%s' in active context '%s'", event.c_str(), ctx.c_str());
+  ESP_LOGI(TAG, "Dispatching event '%s' in active context '%s'", event.c_str(), ctx.c_str());
 
   for (auto &h : this->handlers_) {
     if (h.event != event) continue;
@@ -79,14 +84,16 @@ bool HtramArbiter::dispatch_event(const std::string &event) {
     }
 
     if (match && h.trigger != nullptr) {
-      ESP_LOGI(TAG, "Triggering handler '%s' (prio %d) for event '%s'",
-               h.name.c_str(), h.priority, event.c_str());
+      ESP_LOGI(TAG, "Triggered handler '%s' (prio %d) for event '%s' in context '%s'",
+               h.name.c_str(), h.priority, event.c_str(), ctx.c_str());
       h.trigger->fire();
       return true; // Consumed by the highest priority matching handler!
     }
   }
 
-  ESP_LOGD(TAG, "No handler matched event '%s' in context '%s'", event.c_str(), ctx.c_str());
+  ESP_LOGW(TAG, "Event '%s' DROPPED: no handler in context '%s' (screen=%d '%s', audio=%d '%s')",
+           event.c_str(), ctx.c_str(), this->screen_mode_, this->screen_owner_.c_str(),
+           this->audio_priority_, this->audio_owner_.c_str());
   return false;
 }
 
