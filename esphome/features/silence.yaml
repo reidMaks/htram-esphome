@@ -153,6 +153,7 @@ script:
           id(htram_arbiter_hub)->release_screen("silence");
           id(htram_arbiter_hub)->release_leds("silence");
           id(htram_arbiter_hub)->reset_audio();
+          id(htram_core)->clear_persistent_asset();
           id(face_state) = -1;
       - script.execute: refresh_face
       - script.execute: refresh_clock

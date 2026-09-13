@@ -78,6 +78,7 @@ static float batt_mv_to_pct(uint16_t mv) {
 
 void HtramGd32Component::setup() {
   ESP_LOGI(TAG, "Setup HTRAM GD32 component...");
+#ifdef HTRAM_HAS_WEB_HANDLERS
   if (esphome::web_server_base::global_web_server_base != nullptr) {
     esphome::web_server_base::global_web_server_base->add_handler(new Gd32OtaHandler(this));
     esphome::web_server_base::global_web_server_base->add_handler(new Gd32AssetsHandler(this));
@@ -86,10 +87,11 @@ void HtramGd32Component::setup() {
   } else {
     ESP_LOGW(TAG, "web_server_base is null, OTA will not be available!");
   }
+#endif
 }
 
 void HtramGd32Component::loop() {
-  if (ota_mode_)
+  if (ota_mode_ || this->simulation_mode_)
     return;
   this->pump_rx_(false);
 }
@@ -480,6 +482,7 @@ void HtramGd32Component::dump_config() {
 }
 
 void HtramGd32Component::send_beep(uint16_t freq, uint16_t dur) {
+  if (this->simulation_mode_) return;
   uint8_t pkt[9] = {0xAA, 0x55, 0x13, (uint8_t)(freq & 0xFF), (uint8_t)(freq >> 8), (uint8_t)(dur & 0xFF), (uint8_t)(dur >> 8)};
   uint16_t crc = crc16_ccitt(&pkt[2], 5);
   pkt[7] = crc & 0xFF; pkt[8] = crc >> 8;
@@ -487,6 +490,7 @@ void HtramGd32Component::send_beep(uint16_t freq, uint16_t dur) {
 }
 
 void HtramGd32Component::send_backlight(uint8_t brightness) {
+  if (this->simulation_mode_) return;
   uint8_t pkt[6] = {0xAA, 0x55, 0x11, brightness};
   uint16_t crc = crc16_ccitt(&pkt[2], 2);
   pkt[4] = crc & 0xFF; pkt[5] = crc >> 8;
@@ -494,6 +498,7 @@ void HtramGd32Component::send_backlight(uint8_t brightness) {
 }
 
 void HtramGd32Component::send_leds(uint8_t r, uint8_t y, uint8_t g, uint8_t brightness) {
+  if (this->simulation_mode_) return;
   uint8_t pkt[9] = {0xAA, 0x55, 0x12, r, y, g, brightness};
   uint16_t crc = crc16_ccitt(&pkt[2], 5);
   pkt[7] = crc & 0xFF; pkt[8] = crc >> 8;
@@ -508,7 +513,7 @@ void HtramGd32Component::set_led(uint8_t channel, bool state) {
 }
 
 void HtramGd32Component::send_melody(const uint16_t *freqs, const uint16_t *durs, uint8_t count) {
-  if (count == 0) return;
+  if (this->simulation_mode_ || count == 0) return;
   if (count > 96) count = 96;  // GD32 clamps to MELODY_MAX
   std::vector<uint8_t> pkt;
   pkt.reserve(4 + (size_t) count * 4 + 2);
@@ -529,6 +534,7 @@ void HtramGd32Component::send_melody(const uint16_t *freqs, const uint16_t *durs
 }
 
 void HtramGd32Component::send_stop() {
+  if (this->simulation_mode_) return;
   // CMD_PLAY_MELODY with count 0 => GD32 silences and cancels playback.
   uint8_t pkt[6] = {0xAA, 0x55, 0x14, 0x00};
   uint16_t crc = crc16_ccitt(&pkt[2], 2);
@@ -1220,7 +1226,7 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
 }
 
 void HtramGd32Component::send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *pixel_data, size_t len) {
-  if (ota_mode_) return;
+  if (ota_mode_ || this->simulation_mode_) return;
   uint8_t hdr[9];
   hdr[0] = 0xAA;
   hdr[1] = 0x55;
@@ -1249,6 +1255,10 @@ void HtramGd32Component::send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t
 void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y,
                                                 uint16_t fg_color, uint16_t bg_color,
                                                 uint8_t flags) {
+  if (this->display_ != nullptr) {
+    this->display_->draw_cached_asset_to_fb(asset_id, x, y, fg_color, bg_color, flags);
+    if (this->display_->is_simulation_mode()) return;
+  }
   if (ota_mode_) return;
   uint8_t pkt[14];
   pkt[0] = 0xAA;
@@ -1278,6 +1288,10 @@ void HtramGd32Display::update() {
 }
 
 void HtramGd32Display::draw_pixel_at(int x, int y, Color color) {
+  if (x >= 0 && x < 240 && y >= 0 && y < 240) {
+    this->framebuffer_[y * 240 + x] = display::ColorUtil::color_to_565(color);
+  }
+  if (this->simulation_mode_) return;
   if (this->parent_ == nullptr) return;
   if (this->parent_->is_ota_mode()) return;
   if (x < 0 || x >= 240 || y < 0 || y >= 240) return;
@@ -1287,7 +1301,7 @@ void HtramGd32Display::draw_pixel_at(int x, int y, Color color) {
 }
 
 void HtramGd32Component::wait_for_flow(uint32_t timeout_ms) {
-  if (!this->flow_paused_)
+  if (this->simulation_mode_ || !this->flow_paused_)
     return;
   const uint32_t start = millis();
   while (this->flow_paused_ && millis() - start < timeout_ms) {
@@ -1314,10 +1328,31 @@ void HtramGd32Display::draw_pixels_at(int x_start, int y_start, int w, int h, co
            w * h * 2, (w * h * 2 + 11) / 11520.0f);
 
   int stride = x_offset + w + x_pad;
+  const int bytes_per_pixel = 2;  // RGB565
+
+  // Update internal framebuffer (for screenshots and host simulation)
+  for (int row = 0; row < h; row++) {
+    int dst_y = y_start + row;
+    if (dst_y < 0 || dst_y >= 240) continue;
+    for (int col = 0; col < w; col++) {
+      int dst_x = x_start + col;
+      if (dst_x < 0 || dst_x >= 240) continue;
+      int src_idx = ((y_offset + row) * stride + (x_offset + col)) * bytes_per_pixel;
+      uint16_t pixel;
+      if (big_endian) {
+        pixel = ((uint16_t)ptr[src_idx] << 8) | ptr[src_idx + 1];
+      } else {
+        pixel = ((uint16_t)ptr[src_idx + 1] << 8) | ptr[src_idx];
+      }
+      this->framebuffer_[dst_y * 240 + dst_x] = pixel;
+    }
+  }
+
+  if (this->simulation_mode_) return;
+
   // Sized well under the GD32's 2 KB ring: a chunk already in flight when the
   // hold-off is raised still has to fit in whatever ring space is left.
   const int max_bytes_per_chunk = 512;
-  const int bytes_per_pixel = 2;  // RGB565
 
   int max_rows_per_chunk = max_bytes_per_chunk / (w * bytes_per_pixel);
   if (max_rows_per_chunk < 1) max_rows_per_chunk = 1;
@@ -1353,6 +1388,126 @@ void HtramGd32Display::draw_pixels_at(int x_start, int y_start, int w, int h, co
     App.feed_wdt();
     delay(1);
   }
+}
+
+struct FlashAssetsHeader {
+  uint64_t magic;
+  uint16_t version;
+  uint16_t asset_count;
+  uint32_t total_size;
+  uint32_t header_crc32;
+} __attribute__((packed));
+
+struct FlashAssetEntry {
+  uint16_t asset_id;
+  uint16_t width;
+  uint16_t height;
+  uint16_t stride;
+  uint32_t data_offset;
+  uint32_t data_size;
+  uint32_t data_crc32;
+  char name[32];
+} __attribute__((packed));
+
+void HtramGd32Display::draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y,
+                                               uint16_t fg_color, uint16_t bg_color,
+                                               uint8_t flags) {
+  this->persistent_asset_ = {asset_id, x, y, fg_color, bg_color, flags, true};
+  static std::vector<uint8_t> asset_bin_data;
+  static bool attempted_load = false;
+  if (!attempted_load) {
+    attempted_load = true;
+    const char *paths[] = {
+      "firmware/gd32/build/flash_assets.bin",
+      "../firmware/gd32/build/flash_assets.bin",
+      "/workspaces/htram-esphome/firmware/gd32/build/flash_assets.bin"
+    };
+    for (const char *p : paths) {
+      FILE *f = fopen(p, "rb");
+      if (f) {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (sz > 0) {
+          asset_bin_data.resize(sz);
+          size_t read_bytes = fread(asset_bin_data.data(), 1, sz, f);
+          (void)read_bytes;
+          ESP_LOGI(TAG, "Loaded flash_assets.bin (%ld bytes) from %s", sz, p);
+        }
+        fclose(f);
+        break;
+      }
+    }
+  }
+
+  if (asset_bin_data.size() < sizeof(FlashAssetsHeader)) {
+    return;
+  }
+
+  const auto *hdr = reinterpret_cast<const FlashAssetsHeader *>(asset_bin_data.data());
+  if (hdr->magic != 0x545353414D525448ULL || asset_id >= hdr->asset_count) {
+    return;
+  }
+
+  size_t entry_offset = sizeof(FlashAssetsHeader) + asset_id * sizeof(FlashAssetEntry);
+  if (entry_offset + sizeof(FlashAssetEntry) > asset_bin_data.size()) return;
+
+  const auto *entry = reinterpret_cast<const FlashAssetEntry *>(asset_bin_data.data() + entry_offset);
+  if (entry->data_offset + entry->data_size > asset_bin_data.size()) return;
+
+  const uint8_t *bitmap = asset_bin_data.data() + entry->data_offset;
+  int draw_w = entry->width;
+  int draw_h = entry->height;
+  if (x + draw_w > 240) draw_w = 240 - x;
+  if (y + draw_h > 240) draw_h = 240 - y;
+
+  const bool transparent = (flags & 0x01);
+
+  for (int row = 0; row < draw_h; row++) {
+    int py = y + row;
+    if (py < 0 || py >= 240) continue;
+    const uint8_t *row_bytes = bitmap + row * entry->stride;
+    for (int col = 0; col < draw_w; col++) {
+      int px = x + col;
+      if (px < 0 || px >= 240) continue;
+      bool is_fg = (row_bytes[col >> 3] & (0x80 >> (col & 7))) != 0;
+      if (is_fg) {
+        this->framebuffer_[py * 240 + px] = fg_color;
+      } else if (!transparent) {
+        this->framebuffer_[py * 240 + px] = bg_color;
+      }
+    }
+  }
+}
+
+bool HtramGd32Display::dump_ppm(const std::string &path) const {
+  if (this->persistent_asset_.active) {
+    const_cast<HtramGd32Display *>(this)->draw_cached_asset_to_fb(
+        this->persistent_asset_.asset_id,
+        this->persistent_asset_.x,
+        this->persistent_asset_.y,
+        this->persistent_asset_.fg_color,
+        this->persistent_asset_.bg_color,
+        this->persistent_asset_.flags);
+  }
+  FILE *f = fopen(path.c_str(), "wb");
+  if (!f) {
+    ESP_LOGE(TAG, "Failed to open '%s' for screenshot PPM write", path.c_str());
+    return false;
+  }
+  fprintf(f, "P6\n240 240\n255\n");
+  for (int i = 0; i < 240 * 240; i++) {
+    uint16_t c = this->framebuffer_[i];
+    uint8_t r = ((c >> 11) & 0x1F) * 255 / 31;
+    uint8_t g = ((c >> 5) & 0x3F) * 255 / 63;
+    uint8_t b = (c & 0x1F) * 255 / 31;
+    fputc(r, f);
+    fputc(g, f);
+    fputc(b, f);
+  }
+  fclose(f);
+  ESP_LOGI(TAG, "Screenshot dumped to '%s'", path.c_str());
+  return true;
 }
 
 }  // namespace htram_gd32

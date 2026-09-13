@@ -127,6 +127,7 @@ htram_arbiter:
 
 script:
   - id: refresh_alarm_ui
+    mode: restart
     then:
       - lambda: |-
           const bool armed = id(alarm_enabled).state;
@@ -147,6 +148,7 @@ script:
               return d < 0 ? d + 360 : d;
             };
             lv_arc_set_bg_angles(id(ui_alarm_tick), norm(lv - 1.6f), norm(lv + 1.6f));
+            lv_obj_set_style_arc_color(id(ui_alarm_tick), lv_color_hex(0xFF9E3D), LV_PART_MAIN);
             lv_obj_remove_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
           } else {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
@@ -201,9 +203,13 @@ script:
     mode: restart
     then:
       - script.stop: alarm_snooze
-      - lambda: id(alarm_snoozing) = false;
-      - script.execute: alarm_stop
-      - script.execute: on_alarm_dismissed
+      - lambda: |-
+          const bool was_active = id(alarm_ringing) || id(alarm_snoozing);
+          id(alarm_snoozing) = false;
+          id(alarm_stop).execute();
+          if (was_active) {
+            id(on_alarm_dismissed).execute();
+          }
 
   - id: alarm_snooze
     mode: restart
@@ -224,6 +230,7 @@ script:
   - id: !extend on_face_changed
     then:
       - lambda: |-
+          id(alarm_ui_sig) = -1;
           if (face != 0) {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);

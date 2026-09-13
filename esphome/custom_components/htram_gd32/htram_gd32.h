@@ -6,7 +6,10 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
+#ifndef USE_HOST
 #include "esphome/components/web_server_base/web_server_base.h"
+#define HTRAM_HAS_WEB_HANDLERS 1
+#endif
 #include "esphome/components/display/display.h"
 #include "esphome/components/display/display_color_utils.h"
 
@@ -20,6 +23,8 @@ inline size_t heap_caps_get_largest_free_block(uint32_t) { return 65536; }
 #endif
 #include <string>
 #include <vector>
+#include <sys/time.h>
+#include <ctime>
 
 namespace esphome {
 namespace htram_gd32 {
@@ -53,10 +58,19 @@ enum FlashAssetId : uint16_t {
   ASSET_ID_COUNT = 25
 };
 
+class HtramGd32Display;
+
 class HtramGd32Component : public Component, public uart::UARTDevice {
  public:
   void setup() override;
   void loop() override;
+
+  void set_display(HtramGd32Display *display);
+  HtramGd32Display *get_display() const { return this->display_; }
+
+  void set_simulation_mode(bool sim);
+  bool is_simulation_mode() const { return this->simulation_mode_; }
+  bool dump_ppm(const std::string &path) const;
 
   /* The GD32 asks us to hold the pixel stream while it does something that
      blocks longer than its 2 KB RX ring can absorb (a CO2 Modbus poll). There
@@ -108,6 +122,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void send_flash_backup_fw(uint8_t slot);
   void send_flash_confirm_boot();
   void send_flash_restore_fw(uint8_t slot);
+  void clear_persistent_asset();
 
   bool is_ota_mode() const { return ota_mode_; }
 
@@ -181,6 +196,8 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   uint8_t last_flash_read_status_{0};
   uint32_t last_flash_read_addr_{0};
   std::vector<uint8_t> last_flash_read_data_;
+  HtramGd32Display *display_{nullptr};
+  bool simulation_mode_{false};
 
   std::vector<uint8_t> rx_buffer_;
   uint16_t last_batt_mv_{0};
@@ -216,7 +233,15 @@ class HtramLedSwitch : public switch_::Switch, public Component {
 
 class HtramGd32Display : public display::Display {
  public:
-  void set_parent(HtramGd32Component *parent) { parent_ = parent; }
+  void set_parent(HtramGd32Component *parent) {
+    this->parent_ = parent;
+    if (parent != nullptr) {
+      parent->set_display(this);
+      if (parent->is_simulation_mode()) {
+        this->set_simulation_mode(true);
+      }
+    }
+  }
 
   void dump_config() override;
   void update() override;
@@ -227,14 +252,62 @@ class HtramGd32Display : public display::Display {
 
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_COLOR; }
 
+  void set_simulation_mode(bool sim) { this->simulation_mode_ = sim; }
+  bool is_simulation_mode() const { return this->simulation_mode_; }
+  const uint16_t *get_framebuffer() const { return this->framebuffer_; }
+  bool dump_ppm(const std::string &path) const;
+  void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
+  void clear_persistent_asset() { this->persistent_asset_.active = false; }
+
  protected:
   int get_width_internal() override { return 240; }
   int get_height_internal() override { return 240; }
 
+  struct PersistentAsset {
+    uint16_t asset_id{0};
+    uint8_t x{0};
+    uint8_t y{0};
+    uint16_t fg_color{0};
+    uint16_t bg_color{0};
+    uint8_t flags{0};
+    bool active{false};
+  };
+
+  PersistentAsset persistent_asset_;
   HtramGd32Component *parent_{nullptr};
   std::vector<uint8_t> chunk_buffer_;
+  uint16_t framebuffer_[240 * 240]{0};
+  bool simulation_mode_{false};
 };
 
+inline void HtramGd32Component::set_display(HtramGd32Display *display) {
+  this->display_ = display;
+  if (this->simulation_mode_ && this->display_ != nullptr) {
+    this->display_->set_simulation_mode(true);
+  }
+}
+
+inline void HtramGd32Component::set_simulation_mode(bool sim) {
+  this->simulation_mode_ = sim;
+  if (this->display_ != nullptr) {
+    this->display_->set_simulation_mode(sim);
+  }
+}
+
+inline bool HtramGd32Component::dump_ppm(const std::string &path) const {
+  if (this->display_ != nullptr) {
+    return this->display_->dump_ppm(path);
+  }
+  return false;
+}
+
+inline void HtramGd32Component::clear_persistent_asset() {
+  if (this->display_ != nullptr) {
+    this->display_->clear_persistent_asset();
+  }
+}
+
+#ifdef HTRAM_HAS_WEB_HANDLERS
 class Gd32OtaHandler : public AsyncWebHandler {
  public:
   Gd32OtaHandler(HtramGd32Component *parent) : parent_(parent) {}
@@ -347,6 +420,7 @@ class Gd32AssetsHandler : public AsyncWebHandler {
   HtramGd32Component *parent_;
   std::vector<uint8_t> assets_data_;
 };
+#endif  // HTRAM_HAS_WEB_HANDLERS
 
 }  // namespace htram_gd32
 }  // namespace esphome

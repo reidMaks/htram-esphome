@@ -1,0 +1,797 @@
+# Core UI Package for HTRAM (Display, Fonts, LVGL Widgets, UI Scripts & Handlers)
+# Shared between real hardware (htram-core.yaml) and host simulation (htram-sim-core.yaml)
+
+font:
+  # Digits only, and pre-slanted: ESPHome renders from the TTF at build time and
+  # LVGL has no shear, so the 12 deg oblique is baked into the file by
+  # tools/fonts/make_oblique.py. 4 bpp matters here — the ExtraLight stem is
+  # 5 px wide and 1 bpp would shred it.
+  - file: "${repo_url}/fonts/DejaVuSans-ExtraLight-Oblique.ttf"
+    id: font_clock
+    size: 92
+    bpp: 4
+    glyphs: "0123456789-"
+
+  # Sixteen glyphs, for the one thing that is read deliberately rather than
+  # glanced at: the device id, shown big enough to read across a desk.
+  - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
+    id: font_id
+    size: 44
+    bpp: 4
+    glyphs: "0123456789abcdef"
+
+  # The caption line stays upright, and in a regular weight: measured at 15 px,
+  # ExtraLight has a 1 px stem that never reaches full white (peak 240/255),
+  # while Noto Sans gets 2 px at 255. Going bigger does not fix it -- ExtraLight
+  # is still 1 px at 17 px -- so this is about weight, not size.
+  - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
+    id: font_slot
+    size: 15
+    bpp: 4
+    glyphs: "0123456789.,:%-+ °"
+    glyphsets:
+      - GF_Cyrillic_Core
+
+  # 22 px UI font: used for failure screens, fallback AP credentials,
+  # weather forecast date & temperatures, and feature titles.
+  # Includes ASCII, Latin, degree symbol, and full Ukrainian alphabet.
+  - file: "${repo_url}/fonts/NotoSans-Regular.ttf"
+    id: font_msg
+    size: 22
+    bpp: 4
+    glyphs: " !#$%&()*+,-.:;=?@[]_{}~/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯабвгґдеєжзиіїйклмнопрстуфхцчшщьюя"
+
+display:
+  - platform: htram_gd32
+    id: htram_display
+    update_interval: never
+
+globals:
+  - id: ha_link
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: slot_idx
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: slot_hold
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: slot_extra_text
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  # 0 = clock, 1 = no time, 2 = no network, -1 = unknown/overlay dirtied it.
+  # lv_label_set_text invalidates unconditionally, so the message is only
+  # written when the state behind it actually changed.
+  - id: face_state
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  # The AP face has two pages: 0 = QR to scan, 1 = the same credentials as text.
+  - id: ap_page
+    type: int
+    restore_value: false
+    initial_value: "0"
+  # Set by the first button press on the AP face. Until then the two pages
+  # alternate on their own, which is what makes the second one discoverable;
+  # afterwards the button owns them, because seven seconds is not enough to
+  # copy a password and a timer that takes it away mid-word is hostile.
+  - id: ap_manual
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+script:
+  # Hours and minutes are separate labels: only the minutes row is dirty most of
+  # the time, and staggering them needs independent x offsets anyway.
+  - id: refresh_clock
+    mode: restart
+    then:
+      - lambda: |-
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) now = id(net_time).now();
+          if (!now.is_valid()) {
+            time_t t = ::time(nullptr);
+            if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+          }
+          if (!now.is_valid()) return;
+          // lv_label_set_text invalidates unconditionally, so each digit is
+          // written only when it actually changed.
+          static int prev[4] = {-1, -1, -1, -1};
+          static int last_face = -1;
+          if (id(face_state) != last_face) {
+            last_face = id(face_state);
+            prev[0] = prev[1] = prev[2] = prev[3] = -1;
+          }
+          const int cur[4] = {now.hour / 10, now.hour % 10,
+                              now.minute / 10, now.minute % 10};
+          lv_obj_t *const lbl[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
+          char buf[2] = {0, 0};
+          for (int i = 0; i < 4; i++) {
+            const char *existing = lv_label_get_text(lbl[i]);
+            if (cur[i] == prev[i] && existing != nullptr && existing[0] == ('0' + cur[i])) continue;
+            prev[i] = cur[i];
+            buf[0] = '0' + cur[i];
+            lv_label_set_text(lbl[i], buf);
+          }
+
+  # One caption line, three facts, rotating every 7 s.
+  # Which unit am I looking at? Triple-click and the caption says so for a few
+  # seconds, then goes back to its rotation. Nothing permanent is added to the
+  # face for something you need about twice a year.
+  - id: show_device_id
+    mode: restart
+    then:
+      - script.stop: show_network
+      - lambda: |-
+          /* Identifying a unit is a deliberate act, not a glance, so it takes
+             over the whole face rather than whispering from the caption line
+             at 1.7 mm. The clock comes back six seconds later. */
+          id(slot_hold) = true;
+          id(face_state) = -1;
+          std::string s = esphome::get_mac_address().substr(6);
+          lv_label_set_text(id(ui_devid), s.c_str());
+          std::string ip = id(wifi_ip).state;
+          if (ip.empty() || ip == "0.0.0.0") ip = "немає мережі";
+          lv_label_set_text(id(ui_msg_sub), ip.c_str());
+          lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 48);
+          lv_obj_t *const hide[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
+                                    id(ui_slot), id(ui_pocket), id(ui_msg),
+                                    id(ui_msg_cap), id(ui_msg2),
+                                    id(ui_ap_card), id(ui_ap_qr)};
+          for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+      - delay: 6s
+      - lambda: |-
+          lv_obj_add_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
+          id(slot_hold) = false;
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
+
+  # A clock with no time is dashes, and dashes look like a broken screen rather
+  # than an explanation. Whenever the time is not set, the face says why instead.
+  # A working clock is never hidden: losing the network while the time is
+  # already known leaves the clock alone and speaks through the pocket and slot.
+  - id: refresh_face
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(slot_hold)) return;  // the ID / IP overlay owns the face
+
+          // The fallback AP is the only state where the device is actively
+          // asking for help and can do nothing else useful -- no HA, no
+          // weather, nothing. So it outranks even a valid clock.
+          #ifdef USE_CAPTIVE_PORTAL
+          const bool ap = captive_portal::global_captive_portal != nullptr &&
+                          captive_portal::global_captive_portal->is_active();
+          #else
+          const bool ap = false;
+          #endif
+          #ifdef USE_WIFI
+          const bool net = (wifi::global_wifi_component != nullptr) ? wifi::global_wifi_component->is_connected() : true;
+          #else
+          const bool net = true;
+          #endif
+          const bool have_time = id(ha_time).now().is_valid() ||
+                                 id(net_time).now().is_valid() ||
+                                 (::time(nullptr) > 1700000000);
+
+          // Priority, as written down in TODO §13: the AP outranks everything
+          // (a device asking to be configured can do nothing else useful), then
+          // the minute of silence, then the ordinary faces.
+          const bool silence = id(htram_arbiter_hub)->is_silence_active();
+          const int want = ap ? 3 : (silence ? 4 : (have_time ? 0 : (net ? 1 : 2)));
+          if (want != 3) id(ap_manual) = false;
+          const int prev_face = id(face_state);
+          if (want == prev_face) return;
+          id(face_state) = want;
+          if (prev_face == 4 && want != 4) {
+            lv_obj_invalidate(id(ui_root));
+          }
+
+          lv_obj_t *const face[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
+                                    id(ui_slot)};
+          for (auto *o : face) {
+            if (want == 0) {
+              lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+              lv_obj_invalidate(o);
+            } else {
+              lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+            }
+          }
+
+          lv_obj_t *const msg[] = {id(ui_msg_cap), id(ui_msg), id(ui_msg_sub),
+                                   id(ui_msg2), id(ui_ap_card), id(ui_ap_qr)};
+          for (auto *o : msg) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+
+          id(on_face_changed).execute(want);
+
+          lv_obj_set_style_bg_color(id(ui_root), lv_color_hex(0x000000), LV_PART_MAIN);
+          if (want != 4) {
+            id(htram_core)->clear_persistent_asset();
+            lv_obj_set_style_bg_color(id(ui_secdot), lv_color_hex(0xB9AFA3), LV_PART_MAIN);
+          }
+
+          if (want == 4) {
+            return;
+          }
+
+          if (want == 0) {
+            id(refresh_clock).execute();
+            id(refresh_slot).execute();
+            return;
+          }
+
+          if (want == 3) {
+            #ifdef USE_WIFI
+            if (wifi::global_wifi_component == nullptr) return;
+            // Both strings come from the running config rather than being
+            // repeated here, so they cannot drift from what the radio answers.
+            auto cfg = wifi::global_wifi_component->get_ap();
+            const std::string ssid = cfg.get_ssid().c_str();
+            const std::string pass = cfg.get_password().c_str();
+
+            lv_label_set_text(id(ui_msg_cap), "точка доступу");
+            lv_obj_align(id(ui_msg_cap), LV_ALIGN_CENTER, 0,
+                         id(ap_page) == 0 ? 76 : -62);
+            lv_obj_remove_flag(id(ui_msg_cap), LV_OBJ_FLAG_HIDDEN);
+
+            if (id(ap_page) == 0) {
+              // The whole join, in one scan. The modules land at ~0.55 mm on a
+              // 27 mm panel, which is close to what a phone camera resolves --
+              // hence page 1, which is the same credentials typed out.
+              const std::string qr = "WIFI:T:WPA;S:" + ssid + ";P:" + pass + ";;";
+              lv_qrcode_update(id(ui_ap_qr), qr.c_str(), qr.size());
+              lv_obj_remove_flag(id(ui_ap_card), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_remove_flag(id(ui_ap_qr), LV_OBJ_FLAG_HIDDEN);
+              return;
+            }
+
+            lv_label_set_text(id(ui_msg), ssid.c_str());
+            lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -30);
+            lv_label_set_text(id(ui_msg_sub), "пароль");
+            lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 4);
+            lv_label_set_text(id(ui_msg2), pass.c_str());
+            lv_obj_align(id(ui_msg2), LV_ALIGN_CENTER, 0, 34);
+            lv_obj_remove_flag(id(ui_msg), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_msg2), LV_OBJ_FLAG_HIDDEN);
+            #endif
+            return;
+          }
+
+          lv_label_set_text(id(ui_msg), net ? "немає часу" : "немає мережі");
+          lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -14);
+          lv_label_set_text(id(ui_msg_sub),
+                            net ? "чекаю сервер часу" : "шукаю мережу");
+          lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 16);
+          lv_obj_remove_flag(id(ui_msg), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+
+  # Double-click: the address, for the six seconds it takes to type it in.
+  # Same deliberate-act reasoning as the device id -- nothing permanent on the
+  # face for something needed twice a year, but reachable without a router UI.
+  - id: show_network
+    mode: restart
+    then:
+      - script.stop: show_device_id
+      - lambda: |-
+          id(slot_hold) = true;
+          id(face_state) = -1;
+          std::string ip = id(wifi_ip).state;
+          if (ip.empty() || ip == "0.0.0.0") ip = "немає мережі";
+          lv_label_set_text(id(ui_msg_cap), "адреса");
+          lv_obj_align(id(ui_msg_cap), LV_ALIGN_CENTER, 0, -24);
+          lv_label_set_text(id(ui_msg), ip.c_str());
+          lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, 2);
+          lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_msg_cap), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_t *const hide[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
+                                    id(ui_slot), id(ui_pocket), id(ui_devid),
+                                    id(ui_devid_cap), id(ui_msg2),
+                                    id(ui_ap_card), id(ui_ap_qr)};
+          for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_msg), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+      - delay: 6s
+      - lambda: id(slot_hold) = false;
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
+
+  # Extension points for modular features
+  - id: on_face_changed
+    parameters:
+      face: int
+    then: []
+
+  - id: on_alert_changed
+    then: []
+
+  - id: handle_feature_button
+    parameters:
+      action: string
+    then: []
+
+  - id: on_alarm_started
+    then: []
+
+  - id: on_alarm_dismissed
+    then: []
+
+  - id: on_button_press
+    then:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_event("button_press");
+
+  - id: on_button_release
+    then:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_event("button_release");
+
+  - id: on_button_action
+    mode: restart
+    parameters:
+      action: string
+    then:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action(action);
+
+  - id: refresh_slot
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(slot_hold)) return;
+          char buf[48];
+          if (!id(slot_extra_text).empty() && id(slot_idx) == 2) {
+            snprintf(buf, sizeof(buf), "%s", id(slot_extra_text).c_str());
+          } else {
+            switch (id(slot_idx)) {
+            case 0: {
+              auto now = id(ha_time).now();
+              if (!now.is_valid()) now = id(net_time).now();
+              if (!now.is_valid()) {
+                time_t t = ::time(nullptr);
+                if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+              }
+              if (!now.is_valid()) return;
+              static const char *const DAYS[] = {"", "Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"};
+              // Three letters, not the full month: "Пн, 22 листопада" is 138 px
+              // and the content circle only offers 117 px at this baseline.
+              static const char *const MONTHS[] = {
+                  "", "січ", "лют", "бер", "кві", "тра", "чер",
+                  "лип", "сер", "вер", "жов", "лис", "гру"};
+              snprintf(buf, sizeof(buf), "%s, %d %s",
+                       DAYS[now.day_of_week >= 1 && now.day_of_week <= 7 ? now.day_of_week : 0],
+                       now.day_of_month,
+                       MONTHS[now.month >= 1 && now.month <= 12 ? now.month : 0]);
+              break;
+            }
+            default: {
+              if (isnan(id(sensor_temp).state) || isnan(id(sensor_hum).state)) return;
+              snprintf(buf, sizeof(buf), "%.1f°  %.0f%%",
+                       id(sensor_temp).state, id(sensor_hum).state);
+              break;
+            }
+          }
+          }
+          lv_label_set_text(id(ui_slot), buf);
+
+  # The pocket is empty whenever nothing needs the eye. Percentage rather than a
+  # battery glyph: at 1.8 mm a glyph is mush and "62%" is not.
+  - id: refresh_pocket
+    mode: restart
+    then:
+      - lambda: |-
+          // Charge level and API link are independent facts, so they no longer
+          // gate each other: coupling them meant every gap between API clients
+          // (an `esphome logs` session ending counts) hid the battery.
+          const bool warn = !id(ha_link);
+          const bool on_batt = !id(sensor_usb).state &&
+                               !isnan(id(sensor_batt_level).state);
+
+          ESP_LOGD("pocket", "link=%d usb=%d batt=%.0f -> warn=%d batt_icon=%d",
+                   (int) id(ha_link), (int) id(sensor_usb).state,
+                   id(sensor_batt_level).state, (int) warn, (int) on_batt);
+
+          lv_label_set_text(id(ui_pocket), warn ? "!" : "");
+
+          lv_obj_t *const batt[3] = {id(ui_batt_body), id(ui_batt_nub), id(ui_batt_fill)};
+          for (int i = 0; i < 3; i++) {
+            if (on_batt)
+              lv_obj_remove_flag(batt[i], LV_OBJ_FLAG_HIDDEN);
+            else
+              lv_obj_add_flag(batt[i], LV_OBJ_FLAG_HIDDEN);
+          }
+          if (!on_batt) return;
+
+          const float pct = id(sensor_batt_level).state;
+          const uint32_t c = pct < 20 ? 0xFF9E3D : 0x9AA2AC;
+          int w = (int) lroundf(18.0f * (pct < 0 ? 0 : (pct > 100 ? 100 : pct)) / 100.0f);
+          if (w < 1) w = 1;
+          lv_obj_set_width(id(ui_batt_fill), w);
+          lv_obj_set_style_bg_color(id(ui_batt_fill), lv_color_hex(c), LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(ui_batt_nub), lv_color_hex(c), LV_PART_MAIN);
+          lv_obj_set_style_border_color(id(ui_batt_body), lv_color_hex(c), LV_PART_MAIN);
+
+interval:
+  # High-frequency tick (20ms) for sub-20ms multi-room audio & LCD second synchronization.
+  - interval: 20ms
+    then:
+      - lambda: |-
+          static int last_ui_sec = -1;
+          static int last_min = -1;
+          if (id(htram_core)->consume_display_refresh()) {
+            last_ui_sec = -1;
+            last_min = -1;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+            lv_obj_invalidate(lv_screen_active());
+          }
+          if (id(htram_core)->is_ota_mode()) return;
+
+          timeval tv;
+          gettimeofday(&tv, nullptr);
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) now = id(net_time).now();
+          if (!now.is_valid()) {
+            time_t t = ::time(nullptr);
+            if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+          }
+          if (!now.is_valid()) return;
+
+          // Exact-second LCD updates (orbiting seconds dot & clock minute flip)
+          if ((int) tv.tv_sec != last_ui_sec) {
+            last_ui_sec = (int) tv.tv_sec;
+            // Moving the dot invalidates only where it was and where it lands.
+            float a = (now.second * 6.0f - 90.0f) * 3.14159265f / 180.0f;
+            lv_obj_set_pos(id(ui_secdot),
+                           (lv_coord_t) lroundf(120.0f + 113.0f * cosf(a) - 3.5f),
+                           (lv_coord_t) lroundf(120.0f + 113.0f * sinf(a) - 3.5f));
+            if (now.minute != last_min) {
+              last_min = now.minute;
+              id(refresh_clock).execute();
+              if (id(slot_idx) == 0) id(refresh_slot).execute();
+            }
+          }
+
+          // Initial boot resync: at ~1.5s after boot (when GD32 UART link is confirmed up),
+          // force a clean repaint of face and digits so boot glitches/drops are cleared immediately.
+          static bool boot_synced = false;
+          if (!boot_synced && millis() > 1500) {
+            boot_synced = true;
+            last_min = -1;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+            lv_obj_invalidate(lv_screen_active());
+          }
+
+  - interval: 7s
+    then:
+      - lambda: |-
+          if (id(htram_core)->is_ota_mode()) return;
+          int max_slots = id(slot_extra_text).empty() ? 2 : 3;
+          id(slot_idx) = (id(slot_idx) + 1) % max_slots;
+          id(refresh_slot).execute();
+      # Same rhythm flips the AP face between the QR and the typed credentials,
+      # until somebody takes the wheel with the button.
+      - lambda: |-
+          if (id(htram_core)->is_ota_mode()) return;
+          if (id(face_state) == 3 && !id(ap_manual)) {
+            id(ap_page) ^= 1;
+            id(face_state) = -1;   // force refresh_face to repaint
+            id(refresh_face).execute();
+          }
+
+lvgl:
+  displays:
+    - htram_display
+  # No `rotation:` here on purpose -- the 180 degree turn now lives in the
+  # ST7789's MADCTL register on the GD32 (LCD_MADCTL in display.c), so the
+  # GD32's own boot and standby screens come out upright as well and LVGL
+  # stops rotating every flushed rectangle in software.
+  buffer_size: 12.5%
+  byte_order: big_endian
+  bg_color: 0x000000
+  refresh_interval: 200ms
+  widgets:
+    - obj:
+        id: ui_root
+        width: 240
+        height: 240
+        pad_all: 0
+        border_width: 0
+        outline_width: 0
+        bg_color: 0x000000
+        bg_opa: cover
+        scrollable: false
+        widgets:
+          # A swept arc looked right but cost 8.9 s of UART once a minute: at the
+          # 59->0 wrap LVGL invalidates the whole 214x214 ring at once, and at
+          # 115200 that is a two-thirds-of-a-screen repaint. Measured on the
+          # device as "lvgl took a long time for an operation (8853 ms)".
+          #
+          # So the ring is now a static outline that is drawn once and never
+          # touched, and the seconds are a dot orbiting it. The wrap becomes
+          # just another 7 px move, and the whole thing costs ~40 ms/s.
+          - obj:
+              id: ui_ring
+              align: center
+              width: 228
+              height: 228
+              radius: 114
+              bg_opa: TRANSP
+              border_width: 2
+              border_color: 0xB9AFA3
+              border_opa: 30%
+              pad_all: 0
+              scrollable: false
+              clickable: false
+
+          - obj:
+              id: ui_secdot
+              x: 116
+              y: 3
+              width: 7
+              height: 7
+              radius: 4
+              bg_color: 0xB9AFA3
+              bg_opa: cover
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+
+          # Staggered +/-16 px. The clock face carries tight vertical metrics
+          # (ascender clamped to the digits), so the line box is 67 px rather
+          # than 102 and y addresses the ink directly — which also stops the two
+          # rows overlapping, so LVGL no longer merges them into one repaint.
+          # One label per digit. Only the digit that actually changed is
+          # invalidated, so nine minutes out of ten the repaint is a single
+          # 59x70 box instead of the whole 118 px pair.
+          #
+          # 92 px is the ceiling while the date stays inside the ring: the
+          # hours row needs 82 px of half-width (pair + stagger + the oblique's
+          # overhang) and the circle only offers that from y=44 down.
+          - label:
+              id: ui_h1
+              align: top_mid
+              x: -46
+              y: 44
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+          - label:
+              id: ui_h2
+              align: top_mid
+              x: 14
+              y: 44
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+          - label:
+              id: ui_m1
+              align: top_mid
+              x: -14
+              y: 120
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+          - label:
+              id: ui_m2
+              align: top_mid
+              x: 46
+              y: 120
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+
+          - label:
+              id: ui_devid
+              align: center
+              y: 4
+              text_font: font_id
+              text_color: 0xF0EAE0
+              text: ""
+              hidden: true
+
+          - label:
+              id: ui_devid_cap
+              align: center
+              y: -34
+              text_font: font_slot
+              text_color: 0x707880
+              text: "ID"
+              hidden: true
+
+          # The QR's quiet zone: lv_qrcode paints the light colour only under
+          # the modules themselves, and a code that runs straight into black
+          # pixels does not scan.
+          - obj:
+              id: ui_ap_card
+              align: center
+              y: -14
+              width: 140
+              height: 140
+              radius: 6
+              bg_color: 0xFFFFFF
+              bg_opa: cover
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              hidden: true
+
+          - qrcode:
+              id: ui_ap_qr
+              align: center
+              y: -14
+              size: 124
+              dark_color: 0x000000
+              light_color: 0xFFFFFF
+              hidden: true
+
+          # Shown only when the clock cannot be: these replace the digits rather
+          # than sharing the face with them. Four slots, because the AP face has
+          # to label two Latin strings that mean nothing on their own -- the
+          # network name and its password. Positions are set at runtime by
+          # refresh_face, since a two-line face and a four-line face cannot
+          # share one set of offsets.
+
+          - label:
+              id: ui_msg_cap
+              align: center
+              y: -56
+              text_font: font_slot
+              text_color: 0x707880
+              text: ""
+              hidden: true
+
+          - label:
+              id: ui_msg
+              align: center
+              y: -6
+              text_font: font_msg
+              text_color: 0xC2C8D0
+              text: ""
+              hidden: true
+
+          - label:
+              id: ui_msg_sub
+              align: center
+              y: 22
+              text_font: font_slot
+              text_color: 0x707880
+              text: ""
+              hidden: true
+
+          - label:
+              id: ui_msg2
+              align: center
+              y: 30
+              text_font: font_msg
+              text_color: 0xC2C8D0
+              text: ""
+              hidden: true
+
+          - label:
+              id: ui_slot
+              align: bottom_mid
+              y: -25
+              text_font: font_slot
+              text_color: 0xC2C8D0
+              text: ""
+
+          - label:
+              id: ui_pocket
+              align: top_left
+              x: 16
+              y: 12
+              text_font: font_slot
+              text_color: 0xFF9E3D
+              text: ""
+
+          # Battery, drawn rather than written. Sits in the pocket the stagger
+          # of the hours leaves free, and stays hidden while on USB.
+          # Кути по діагоналі, ПОЗА кільцем (137 px від центру проти радіуса
+          # 114): там нічого немає, а кишеня після ряду годин потрібна слоту
+          # піктограми. На панелі ці два індикатори й так ледь помітні, тож кут
+          # їм не шкодить.
+          - obj:
+              id: ui_batt_body
+              x: 204
+              y: 19
+              width: 22
+              height: 11
+              radius: 2
+              bg_opa: TRANSP
+              border_width: 1
+              border_color: 0x707880
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              hidden: true
+          - obj:
+              id: ui_batt_nub
+              x: 226
+              y: 22
+              width: 2
+              height: 5
+              radius: 0
+              bg_color: 0x707880
+              bg_opa: cover
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              hidden: true
+          - obj:
+              id: ui_batt_fill
+              x: 206
+              y: 21
+              width: 12
+              height: 7
+              radius: 0
+              bg_color: 0x707880
+              bg_opa: cover
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              hidden: true
+
+button:
+  - platform: template
+    name: "Show Device ID"
+    icon: "mdi:identifier"
+    entity_category: diagnostic
+    disabled_by_default: true
+    on_press:
+      - script.execute: show_device_id
+
+  - platform: template
+    name: "Simulate Single Click"
+    id: btn_sim_single
+    icon: "mdi:gesture-tap-button"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("single");
+
+  - platform: template
+    name: "Simulate Double Click"
+    id: btn_sim_double
+    icon: "mdi:gesture-double-tap"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("double");
+
+  - platform: template
+    name: "Simulate Triple Click"
+    id: btn_sim_triple
+    icon: "mdi:gesture-tap"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("triple");
+
+  - platform: template
+    name: "Simulate Long Press"
+    id: btn_sim_long
+    icon: "mdi:gesture-tap-hold"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("long");

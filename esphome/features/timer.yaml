@@ -162,6 +162,7 @@ text_sensor:
 
 script:
   - id: refresh_timer_ui
+    mode: restart
     then:
       - lambda: |-
           const int state = id(timer_state);
@@ -169,7 +170,7 @@ script:
           const bool silence = (id(htram_arbiter_hub)->get_screen_mode() == 4) || id(htram_arbiter_hub)->is_silence_active();
           const bool slot_held = id(slot_hold);
 
-          static int last_screen_mode = -1; // 0 = CLOCK, 1 = TIMER, 2 = OVERLAY_HIDDEN
+          static int last_screen_mode = 0; // 0 = CLOCK, 1 = TIMER, 2 = OVERLAY_HIDDEN
           static int last_tick_sig = -999;
           static int prev_d1 = -1;
           static int prev_d2 = -1;
@@ -226,8 +227,6 @@ script:
               // Show clock widgets and secdot
               lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot)};
               for (auto *o : clk) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-              id(face_state) = -1;
-              id(refresh_face).execute();
               id(refresh_clock).execute();
               id(refresh_slot).execute();
             }

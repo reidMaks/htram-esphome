@@ -34,7 +34,7 @@ TEST_BIN_PERIPH   := $(TEST_DIR)/test_periph_bin
 TEST_BIN_SPI_FLASH:= $(TEST_DIR)/test_spi_flash_bin
 TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
-.PHONY: all test test-gd32 test-esphome test-tools test-configs \
+.PHONY: all test test-gd32 test-esphome test-tools test-configs test-sim \
         lint lint-c lint-py lint-yaml format format-check \
         coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
         status build-esp install-hooks clean help \
@@ -136,6 +136,11 @@ test-tools:
 test-configs:
 	@echo "==> Validating ESPHome YAML Configurations..."
 	$(PYTEST) tests/esphome_config -v
+
+# ── Host Simulation Feature Tests & Visual Verification ─────────────────────
+test-sim:
+	@echo "==> Running Host Simulation Feature Tests & Capturing Screenshots..."
+	uv run python3 tools/test_runner.py
 
 # ── Linters & Static Analysis ────────────────────────────────────────────────
 lint: lint-c lint-yaml lint-py

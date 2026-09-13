@@ -1,0 +1,82 @@
+# HTRAM Full Simulator (Native Linux Host Platform)
+# Emulates a complete HTRAM device with all features:
+# - Silence (Хвилина мовчання о 09:00 з Тризубом)
+# - Alert (Повітряна тривога через JAAM WS)
+# - Alarm (Будильник)
+# - Weather (Прогноз погоди)
+# - Timer (Кухонний таймер)
+
+substitutions:
+  name: htram-sim
+  friendly_name: "HTRAM Full Simulator"
+  repo_url: "."
+
+packages:
+  core: !include htram-sim-core.yaml
+  silence: !include features/silence.yaml
+  alert: !include features/alert.yaml
+  alarm: !include features/alarm.yaml
+  weather: !include features/weather.yaml
+  timer: !include features/timer.yaml
+
+api:
+  services:
+    - service: simulate_weather
+      variables:
+        min_temp: float
+        max_temp: float
+        morning_temp: float
+        day_temp: float
+        evening_temp: float
+        morning_cond: string
+        day_cond: string
+        evening_cond: string
+      then:
+        - lambda: |-
+            id(weather_min_temp) = min_temp;
+            id(weather_max_temp) = max_temp;
+            id(weather_morning_temp) = morning_temp;
+            id(weather_day_temp) = day_temp;
+            id(weather_evening_temp) = evening_temp;
+            id(weather_morning_cond) = morning_cond;
+            id(weather_day_cond) = day_cond;
+            id(weather_evening_cond) = evening_cond;
+            id(weather_valid) = true;
+            id(refresh_weather_ui).execute();
+
+    - service: simulate_alert
+      variables:
+        flags: int
+      then:
+        - lambda: |-
+            id(jaam)->simulate_flags((uint32_t) flags);
+
+    - service: simulate_alarm
+      variables:
+        enabled: bool
+        hour: int
+        minute: int
+      then:
+        - lambda: |-
+            if (enabled) {
+              id(alarm_enabled).turn_on();
+            } else {
+              id(alarm_enabled).turn_off();
+            }
+            auto call = id(alarm_time).make_call();
+            call.set_hour((uint8_t) hour);
+            call.set_minute((uint8_t) minute);
+            call.perform();
+            id(alarm_ui_sig) = -1;
+            id(refresh_alarm_ui).execute();
+
+    - service: simulate_silence
+      variables:
+        active: bool
+      then:
+        - lambda: |-
+            if (active) {
+              id(start_minute_of_silence).execute(false);
+            } else {
+              id(finish_silence).execute();
+            }

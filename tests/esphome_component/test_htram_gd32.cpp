@@ -981,6 +981,19 @@ void test_display_pixel_drawing(void) {
   g_comp->set_ota_mode(false);
   TEST_ASSERT_FALSE(g_comp->is_ota_mode());
   TEST_ASSERT_TRUE(g_comp->consume_display_refresh());
+
+  // Test framebuffer pixel storage & asset drawing
+  disp.set_simulation_mode(true);
+  disp.draw_pixel_at(5, 5, Color(255, 0, 0));
+  const uint16_t* fb = disp.get_framebuffer();
+  TEST_ASSERT_NOT_NULL(fb);
+  TEST_ASSERT_EQUAL_HEX16(0xF800, fb[5 * 240 + 5]);
+
+  // Test cached asset blitting to framebuffer
+  g_comp->set_display(&disp);
+  g_comp->send_draw_cached_asset(0, 10, 10, 0xFFFF, 0x0000, 0);  // Asset 0 (tryzub)
+  TEST_ASSERT_TRUE(disp.dump_ppm("/tmp/test_dump.ppm"));
+  std::remove("/tmp/test_dump.ppm");
 }
 
 // ---------------------------------------------------------------------------

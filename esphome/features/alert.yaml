@@ -13,7 +13,9 @@ substitutions:
   alert_mark_minutes: "5"
 
 external_components:
-  - source: github://reidMaks/jaam_ws@v1.0.0
+  - source:
+      type: local
+      path: custom_components
     components: [jaam_ws]
 
 jaam_ws:
