@@ -41,8 +41,7 @@ jaam_ws:
               id(alert_mark_until) = now.timestamp + ${alert_mark_minutes} * 60;
               id(alert_mark_color) = air ? 0xE5484D : 0x3DD68C;
             }
-            id(htram_arbiter_hub)->play_rtttl(40, "alert", air ? "${alert_start_rtttl}"
-                                                               : "${alert_clear_rtttl}");
+            id(play_alert_sound).execute(air);
           }
       - script.execute: refresh_alert_marks
       - script.execute: refresh_alert_icon
@@ -134,6 +133,18 @@ lvgl:
         hidden: true
 
 script:
+  - id: play_alert_sound
+    parameters:
+      air: bool
+    mode: restart
+    then:
+      - lambda: |-
+          id(htram_arbiter_hub)->play_rtttl(40, "alert", air ? "${alert_start_rtttl}"
+                                                             : "${alert_clear_rtttl}");
+      - delay: 2s
+      - lambda: |-
+          id(htram_arbiter_hub)->stop_sound("alert");
+
   - id: refresh_alert_icon
     then:
       - lambda: |-

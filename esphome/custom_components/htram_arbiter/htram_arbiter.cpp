@@ -46,7 +46,7 @@ std::string HtramArbiter::get_active_context() const {
   if (this->silence_test_) {
     return "silence_test";
   }
-  if (this->audio_priority_ >= SOUND_PRIO_ALARM) {
+  if (this->audio_priority_ == SOUND_PRIO_ALARM && (this->audio_owner_ == "alarm" || this->audio_owner_ == "timer")) {
     return "ringing";
   }
   if (this->screen_mode_ != SCREEN_CLOCK) {

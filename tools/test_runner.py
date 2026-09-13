@@ -38,7 +38,12 @@ class SimulationHarness:
 
     def ensure_binary(self) -> None:
         """Ensures the simulator binary is compiled."""
-        if not SIM_BINARY.exists():
+        recompile = not SIM_BINARY.exists()
+        if not recompile:
+            bin_mtime = SIM_BINARY.stat().st_mtime
+            if any(p.stat().st_mtime > bin_mtime for p in REPO_ROOT.glob("esphome/**/*.yaml")):
+                recompile = True
+        if recompile:
             print(f"[*] Compiling host simulator binary from {SIM_CONFIG}...")
             cmd = ["uv", "run", "esphome", "compile", str(SIM_CONFIG)]
             res = subprocess.run(cmd, cwd=REPO_ROOT, check=True)
@@ -142,6 +147,10 @@ class SimulationHarness:
     async def simulate_silence(self, active: bool) -> None:
         """Starts or finishes the Minute of Silence."""
         await self.call_service("simulate_silence", {"active": active})
+
+    async def reset_alert_marks(self) -> None:
+        """Resets alert clock marks back to normal."""
+        await self.call_service("reset_alert_marks")
 
     async def capture_screenshot(self, basename: str) -> Path:
         """Dumps framebuffer to PPM and converts to optimized PNG."""
@@ -292,36 +301,38 @@ async def run_test_suite() -> bool:
             results.append(
                 ("07_alert_threat", True, "Alert threat: red clock digits + ballistic missile icon")
             )
-            # Clear alert
-            await harness.simulate_alert(flags=0)
-            await asyncio.sleep(0.5)
         except Exception as e:
             results.append(("07_alert_threat", False, str(e)))
 
-        # Test 8: Network IP Overlay
-        print("\n--- Test 8: Network IP Overlay ---")
+        # Test 8: Air Raid Alert Clear (Green Digits)
+        print("\n--- Test 8: Air Raid Alert Clear ---")
         try:
-            # Triple click triggers network IP overlay
-            await harness.inject_button("triple")
+            # Clear alert: turns digits green for 5 minutes and removes threat icon
+            await harness.simulate_alert(flags=0)
             await asyncio.sleep(0.5)
-            png = await harness.capture_screenshot("08_network_ip")
+            png = await harness.capture_screenshot("08_alert_clear")
             assert png.exists() and png.stat().st_size > 1000
-            results.append(("08_network_ip", True, "Network IP overlay displayed on triple click"))
-            # Dismiss overlay
-            await harness.inject_button("single")
+            results.append(
+                ("08_alert_clear", True, "Alert clear: green clock digits without threat icon")
+            )
+            # Reset alert marks back to white clock
+            await harness.reset_alert_marks()
             await asyncio.sleep(0.5)
         except Exception as e:
-            results.append(("08_network_ip", False, str(e)))
+            results.append(("08_alert_clear", False, str(e)))
 
-        # Test 9: Device ID Overlay
-        print("\n--- Test 9: Device ID Overlay ---")
+        # Test 9: Device ID & IP Overlay (Triple Click)
+        print("\n--- Test 9: Device ID & IP Overlay ---")
         try:
-            await harness.call_service("show_device_id")
+            # Triple click activates show_device_id
+            await harness.inject_button("triple")
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("09_device_id")
             assert png.exists() and png.stat().st_size > 1000
-            results.append(("09_device_id", True, "Device ID overlay displayed with MAC ID and IP"))
-            # Dismiss overlay
+            results.append(
+                ("09_device_id", True, "Device ID overlay displayed with MAC ID and IP via triple click")
+            )
+            # Dismiss overlay via single click
             await harness.inject_button("single")
             await asyncio.sleep(0.5)
         except Exception as e:

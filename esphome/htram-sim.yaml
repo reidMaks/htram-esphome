@@ -80,3 +80,9 @@ api:
             } else {
               id(finish_silence).execute();
             }
+
+    - service: reset_alert_marks
+      then:
+        - lambda: |-
+            id(alert_mark_until) = 0;
+            id(refresh_alert_marks).execute();

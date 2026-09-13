@@ -117,9 +117,9 @@ htram_arbiter:
     - event: button_triple
       context: clock
       priority: 10
-      name: core_show_net
+      name: core_show_device_id
       then:
-        - script.execute: show_network
+        - script.execute: show_device_id
     - event: button_single
       context: modal_ap
       priority: 100
@@ -135,8 +135,18 @@ htram_arbiter:
       priority: 100
       name: core_dismiss_overlay
       then:
-        - lambda: id(slot_hold) = false;
+        - script.stop: show_device_id
+        - lambda: |-
+            id(htram_arbiter_hub)->release_screen("overlay");
+            lv_obj_add_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
+            id(slot_hold) = false;
         - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+        - script.execute: refresh_pocket
 
 time:
   - platform: host

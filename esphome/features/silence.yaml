@@ -115,7 +115,7 @@ script:
 
           // Blit Tryzub coat of arms directly from GD32 external SPI Flash (zero DRAM overhead)
           id(htram_core)->send_draw_cached_asset(
-              htram_gd32::ASSET_ID_TRYZUB, 84, 70,
+              htram_gd32::ASSET_ID_TRYZUB, 66, 45,
               Color(${silence_fg}), Color(0x000000), 0);
 
       # Wait until the 60s ticking completes (30 beeps on atomic even seconds).

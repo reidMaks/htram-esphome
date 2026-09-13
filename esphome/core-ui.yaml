@@ -131,6 +131,7 @@ script:
              over the whole face rather than whispering from the caption line
              at 1.7 mm. The clock comes back six seconds later. */
           id(slot_hold) = true;
+          id(htram_arbiter_hub)->request_screen(3, "overlay");
           id(face_state) = -1;
           std::string s = esphome::get_mac_address().substr(6);
           lv_label_set_text(id(ui_devid), s.c_str());
@@ -148,6 +149,7 @@ script:
           lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
       - delay: 6s
       - lambda: |-
+          id(htram_arbiter_hub)->release_screen("overlay");
           lv_obj_add_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
           lv_obj_add_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
           lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
