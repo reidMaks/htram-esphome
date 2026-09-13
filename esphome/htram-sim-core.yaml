@@ -53,6 +53,26 @@ api:
         - lambda: |-
             id(htram_arbiter_hub)->dispatch_event(event);
 
+    - service: play_rtttl
+      variables:
+        song: string
+      then:
+        - lambda: |-
+            id(htram_core)->play_rtttl(song);
+
+    - service: stop_melody
+      then:
+        - lambda: |-
+            id(htram_core)->send_stop();
+
+    - service: beep
+      variables:
+        freq: int
+        duration: int
+      then:
+        - lambda: |-
+            id(htram_core)->send_beep(freq, duration);
+
     - service: take_screenshot
       variables:
         filename: string
@@ -270,11 +290,6 @@ text_sensor:
     id: device_id
     name: "Device ID"
 
-  - platform: template
-    id: arbiter_context_sensor
-    name: "Arbiter Context"
-    lambda: return id(htram_arbiter_hub)->get_active_context();
-    update_interval: 1s
 
 number:
   - platform: template

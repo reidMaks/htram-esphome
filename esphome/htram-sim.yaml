@@ -18,6 +18,7 @@ packages:
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
+  debug: !include features/debug.yaml
 
 api:
   services:

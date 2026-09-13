@@ -92,6 +92,14 @@ api:
         - lambda: |-
             id(htram_core)->send_stop();
 
+    - service: beep
+      variables:
+        freq: int
+        duration: int
+      then:
+        - lambda: |-
+            id(htram_core)->send_beep(freq, duration);
+
     - service: inject_button
       variables:
         action: string
@@ -444,34 +452,6 @@ text_sensor:
               - script.execute:
                   id: on_button_action
                   action: !lambda "return x;"
-  - platform: template
-    id: arbiter_context_sensor
-    name: "Arbiter Context"
-    icon: "mdi:state-machine"
-    entity_category: diagnostic
-    lambda: return id(htram_arbiter_hub)->get_active_context();
-    update_interval: 1s
-
-button:
-
-  - platform: template
-    id: beep_button
-    name: "Beep"
-    icon: "mdi:volume-high"
-    disabled_by_default: true
-    on_press:
-      - lambda: |-
-          id(htram_core)->send_beep(2000, 200);
-
-  - platform: template
-    id: test_ota_chime_button
-    name: "Сигнал оновлення OTA"
-    icon: "mdi:bell-check"
-    entity_category: diagnostic
-    disabled_by_default: true
-    on_press:
-      - lambda: |-
-          id(htram_core)->play_rtttl("${ota_done_rtttl}");
 
 number:
   - platform: template

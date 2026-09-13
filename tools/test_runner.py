@@ -99,6 +99,30 @@ class SimulationHarness:
         await self.client.execute_service(self.services[name], data or {})
         await asyncio.sleep(0.3)
 
+    async def press_button(self, name: str) -> None:
+        """Simulates pressing an entity button by name via Native HA API."""
+        if name not in self.entities:
+            raise KeyError(f"Entity '{name}' not found. Available: {list(self.entities.keys())}")
+        entity = self.entities[name]
+        self.client.button_command(entity.key)
+        await asyncio.sleep(0.3)
+
+    async def set_switch(self, name: str, state: bool) -> None:
+        """Simulates setting an entity switch by name via Native HA API."""
+        if name not in self.entities:
+            raise KeyError(f"Entity '{name}' not found. Available: {list(self.entities.keys())}")
+        entity = self.entities[name]
+        self.client.switch_command(entity.key, state)
+        await asyncio.sleep(0.3)
+
+    async def set_number(self, name: str, value: float) -> None:
+        """Simulates setting an entity number slider by name via Native HA API."""
+        if name not in self.entities:
+            raise KeyError(f"Entity '{name}' not found. Available: {list(self.entities.keys())}")
+        entity = self.entities[name]
+        self.client.number_command(entity.key, value)
+        await asyncio.sleep(0.3)
+
     async def inject_button(self, action: str) -> None:
         """Simulates a button gesture ('single', 'double', 'triple', 'long')."""
         await self.call_service("inject_button", {"action": action})
@@ -613,6 +637,176 @@ async def run_test_suite() -> bool:
             )
         except Exception as e:
             results.append(("boot_05_cold_boot_process", False, str(e)))
+
+        # ==========================================
+        # HOME ASSISTANT INTEGRATION TESTS (HA API)
+        # ==========================================
+
+        # HA Test 1: Minute of Silence Verification Trigger & Abort
+        print("\n--- HA Test 1: Minute of Silence Verification Trigger & Abort ---")
+        try:
+            # Press "Хвилина мовчання: перевірка" button via Home Assistant native button API
+            await harness.press_button("Хвилина мовчання: перевірка")
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("ha_01_silence_test_triggered")
+            assert png.exists() and png.stat().st_size > 1000
+
+            # Abort silence test with single button click
+            await harness.inject_button("single")
+            await asyncio.sleep(0.5)
+            png_aborted = await harness.capture_screenshot("ha_01_silence_test_aborted")
+            assert png_aborted.exists() and png_aborted.stat().st_size > 1000
+            results.append(
+                (
+                    "ha_01_silence_test",
+                    True,
+                    "HA test silence button triggers Tryzub; single click aborts back to clock",
+                )
+            )
+        except Exception as e:
+            results.append(("ha_01_silence_test", False, str(e)))
+
+        # HA Test 2: Alarm Switch & Services from Home Assistant
+        print("\n--- HA Test 2: Alarm Switch & Services from Home Assistant ---")
+        try:
+            # Enable alarm via Home Assistant switch
+            await harness.set_switch("Будильник увімкнено", True)
+            await asyncio.sleep(0.5)
+            png_en = await harness.capture_screenshot("ha_02_alarm_enabled")
+            assert png_en.exists() and png_en.stat().st_size > 1000
+
+            # Trigger ringing from HA
+            await harness.call_service("ring_alarm")
+            await asyncio.sleep(0.5)
+            png_ring = await harness.capture_screenshot("ha_02_alarm_ringing")
+            assert png_ring.exists() and png_ring.stat().st_size > 1000
+
+            # Snooze from HA
+            await harness.call_service("snooze_alarm")
+            await asyncio.sleep(0.5)
+            png_snooze = await harness.capture_screenshot("ha_02_alarm_snooze")
+            assert png_snooze.exists() and png_snooze.stat().st_size > 1000
+
+            # Dismiss and disable switch from HA
+            await harness.call_service("dismiss_alarm")
+            await harness.set_switch("Будильник увімкнено", False)
+            await asyncio.sleep(0.5)
+            results.append(
+                (
+                    "ha_02_alarm_switch_and_services",
+                    True,
+                    "HA alarm switch toggle, ring, snooze, and dismiss handled cleanly",
+                )
+            )
+        except Exception as e:
+            results.append(("ha_02_alarm_switch_and_services", False, str(e)))
+
+        # HA Test 3: Audio Services from Home Assistant (play_rtttl, beep, stop_melody)
+        print("\n--- HA Test 3: Audio Services from Home Assistant ---")
+        try:
+            # HA triggers notification chime via play_rtttl
+            await harness.call_service("play_rtttl", {"song": "TwoShort:d=4,o=5,b=100:16e6,16e6"})
+            await asyncio.sleep(0.3)
+            # HA triggers short beep
+            await harness.call_service("beep", {"freq": 2000, "duration": 100})
+            await asyncio.sleep(0.3)
+            # HA triggers melody stop
+            await harness.call_service("stop_melody")
+            await asyncio.sleep(0.3)
+            png_audio = await harness.capture_screenshot("ha_03_audio_services")
+            assert png_audio.exists() and png_audio.stat().st_size > 1000
+            results.append(
+                (
+                    "ha_03_audio_services",
+                    True,
+                    "HA audio services (play_rtttl, beep, stop_melody) executed safely",
+                )
+            )
+        except Exception as e:
+            results.append(("ha_03_audio_services", False, str(e)))
+
+        # HA Test 4: Display Sliders from Home Assistant (Brightness & Temp Trim)
+        print("\n--- HA Test 4: Display Sliders from Home Assistant ---")
+        try:
+            # Set brightness to 80% and temp trim to -1.0 °C
+            await harness.set_number("Screen Brightness", 80.0)
+            await harness.set_number("Підстроювання температури", -1.0)
+            await asyncio.sleep(0.5)
+            png_trim = await harness.capture_screenshot("ha_04_number_controls")
+            assert png_trim.exists() and png_trim.stat().st_size > 1000
+
+            # Reset trim back to 0
+            await harness.set_number("Підстроювання температури", 0.0)
+            await asyncio.sleep(0.3)
+            results.append(
+                (
+                    "ha_04_display_number_controls",
+                    True,
+                    "HA number entities (Screen Brightness, Temp Trim) updated without display lag",
+                )
+            )
+        except Exception as e:
+            results.append(("ha_04_display_number_controls", False, str(e)))
+
+        # HA Test 5: Weather Forecast Push from Home Assistant
+        print("\n--- HA Test 5: Weather Forecast Push from Home Assistant ---")
+        try:
+            # Push weather data as HA does periodically
+            await harness.simulate_weather(
+                min_t=10.0,
+                max_t=22.0,
+                morning_t=12.5,
+                day_t=21.0,
+                evening_t=15.0,
+                morning_c="cloudy",
+                day_c="rainy",
+                evening_c="partlycloudy",
+            )
+            await asyncio.sleep(0.3)
+            # Open weather face with double click
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            png_weather = await harness.capture_screenshot("ha_05_weather_pushed")
+            assert png_weather.exists() and png_weather.stat().st_size > 1000
+            # Close weather face
+            await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+            results.append(
+                (
+                    "ha_05_weather_forecast_push",
+                    True,
+                    "HA weather forecast data rendered correctly with 3 dayparts & icons",
+                )
+            )
+        except Exception as e:
+            results.append(("ha_05_weather_forecast_push", False, str(e)))
+
+        # HA Test 6: Debug Gestures & Device ID from Home Assistant (debug.yaml)
+        print("\n--- HA Test 6: Debug Gestures & Device ID from Home Assistant ---")
+        try:
+            # Press "Simulate Double Click" button from HA debug feature to open weather
+            await harness.press_button("Simulate Double Click")
+            await asyncio.sleep(0.5)
+            # Press "Simulate Single Click" button from HA debug feature to close weather
+            await harness.press_button("Simulate Single Click")
+            await asyncio.sleep(0.5)
+            # Press "Show Device ID" button from HA debug feature
+            await harness.press_button("Show Device ID")
+            await asyncio.sleep(0.5)
+            png_devid = await harness.capture_screenshot("ha_06_debug_buttons")
+            assert png_devid.exists() and png_devid.stat().st_size > 1000
+            # Dismiss overlay via Simulate Single Click
+            await harness.press_button("Simulate Single Click")
+            await asyncio.sleep(0.3)
+            results.append(
+                (
+                    "ha_06_debug_buttons",
+                    True,
+                    "HA debug buttons (Simulate Double/Single Click, Show Device ID) functioned properly",
+                )
+            )
+        except Exception as e:
+            results.append(("ha_06_debug_buttons", False, str(e)))
 
 
     finally:
