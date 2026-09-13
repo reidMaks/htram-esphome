@@ -78,6 +78,7 @@ class HtramArbiter : public Component {
   void add_handler(const std::string &event, const std::string &context, int priority,
                    const std::string &name, ArbiterTrigger *trigger);
   bool dispatch_event(const std::string &event);
+  bool dispatch_event_for_context(const std::string &event, const std::string &ctx);
   bool dispatch_button_action(const std::string &action);
   std::string get_active_context() const;
 

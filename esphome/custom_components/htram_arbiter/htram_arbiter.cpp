@@ -46,7 +46,10 @@ std::string HtramArbiter::get_active_context() const {
   if (this->silence_test_) {
     return "silence_test";
   }
-  if (this->audio_priority_ == SOUND_PRIO_ALARM && (this->audio_owner_ == "alarm" || this->audio_owner_ == "timer")) {
+  if (this->audio_priority_ == SOUND_PRIO_ALARM) {
+    if (!this->audio_owner_.empty()) {
+      return "ringing_" + this->audio_owner_;
+    }
     return "ringing";
   }
   if (this->screen_mode_ != SCREEN_CLOCK) {
@@ -61,15 +64,8 @@ bool HtramArbiter::dispatch_button_action(const std::string &action) {
   return this->dispatch_event(ev);
 }
 
-bool HtramArbiter::dispatch_event(const std::string &event) {
-  // Sacred Silence check: 09:00 Minute of Silence locks all button interactions!
-  if (this->silence_sacred_ && event.rfind("button_", 0) == 0) {
-    ESP_LOGI(TAG, "Button locked during 09:00 Minute of Silence: event '%s' ignored", event.c_str());
-    return true; // Absorbed!
-  }
-
-  const std::string ctx = this->get_active_context();
-  ESP_LOGI(TAG, "Dispatching event '%s' in active context '%s'", event.c_str(), ctx.c_str());
+bool HtramArbiter::dispatch_event_for_context(const std::string &event, const std::string &ctx) {
+  ESP_LOGI(TAG, "Dispatching event '%s' for context '%s'", event.c_str(), ctx.c_str());
 
   for (auto &h : this->handlers_) {
     if (h.event != event) continue;
@@ -81,20 +77,29 @@ bool HtramArbiter::dispatch_event(const std::string &event) {
       match = true;
     } else if (h.context == "modal" && ctx.rfind("modal_", 0) == 0) {
       match = true;
+    } else if (h.context == "ringing" && ctx.rfind("ringing_", 0) == 0) {
+      match = true;
     }
 
     if (match && h.trigger != nullptr) {
       ESP_LOGI(TAG, "Triggered handler '%s' (prio %d) for event '%s' in context '%s'",
                h.name.c_str(), h.priority, event.c_str(), ctx.c_str());
       h.trigger->fire();
-      return true; // Consumed by the highest priority matching handler!
+      return true;
     }
   }
-
-  ESP_LOGW(TAG, "Event '%s' DROPPED: no handler in context '%s' (screen=%d '%s', audio=%d '%s')",
-           event.c_str(), ctx.c_str(), this->screen_mode_, this->screen_owner_.c_str(),
-           this->audio_priority_, this->audio_owner_.c_str());
   return false;
+}
+
+bool HtramArbiter::dispatch_event(const std::string &event) {
+  // Sacred Silence check: 09:00 Minute of Silence locks all button interactions!
+  if (this->silence_sacred_ && event.rfind("button_", 0) == 0) {
+    ESP_LOGI(TAG, "Button locked during 09:00 Minute of Silence: event '%s' ignored", event.c_str());
+    return true; // Absorbed!
+  }
+
+  const std::string ctx = this->get_active_context();
+  return this->dispatch_event_for_context(event, ctx);
 }
 
 void HtramArbiter::set_silence_sacred(bool active) {
@@ -155,10 +160,19 @@ void HtramArbiter::reset_audio() {
 
 bool HtramArbiter::request_screen(int mode, const std::string &owner) {
   if (mode >= this->screen_mode_ || owner == this->screen_owner_) {
+    std::string prev_owner = this->screen_owner_;
+    int prev_mode = this->screen_mode_;
+
     ESP_LOGI(TAG, "Screen granted: mode %d to '%s' (prev mode %d '%s')",
-             mode, owner.c_str(), this->screen_mode_, this->screen_owner_.c_str());
+             mode, owner.c_str(), prev_mode, prev_owner.c_str());
     this->screen_mode_ = mode;
     this->screen_owner_ = owner;
+
+    if (!prev_owner.empty() && prev_owner != owner && prev_owner != "clock") {
+      ESP_LOGI(TAG, "Screen preemption: '%s' preempted by '%s'", prev_owner.c_str(), owner.c_str());
+      std::string prev_ctx = "modal_" + prev_owner;
+      this->dispatch_event_for_context("screen_preempted", prev_ctx);
+    }
     return true;
   }
   ESP_LOGW(TAG, "Screen rejected for '%s' (mode %d < current %d '%s')",

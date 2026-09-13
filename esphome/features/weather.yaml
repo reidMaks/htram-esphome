@@ -497,9 +497,11 @@ script:
           then:
             - script.execute: fetch_weather_forecast
       - lambda: |-
+          if (!id(htram_arbiter_hub)->request_screen(1, "weather")) {
+            ESP_LOGW("weather", "Cannot show weather: screen rejected by arbiter");
+            return;
+          }
           id(weather_shown) = true;
-          id(htram_arbiter_hub)->request_screen(1, "weather");
-          id(slot_hold) = true;
           id(face_state) = -1;
           lv_obj_t *const hide[] = {
               id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
@@ -520,7 +522,6 @@ script:
           id(weather_shown) = false;
           id(htram_arbiter_hub)->release_screen("weather");
           lv_obj_add_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
-          id(slot_hold) = false;
       - script.execute: refresh_face
       - script.execute: refresh_clock
       - script.execute: refresh_slot
@@ -554,6 +555,12 @@ htram_arbiter:
       context: modal_weather
       priority: 50
       name: weather_close_btn
+      then:
+        - script.execute: hide_weather
+    - event: screen_preempted
+      context: modal_weather
+      priority: 100
+      name: weather_preempted
       then:
         - script.execute: hide_weather
 

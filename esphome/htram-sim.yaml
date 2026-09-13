@@ -86,3 +86,28 @@ api:
         - lambda: |-
             id(alert_mark_until) = 0;
             id(refresh_alert_marks).execute();
+
+    - service: ring_alarm
+      then:
+        - script.execute: alarm_ring
+
+    - service: snooze_alarm
+      then:
+        - script.execute: alarm_snooze
+
+    - service: dismiss_alarm
+      then:
+        - script.execute: alarm_dismiss
+
+    - service: ring_timer
+      then:
+        - script.execute: timer_ring
+
+    - service: set_timer_seconds
+      variables:
+        seconds: int
+      then:
+        - lambda: |-
+            id(timer_remaining_seconds) = seconds;
+            id(refresh_timer_ui).execute();
+            id(refresh_slot).execute();

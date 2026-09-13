@@ -257,7 +257,10 @@ class HtramGd32Display : public display::Display {
   const uint16_t *get_framebuffer() const { return this->framebuffer_; }
   bool dump_ppm(const std::string &path) const;
   void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
-  void clear_persistent_asset() { this->persistent_asset_.active = false; }
+  void clear_persistent_asset() {
+    this->persistent_asset_.active = false;
+    std::fill_n(this->framebuffer_, 240 * 240, (uint16_t) 0);
+  }
 
  protected:
   int get_width_internal() override { return 240; }

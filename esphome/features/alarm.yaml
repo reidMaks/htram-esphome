@@ -95,7 +95,7 @@ switch:
 htram_arbiter:
   events:
     - event: button_single
-      context: ringing
+      context: ringing_alarm
       priority: 100
       name: alarm_snooze_btn
       then:
@@ -105,7 +105,7 @@ htram_arbiter:
             then:
               - script.execute: alarm_snooze
     - event: button_double
-      context: ringing
+      context: ringing_alarm
       priority: 100
       name: alarm_dismiss_btn
       then:
@@ -115,7 +115,7 @@ htram_arbiter:
             then:
               - script.execute: alarm_dismiss
     - event: button_long
-      context: ringing
+      context: ringing_alarm
       priority: 100
       name: alarm_dismiss_long_btn
       then:

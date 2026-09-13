@@ -115,7 +115,7 @@ htram_arbiter:
             id(slot_idx) = (id(slot_idx) + 1) % max_slots;
             id(refresh_slot).execute();
     - event: button_triple
-      context: clock
+      context: any
       priority: 10
       name: core_show_device_id
       then:
@@ -147,6 +147,19 @@ htram_arbiter:
         - script.execute: refresh_clock
         - script.execute: refresh_slot
         - script.execute: refresh_pocket
+    - event: screen_preempted
+      context: modal_overlay
+      priority: 100
+      name: core_preempt_overlay
+      then:
+        - script.stop: show_device_id
+        - lambda: |-
+            id(htram_arbiter_hub)->release_screen("overlay");
+            lv_obj_add_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
+            id(slot_hold) = false;
 
 time:
   - platform: host

@@ -178,8 +178,12 @@ script:
           static const char *prev_cap = nullptr;
           static uint32_t prev_cap_col = 0;
 
-          // 1. If silence or overlay active, or not on normal clock face: hide timer UI
-          if (silence || slot_held || id(face_state) != 0) {
+          // 1. If silence active or someone else owns the screen (and it's not clock): hide timer UI
+          const std::string screen_owner = id(htram_arbiter_hub)->get_screen_owner();
+          const bool timer_owns_screen = (screen_owner == "timer");
+          const bool clock_active = (screen_owner == "clock");
+
+          if (silence || (!timer_owns_screen && !clock_active)) {
             if (last_screen_mode != 2) {
               last_screen_mode = 2;
               lv_obj_add_flag(id(ui_timer_tick), LV_OBJ_FLAG_HIDDEN);
@@ -470,7 +474,8 @@ script:
       - script.stop: timer_countdown
       - script.stop: timer_ring
       - lambda: |-
-          id(htram_core)->send_stop();
+          id(htram_arbiter_hub)->stop_sound("timer");
+          id(htram_arbiter_hub)->release_screen("timer");
           id(timer_state) = 0; // IDLE
           id(timer_preset_idx) = -1;
           id(timer_total_seconds) = 0;
@@ -487,6 +492,7 @@ script:
       - lambda: |-
           id(timer_state) = 4; // RINGING
           id(slot_extra_text) = "таймер 0 хв";
+          id(htram_arbiter_hub)->request_screen(2, "timer");
       - script.execute: refresh_timer_ui
       - repeat:
           count: 60
@@ -501,6 +507,7 @@ script:
       - script.stop: timer_ring
       - lambda: |-
           id(htram_arbiter_hub)->stop_sound("timer");
+          id(htram_arbiter_hub)->release_screen("timer");
           id(timer_state) = 0; // IDLE
           id(timer_preset_idx) = -1;
           id(timer_total_seconds) = 0;
@@ -523,6 +530,15 @@ script:
                 id(timer_cancel_triggered) = true;
                 id(htram_arbiter_hub)->play_rtttl(10, "timer", "${timer_cancel_rtttl}");
             - script.execute: timer_cancel
+          else:
+            - if:
+                condition:
+                  lambda: return id(htram_arbiter_hub)->get_screen_mode() == 0;
+                then:
+                  - lambda: |-
+                      // Feedback chirp BEFORE opening timer menu!
+                      id(htram_core)->send_beep(2304, 50);
+                  - script.execute: timer_cycle_preset
 
   - id: !extend on_button_press
     then:
@@ -556,6 +572,7 @@ htram_arbiter:
               id(timer_cancel_triggered) = false;
               return;
             }
+            if (id(timer_state) == 1) return;
         - script.execute: timer_cycle_preset
     - event: button_single
       context: modal_timer
@@ -573,8 +590,14 @@ htram_arbiter:
       name: timer_modal_long_btn
       then:
         - script.execute: timer_cancel
+    - event: screen_preempted
+      context: modal_timer
+      priority: 100
+      name: timer_preempted
+      then:
+        - script.execute: timer_cancel
     - event: button_single
-      context: ringing
+      context: ringing_timer
       priority: 90
       name: timer_dismiss_single_btn
       then:
@@ -584,7 +607,7 @@ htram_arbiter:
             then:
               - script.execute: timer_dismiss
     - event: button_double
-      context: ringing
+      context: ringing_timer
       priority: 90
       name: timer_dismiss_double_btn
       then:
@@ -594,7 +617,7 @@ htram_arbiter:
             then:
               - script.execute: timer_dismiss
     - event: button_long
-      context: ringing
+      context: ringing_timer
       priority: 90
       name: timer_dismiss_long_btn
       then:

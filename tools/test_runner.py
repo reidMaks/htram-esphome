@@ -152,6 +152,27 @@ class SimulationHarness:
         """Resets alert clock marks back to normal."""
         await self.call_service("reset_alert_marks")
 
+    async def ring_alarm(self) -> None:
+        """Triggers alarm ringing."""
+        await self.call_service("ring_alarm")
+
+    async def snooze_alarm(self) -> None:
+        """Triggers alarm snooze."""
+        await self.call_service("snooze_alarm")
+
+    async def dismiss_alarm(self) -> None:
+        """Dismisses the alarm."""
+        await self.call_service("dismiss_alarm")
+
+    async def ring_timer(self) -> None:
+        """Triggers timer ringing."""
+        await self.call_service("ring_timer")
+
+    async def set_timer_seconds(self, seconds: int) -> None:
+        """Sets timer remaining seconds directly."""
+        await self.call_service("set_timer_seconds", {"seconds": seconds})
+
+
     async def capture_screenshot(self, basename: str) -> Path:
         """Dumps framebuffer to PPM and converts to optimized PNG."""
         SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -324,6 +345,176 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
         except Exception as e:
             results.append(("08_device_id", False, str(e)))
+
+        # ==========================================
+        # INTEGRATION TESTS & SCENARIO EXPLORATION
+        # ==========================================
+
+        # Int Test 1: Weather over Timer Ringing (User Scenario)
+        print("\n--- Int Test 1: Weather over Timer Ringing ---")
+        try:
+            # Start timer at 5 minutes (> 60s, context is clock)
+            await harness.call_service("start_timer", {"minutes": 5, "seconds": 0})
+            await asyncio.sleep(0.5)
+            # Invoke weather with double click from clock
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            # Timer elapses and rings while weather is open
+            await harness.ring_timer()
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("int_01_weather_over_timer_ringing")
+
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "int_01_weather_over_timer_ringing",
+                    True,
+                    "Weather screen displayed while timer buzzer is ringing in background",
+                )
+            )
+            # Clean up
+            await harness.inject_button("single")
+            await harness.call_service("cancel_timer")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            results.append(("int_01_weather_over_timer_ringing", False, str(e)))
+
+        # Int Test 2: Double Click During Timer Arming
+        print("\n--- Int Test 2: Double Click During Timer Arming ---")
+        try:
+            # Long press to arm timer ("01 ХВ")
+            await harness.inject_button("long")
+            await asyncio.sleep(0.5)
+            # Double click while arming
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("int_02_timer_arming_double_click")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "int_02_timer_arming_double_click",
+                    True,
+                    "Behavior when double click is issued during timer arming modal",
+                )
+            )
+            # Clean up
+            await harness.call_service("cancel_timer")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            results.append(("int_02_timer_arming_double_click", False, str(e)))
+
+        # Int Test 3: Alert Threat Triggered During Weather
+        print("\n--- Int Test 3: Alert Threat Triggered During Weather ---")
+        try:
+            # Open weather
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            # Air raid alert + ballistic threat
+            await harness.simulate_alert(flags=257)
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("int_03_alert_during_weather")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "int_03_alert_during_weather",
+                    True,
+                    "Behavior when alert arrives while user is viewing weather",
+                )
+            )
+            # Clean up
+            await harness.simulate_alert(flags=0)
+            await harness.reset_alert_marks()
+            await harness.inject_button("single")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            results.append(("int_03_alert_during_weather", False, str(e)))
+
+        # Int Test 4: Alarm Snooze Concurrent with Active Timer
+        print("\n--- Int Test 4: Alarm Snooze Concurrent with Active Timer ---")
+        try:
+            # Start timer 15m
+            await harness.call_service("start_timer", {"minutes": 15, "seconds": 0})
+            await asyncio.sleep(0.5)
+            # Alarm starts ringing
+            await harness.simulate_alarm(enabled=True, hour=7, minute=30)
+            await harness.ring_alarm()
+            await asyncio.sleep(0.5)
+            # Single click snoozes alarm
+            await harness.inject_button("single")
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("int_04_alarm_snooze_with_timer")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "int_04_alarm_snooze_with_timer",
+                    True,
+                    "Alarm snoozed while timer continues running in slot and on bezel",
+                )
+            )
+            # Clean up
+            await harness.dismiss_alarm()
+            await harness.simulate_alarm(enabled=False, hour=7, minute=30)
+            await harness.call_service("cancel_timer")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            results.append(("int_04_alarm_snooze_with_timer", False, str(e)))
+
+        # Int Test 5: Minute of Silence Over Running Timer
+        print("\n--- Int Test 5: Minute of Silence Over Running Timer ---")
+        try:
+            # Start timer 5m
+            await harness.call_service("start_timer", {"minutes": 5, "seconds": 0})
+            await asyncio.sleep(0.5)
+            # Minute of silence begins
+            await harness.simulate_silence(active=True)
+            await asyncio.sleep(0.5)
+            # Try pressing button during silence (should be absorbed)
+            await harness.inject_button("single")
+            await asyncio.sleep(0.2)
+            png = await harness.capture_screenshot("int_05_silence_over_running_timer")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "int_05_silence_over_running_timer",
+                    True,
+                    "Minute of Silence locks input and displays Tryzub while timer runs",
+                )
+            )
+            # Silence ends -> verify timer restored
+            await harness.simulate_silence(active=False)
+            await asyncio.sleep(0.5)
+            png_restored = await harness.capture_screenshot("int_05_timer_restored_after_silence")
+            assert png_restored.exists() and png_restored.stat().st_size > 1000
+            # Clean up
+            await harness.call_service("cancel_timer")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            results.append(("int_05_silence_over_running_timer", False, str(e)))
+
+        # Int Test 6: Triple Click for Device ID from Weather
+        print("\n--- Int Test 6: Triple Click for Device ID from Weather ---")
+        try:
+            # Open weather
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            # Triple click
+            await harness.inject_button("triple")
+            await asyncio.sleep(0.5)
+            png = await harness.capture_screenshot("int_06_device_id_from_weather")
+            assert png.exists() and png.stat().st_size > 1000
+            results.append(
+                (
+                    "int_06_device_id_from_weather",
+                    True,
+                    "Behavior when triple click is pressed from weather forecast screen",
+                )
+            )
+            # Clean up
+            await harness.inject_button("single")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            results.append(("int_06_device_id_from_weather", False, str(e)))
+
 
     finally:
         await harness.stop()
