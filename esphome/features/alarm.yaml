@@ -3,9 +3,9 @@
 # Надає функціонал автономного будильника:
 # - Вибір часу та вмикач у Home Assistant (datetime: alarm_time, switch: alarm_enabled);
 # - Засічка години на циферблаті (ui_alarm_tick);
-# - Піктограма дзвінка у верхньому слоті (ui_bell, img_bell);
-# - Мелодія RTTTL, повтори та відкладення (snooze);
-# - Керування кнопкою: 1 клік — відкласти (snooze), 2 кліки — вимкнути (dismiss).
+# - Піктограма дзвінка у верхньому слоті (ui_bell, img_bell) через status_icon_manager;
+# - Мелодія RTTTL (SOUND_PRIO_ALARM = 30), повтори та відкладення (snooze);
+# - Керування кнопкою: 1 клік — відкласти (snooze), 2 кліки — вимкнути (dismiss) у контексті ringing.
 
 substitutions:
   alarm_rtttl: "Alarm:d=4,o=6,b=200:b,c7,b,c7,b,c7,b,c7"
@@ -89,14 +89,37 @@ switch:
     turn_off_action:
       - script.execute: alarm_dismiss
 
+htram_arbiter:
+  events:
+    - event: button_single
+      context: ringing
+      priority: 100
+      name: alarm_snooze_btn
+      then:
+        - if:
+            condition:
+              lambda: return id(alarm_ringing) || id(alarm_snoozing);
+            then:
+              - script.execute: alarm_snooze
+    - event: button_double
+      context: ringing
+      priority: 100
+      name: alarm_dismiss_btn
+      then:
+        - if:
+            condition:
+              lambda: return id(alarm_ringing) || id(alarm_snoozing);
+            then:
+              - script.execute: alarm_dismiss
+
 script:
   - id: refresh_alarm_ui
     then:
       - lambda: |-
           const bool armed = id(alarm_enabled).state;
-          const bool alert = id(alert_active);
-          const int sig = (armed ? 1 : 0) | (id(alarm_ringing) ? 2 : 0) |
-                          (id(alarm_snoozing) ? 4 : 0) | (alert ? 8 : 0) |
+          const bool ringing = id(alarm_ringing);
+          const bool snoozing = id(alarm_snoozing);
+          const int sig = (armed ? 1 : 0) | (ringing ? 2 : 0) | (snoozing ? 4 : 0) |
                           ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 9);
           if (sig == id(alarm_ui_sig)) return;
           id(alarm_ui_sig) = sig;
@@ -116,15 +139,20 @@ script:
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
           }
 
-          // Дзвінок лишається на екрані весь епізод, а не лише поки лунає.
-          // Якщо активна тривога, слот віддається тривозі.
-          if (!alert && (id(alarm_ringing) || id(alarm_snoozing))) {
+          if (ringing || snoozing) {
+            id(htram_arbiter_hub)->request_status_icon("alarm", 50);
             lv_obj_set_style_image_recolor(
                 id(ui_bell),
-                lv_color_hex(id(alarm_ringing) ? 0xFF9E3D : 0x707880),
+                lv_color_hex(ringing ? 0xFF9E3D : 0x707880),
                 LV_PART_MAIN);
-            lv_obj_set_style_image_recolor_opa(id(ui_bell), LV_OPA_COVER,
-                                               LV_PART_MAIN);
+            lv_obj_set_style_image_recolor_opa(id(ui_bell), LV_OPA_COVER, LV_PART_MAIN);
+          } else {
+            id(htram_arbiter_hub)->clear_status_icon("alarm");
+          }
+
+          const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
+          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          if (can_show) {
             lv_obj_remove_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
           } else {
             lv_obj_add_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
@@ -143,7 +171,7 @@ script:
       - repeat:
           count: 100
           then:
-            - lambda: id(htram_core)->play_rtttl("${alarm_rtttl}");
+            - lambda: id(htram_arbiter_hub)->play_rtttl(30, "alarm", "${alarm_rtttl}");
             - delay: ${alarm_repeat_seconds}s
       - script.execute: alarm_dismiss
 
@@ -152,7 +180,7 @@ script:
     then:
       - script.stop: alarm_ring
       - lambda: |-
-          id(htram_core)->send_stop();
+          id(htram_arbiter_hub)->stop_sound("alarm");
           id(alarm_ringing) = false;
       - script.execute: refresh_alarm_ui
 
@@ -193,21 +221,6 @@ script:
   - id: !extend on_alert_changed
     then:
       - script.execute: refresh_alarm_ui
-
-  - id: !extend handle_feature_button
-    then:
-      - if:
-          condition:
-            lambda: return (id(alarm_ringing) || id(alarm_snoozing)) && action == "single";
-          then:
-            - lambda: id(button_handled) = true;
-            - script.execute: alarm_snooze
-      - if:
-          condition:
-            lambda: return (id(alarm_ringing) || id(alarm_snoozing)) && action == "double";
-          then:
-            - lambda: id(button_handled) = true;
-            - script.execute: alarm_dismiss
 
 esphome:
   on_boot:

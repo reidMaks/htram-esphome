@@ -3,41 +3,11 @@ substitutions:
   # Якщо назва задається для кожного пристрою окремо (GitOps), суфікс вимикається.
   # Вмикайте лише якщо всі пристрої шиються з одного конфігу без власного name.
   name_add_mac_suffix: "false"
-  # Мелодія Вербицького (1863) — суспільне надбання. Уривок, що грає в кінці
-  # хвилини мовчання; ~9.8 с на b=200.
-  # Метроном хвилини мовчання. Значення взяті з прошивки мапи тривог JAAM
-  # (`MOS_BEEP:d=4,o=4,b=250:g` раз на 2000 мс), бо саме такий звук впізнається
-  # як меморіальний метроном: соль малої октави, майже чверть секунди — низький
-  # протяжний удар. Вище й коротше — і це вже писк будильника, перевірено.
-  # Палітра хвилини мовчання. Фон лишається чорним не з економії, а тому що
-  # матриця квадратна, а рамка навколо скла кругла: будь-яка суцільна заливка
-  # проявляє квадрат посеред кола. Чорний зливається з рамкою, і видно лише те,
-  # що світиться, — на цьому побудоване все обличчя. Червоне на чорному ще й
-  # точніше за регістром: це колір скорботи, а не державності.
-  silence_bg: "0x000000"
-  silence_fg: "0xC1121F"
-  silence_tick_seconds: "2"
-  silence_tick_hz: "392"
-  silence_tick_ms: "240"
-  anthem_rtttl: "UkraineAnthem:d=4,o=5,b=200:2d5,4d5,32p,4d5,32p,4d5,32p,4c5,4d5,4d#5,2f5,32p,4f5,4d#5,2d5,2c5,2a#4,2d5,2a4,2d5,1g4,32p,1g4"
   friendly_name: HTRAM
   # Базовий URL для шрифтів та зображень (GitOps)
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  # Звук тривоги — коротке привертання уваги, а не сигналізація: на вулиці й
-  # так виють сирени, і змагатися з ними зумеру немає сенсу. Три висхідні ноти
-  # на початок, три низхідні на відбій — щоб їх не переплутати між собою й не
-  # сплутати з будильником, у якого двотонове хитання по 300 мс.
-  #
-  # Ноти в гучній смузі динаміка (1760–2093 Гц, виміряно): a6, b6, c7. Вище
-  # 2200 гучність провалюється на 12 дБ, тож «вище — тривожніше» тут не працює.
-  alert_start_rtttl: "AlertOn:d=8,o=6,b=180:a,b,c7,16p,a,b,c7"
-  alert_clear_rtttl: "AlertOff:d=8,o=6,b=180:c7,b,a"
-  # Скільки хвилин після початку тривоги й після відбою цифри годинника
-  # тримають колір. Тривога триває годинами, і постійно червоний годинник за
-  # півгодини перестає бути інформацією — кольором позначається ПОДІЯ.
-  alert_mark_minutes: "5"
 
 esphome:
   name: ${name}
@@ -57,6 +27,7 @@ esphome:
     # to wait until every component is up.
     - priority: -100
       then:
+        - lambda: "id(htram_arbiter_hub)->set_core(id(htram_core));"
         - script.execute: refresh_leds
         - script.execute: refresh_face
         - script.execute: check_flash_chime
@@ -161,17 +132,10 @@ web_server:
     password: !secret web_password
 
 external_components:
-  # The GD32 driver is this repository's own -- it is meaningless without the
-  # firmware in firmware/gd32/, so it stays beside it.
   - source:
       type: local
       path: custom_components
-    components: [htram_gd32]
-  # The alert map client never touched this hardware, so it lives on its own
-  # and any ESP-IDF device can use it. Pinned to a tag, not main: this config
-  # is flashed to devices that must not break because that repo moved on.
-  - source: github://reidMaks/jaam_ws@v1.0.0
-    components: [jaam_ws]
+    components: [htram_gd32, htram_arbiter]
 
 uart:
   id: uart_bus
@@ -183,90 +147,50 @@ uart:
   # runs at this speed too.
   baud_rate: 921600
 
-# Мапа тривог JAAM у локальній мережі. Ім'я .local, а не адреса: пристрій
-# оголошується через mDNS як `_jaam-ws._tcp`, і DHCP може змінити IP.
-#
-# Напряму, а не через Home Assistant, свідомо: тривога — це рівно те, що не
-# має зникати через перезавантаження домашнього сервера. Той самий аргумент,
-# що поставив на пристрій будильник і хвилину мовчання.
-jaam_ws:
-  id: jaam
-  host: jaam-one.local
-  port: 81
-  on_flags:
-    then:
-      - lambda: |-
-          // Біти з ALERT_TYPES інтеграції jaam_ha: 0 повітряна, 5 дрони,
-          // 6 ракети, 7 КАБи, 8 балістика, 10 розвідники.
-          const bool air = flags & (1u << 0);
-          id(alert_ballistic) = flags & (1u << 8);
-          id(alert_kab)       = flags & (1u << 7);
-          id(alert_missile)   = flags & (1u << 6);
-          id(alert_drone)     = flags & (1u << 5);
-          id(alert_recon)     = flags & (1u << 10);
-
-          if (air != id(alert_active)) {
-            id(alert_active) = air;
-            auto now = id(ha_time).now();
-            if (now.is_valid()) {
-              id(alert_mark_until) = now.timestamp + ${alert_mark_minutes} * 60;
-              id(alert_mark_color) = air ? 0xE5484D : 0x3DD68C;
-            }
-            id(htram_core)->play_rtttl(air ? "${alert_start_rtttl}"
-                                           : "${alert_clear_rtttl}");
-          }
-      - script.execute: refresh_alert_marks
-      - script.execute: refresh_alert_icon
-      - script.execute: on_alert_changed
-
 htram_gd32:
   id: htram_core
   uart_id: uart_bus
+
+htram_arbiter:
+  id: htram_arbiter_hub
+  events:
+    - event: button_single
+      context: clock
+      priority: 10
+      name: core_cycle_slot
+      then:
+        - lambda: |-
+            int max_slots = id(slot_extra_text).empty() ? 2 : 3;
+            id(slot_idx) = (id(slot_idx) + 1) % max_slots;
+            id(refresh_slot).execute();
+    - event: button_triple
+      context: clock
+      priority: 10
+      name: core_show_net
+      then:
+        - script.execute: show_network
+    - event: button_single
+      context: modal_ap
+      priority: 100
+      name: core_toggle_ap_page
+      then:
+        - lambda: |-
+            id(ap_manual) = true;
+            id(ap_page) ^= 1;
+            id(face_state) = -1;
+        - script.execute: refresh_face
+    - event: button_single
+      context: modal_overlay
+      priority: 100
+      name: core_dismiss_overlay
+      then:
+        - lambda: id(slot_hold) = false;
+        - script.execute: refresh_face
 
 display:
   - platform: htram_gd32
     id: htram_display
     update_interval: never
-
-image:
-  # Знак тривоги: заливний трикутник. Проста геометрична форма, як у каналі
-  # Повітряних Сил, — саме такі виживають на 4.5 мм, на відміну від силуетів.
-  - platform: file
-    file: "${repo_url}/images/alert_mask.png"
-    id: img_alert
-    type: BINARY
-
-  # Той самий трикутник, але дрібний: у кутку він означає не тривогу, а те, що
-  # про тривогу нічого не відомо — мапа недосяжна. Місце й колір відрізняють
-  # його від справжньої, форма каже, про що саме мовчанка.
-  - platform: file
-    file: "${repo_url}/images/alert_small_mask.png"
-    id: img_nolink
-    type: BINARY
-
-  # Силуети типів загроз. Обведені з кастомного паку каналу Повітряних Сил
-  # (tools/images/trace_mask.py); знімки-джерела лежать у images/src/ і не
-  # комітяться. Разом усі шість — 1.3 КБ однобітних масок.
-  - platform: file
-    file: "${repo_url}/images/threat_ballistic_mask.png"
-    id: img_ballistic
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_kab_mask.png"
-    id: img_kab
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_missile_mask.png"
-    id: img_missile
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_drone_mask.png"
-    id: img_drone
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_recon_mask.png"
-    id: img_recon
-    type: BINARY
 
 font:
   # Digits only, and pre-slanted: ESPHome renders from the TTF at build time and
@@ -342,77 +266,6 @@ globals:
   # lv_label_set_text invalidates unconditionally, so the message is only
   # written when the state behind it actually changed.
   - id: face_state
-    type: int
-    restore_value: false
-    initial_value: "-1"
-  # 09:00, one minute, every day. Kept as device state rather than a Home
-  # Assistant automation on purpose: this is the one minute of the day where
-  # "it did not fire because HA was restarting" is not an acceptable outcome.
-  - id: silence_active
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  # Окремо від silence_active: екран лишається в режимі хвилини і на час гімну, а
-  # метроном на цей час мусить замовкнути. CMD_BEEP на GD32 не додає ноту в
-  # чергу, а заміщає її (`mel_count = 1`), тож один тік обриває мелодію —
-  # рівно це й сталось на першій перевірці.
-  - id: button_handled
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  # Тривога: сам стан і мітка часу, доки цифри тримають колір події.
-  - id: alert_active
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  # Коли востаннє був зв'язок із мапою. Значок з'являється не миттєво:
-  # перепідключення триває секунди, і блимати на кожному з них — шум.
-  - id: jaam_seen_ms
-    type: uint32_t
-    restore_value: false
-    initial_value: "0"
-  - id: alert_mark_until
-    type: int
-    restore_value: false
-    initial_value: "0"
-  - id: alert_mark_color
-    type: int
-    restore_value: false
-    initial_value: "0"
-  # Тип загрози приходить від Home Assistant викликом служби, а не з
-  # прив'язаної сутності: entity_id у ESPHome вшивається на етапі збірки, тож
-  # «обрати пристрій у HA» з боку прошивки неможливо. Напрямок повернуто —
-  # джерело обирається в редакторі автоматизацій, а сюди приходить уже готовий
-  # набір прапорців.
-  - id: alert_ballistic
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: alert_kab
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: alert_missile
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: alert_drone
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: alert_recon
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: silence_ticking
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: silence_beep_count
-    type: int
-    restore_value: false
-    initial_value: "0"
-  - id: last_tick_sec
     type: int
     restore_value: false
     initial_value: "-1"
@@ -503,7 +356,7 @@ script:
           lv_obj_t *const hide[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
                                     id(ui_slot), id(ui_pocket), id(ui_msg),
                                     id(ui_msg_cap), id(ui_msg2),
-                                    id(ui_ap_card), id(ui_ap_qr), id(ui_alert)};
+                                    id(ui_ap_card), id(ui_ap_qr)};
           for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_devid), LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_devid_cap), LV_OBJ_FLAG_HIDDEN);
@@ -519,7 +372,6 @@ script:
       - script.execute: refresh_clock
       - script.execute: refresh_slot
       - script.execute: refresh_pocket
-      - script.execute: refresh_alert_icon
 
   # A clock with no time is dashes, and dashes look like a broken screen rather
   # than an explanation. Whenever the time is not set, the face says why instead.
@@ -543,7 +395,8 @@ script:
           // Priority, as written down in TODO §13: the AP outranks everything
           // (a device asking to be configured can do nothing else useful), then
           // the minute of silence, then the ordinary faces.
-          const int want = ap ? 3 : (id(silence_active) ? 4 : (have_time ? 0 : (net ? 1 : 2)));
+          const bool silence = id(htram_arbiter_hub)->is_silence_active();
+          const int want = ap ? 3 : (silence ? 4 : (have_time ? 0 : (net ? 1 : 2)));
           if (want != 3) id(ap_manual) = false;
           const int prev_face = id(face_state);
           if (want == prev_face) return;
@@ -566,38 +419,21 @@ script:
           lv_obj_t *const msg[] = {id(ui_msg_cap), id(ui_msg), id(ui_msg_sub),
                                    id(ui_msg2), id(ui_ap_card), id(ui_ap_qr)};
           for (auto *o : msg) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-          if (want != 0) {
-            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
-          }
 
           id(on_face_changed).execute(want);
 
-          // The background stays black (${silence_bg}) to merge with the round bezel,
-          // while the emblem and seconds dot take the memorial red (${silence_fg}).
-          lv_obj_set_style_bg_color(id(ui_root),
-                                    lv_color_hex(want == 4 ? ${silence_bg} : 0x000000),
-                                    LV_PART_MAIN);
-          lv_obj_set_style_bg_color(id(ui_secdot),
-                                    lv_color_hex(want == 4 ? ${silence_fg} : 0xB9AFA3),
-                                    LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(ui_root), lv_color_hex(0x000000), LV_PART_MAIN);
+          if (want != 4) {
+            lv_obj_set_style_bg_color(id(ui_secdot), lv_color_hex(0xB9AFA3), LV_PART_MAIN);
+          }
 
           if (want == 4) {
-            // Emblem is rendered directly from GD32 external SPI Flash via CMD_DRAW_CACHED_ASSET.
-            // Zero ESP32 DRAM allocation, zero UART streaming overhead (14 bytes vs 14.4 KB).
-            id(htram_core)->send_draw_cached_asset(
-                htram_gd32::ASSET_ID_TRYZUB, 84, 70,
-                Color(${silence_fg}), Color(0x000000), 0);
-            // Nothing else is shown. The seconds dot is already circling, and
-            // starting at 09:00:00 it completes exactly one revolution as the
-            // minute runs out -- motion that costs nothing and means the right
-            // thing.
             return;
           }
 
           if (want == 0) {
             id(refresh_clock).execute();
             id(refresh_slot).execute();
-            id(refresh_alert_icon).execute();
             return;
           }
 
@@ -676,50 +512,6 @@ script:
       - script.execute: refresh_slot
       - script.execute: refresh_pocket
 
-  # 09:00. Flag blue, a metronome tick a second the way broadcasts mark it, and
-  # the LEDs dark: a green "the air is fine" light through this minute would be
-  # the wrong thing to say. Runs on the device; Home Assistant only gets a
-  # switch to turn the whole thing off, since this unit may not be in Ukraine.
-  - id: minute_of_silence
-    mode: single
-    then:
-      - lambda: |-
-          ESP_LOGI("silence", "Minute of silence: free heap=%u, largest block=%u",
-                   (unsigned) heap_caps_get_free_size(MALLOC_CAP_8BIT),
-                   (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-          id(silence_active) = true;
-          id(silence_beep_count) = 0;
-          timeval tv;
-          gettimeofday(&tv, nullptr);
-          // If triggered within the first 250ms of an even second (like at 09:00:00),
-          // arm tick immediately for second 0. Otherwise wait for the next even second.
-          if ((tv.tv_sec % 2 == 0) && (tv.tv_usec < 250000)) {
-            id(last_tick_sec) = -1;
-          } else {
-            id(last_tick_sec) = (int) tv.tv_sec;
-          }
-          id(silence_ticking) = true;
-          id(face_state) = -1;
-          id(htram_core)->send_leds(0, 0, 0, 0);
-      - script.execute: refresh_face
-      # Wait until the 60s ticking completes (30 beeps on atomic even seconds).
-      # At tick 30 completion, silence_ticking is set to false and the anthem starts.
-      - wait_until:
-          condition:
-            lambda: return !id(silence_ticking);
-          timeout: 75s
-      # The minute ends, and the anthem closes it -- the face stays as it is
-      # until the melody is done (~9.8 s), which is what the delay is for.
-      - delay: 11s
-      - lambda: |-
-          id(silence_active) = false;
-          id(face_state) = -1;
-      - script.execute: refresh_face
-      - script.execute: refresh_clock
-      - script.execute: refresh_slot
-      - script.execute: refresh_pocket
-      - script.execute: refresh_leds
-
   # Точки розширення для модульних функцій (features)
   - id: on_face_changed
     parameters:
@@ -741,89 +533,22 @@ script:
     then: []
 
   - id: on_button_press
-    then: []
+    then:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_event("button_press");
 
   - id: on_button_release
-    then: []
+    then:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_event("button_release");
 
   - id: on_button_action
     mode: restart
     parameters:
       action: string
     then:
-      - lambda: id(button_handled) = false;
-      - script.execute:
-          id: handle_feature_button
-          action: !lambda "return action;"
-      - if:
-          condition:
-            lambda: return !id(button_handled);
-          then:
-            - if:
-                condition:
-                  lambda: return action == "single" && id(face_state) == 3;
-                then:
-                  - lambda: |-
-                      id(ap_manual) = true;
-                      id(ap_page) ^= 1;
-                      id(face_state) = -1;
-                  - script.execute: refresh_face
-            - if:
-                condition:
-                  lambda: return action == "double";
-                then:
-                  - script.execute: show_network
-            - if:
-                condition:
-                  lambda: return action == "triple";
-                then:
-                  - script.execute: show_device_id
-
-  # Піктограма загрози в слоті циферблата
-  - id: refresh_alert_icon
-    then:
       - lambda: |-
-          if (id(face_state) != 0 || id(slot_hold)) {
-            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
-            return;
-          }
-          const bool alert = id(alert_active);
-          if (alert) {
-            auto *src = id(img_alert);
-            if (id(alert_ballistic))     src = id(img_ballistic);
-            else if (id(alert_kab))      src = id(img_kab);
-            else if (id(alert_missile))  src = id(img_missile);
-            else if (id(alert_drone))    src = id(img_drone);
-            else if (id(alert_recon))    src = id(img_recon);
-            lv_image_set_src(id(ui_alert), src->get_lv_image_dsc());
-            lv_obj_set_style_image_recolor(id(ui_alert), lv_color_hex(0xE5484D),
-                                           LV_PART_MAIN);
-            lv_obj_set_style_image_recolor_opa(id(ui_alert), LV_OPA_COVER,
-                                               LV_PART_MAIN);
-            lv_obj_remove_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
-          } else {
-            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
-          }
-
-  # Колір цифр позначає ПОДІЮ, а не стан: спалахує на кілька хвилин на початку
-  # тривоги і ще раз після відбою, потім повертається. Тривога триває годинами,
-  # і годинник, що весь цей час червоний, перестає щось повідомляти. Те, що
-  # триває, несе піктограма в слоті.
-  - id: refresh_alert_marks
-    then:
-      - lambda: |-
-          auto now = id(ha_time).now();
-          if (!now.is_valid()) return;
-          const uint32_t t = now.timestamp;
-          const bool marked = t < (uint32_t) id(alert_mark_until);
-          const uint32_t want = marked ? (uint32_t) id(alert_mark_color) : 0xF0EAE0;
-
-          static uint32_t shown = 0xF0EAE0;
-          if (want == shown) return;
-          shown = want;
-          lv_obj_t *const d[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
-          for (auto *o : d)
-            lv_obj_set_style_text_color(o, lv_color_hex(want), LV_PART_MAIN);
+          id(htram_arbiter_hub)->dispatch_button_action(action);
 
   - id: refresh_slot
     then:
@@ -906,16 +631,17 @@ script:
     then:
       - lambda: |-
           if (!id(led_auto)) return;
+          if (id(htram_arbiter_hub)->get_led_priority() > 10) return;
           // The GD32 lights green at boot to say "I am alive", and the NDIR
           // needs minutes before it has a number. Leaving that green up meant
           // the device asserted clean air while it had measured nothing at all,
           // which is the one claim it must never make on faith.
           if (isnan(id(sensor_co2).state)) {
-            id(htram_core)->send_leds(0, 0, 0, 0);
+            id(htram_arbiter_hub)->set_leds(10, "co2", 0, 0, 0, 0);
             return;
           }
           uint16_t ppm = (uint16_t) id(sensor_co2).state;
-          id(htram_core)->send_leds(ppm >= 1500, ppm >= 1000 && ppm < 1500, ppm < 1000, 0);
+          id(htram_arbiter_hub)->set_leds(10, "co2", ppm >= 1500, ppm >= 1000 && ppm < 1500, ppm < 1000, 0);
 
 interval:
   # High-frequency tick (20ms) for sub-20ms multi-room audio & LCD second synchronization.
@@ -943,35 +669,7 @@ interval:
           }
           if (!now.is_valid()) return;
 
-          // 0. Automatic 09:00:00 minute of silence trigger (device-clock driven, resilient to HA downtime)
-          if (now.hour == 9 && now.minute == 0 && now.second == 0) {
-            static int last_auto_silence_day = -1;
-            if (now.day_of_year != last_auto_silence_day) {
-              last_auto_silence_day = now.day_of_year;
-              if (id(silence_enabled).state && !id(silence_active)) {
-                id(minute_of_silence).execute();
-              }
-            }
-          }
-
-          // 1. Synchronized minute of silence metronome & anthem start
-          if (id(silence_ticking)) {
-            if (now.second % ${silence_tick_seconds} == 0) {
-              if ((int) tv.tv_sec != id(last_tick_sec)) {
-                id(last_tick_sec) = (int) tv.tv_sec;
-                if (id(silence_beep_count) < 30) {
-                  id(silence_beep_count)++;
-                  id(htram_core)->send_beep(${silence_tick_hz}, ${silence_tick_ms});
-                } else {
-                  // 30 ticks completed (60 seconds). Start anthem exactly on second boundary!
-                  id(silence_ticking) = false;
-                  id(htram_core)->play_rtttl("${anthem_rtttl}");
-                }
-              }
-            }
-          }
-
-          // 2. Exact-second LCD updates (orbiting seconds dot & clock minute flip)
+          // Exact-second LCD updates (orbiting seconds dot & clock minute flip)
           if ((int) tv.tv_sec != last_ui_sec) {
             last_ui_sec = (int) tv.tv_sec;
             // Moving the dot invalidates only where it was and where it lands.
@@ -1034,46 +732,12 @@ interval:
           else:
             - lambda: |-
                 if (id(ha_link)) { id(ha_link) = false; id(refresh_pocket).execute(); }
-      # Мапа недосяжна довше півхвилини — кажемо про це прямо. Мовчання екрана
-      # інакше означає і «тривоги немає», і «ми не знаємо», а це різні речі.
-      - lambda: |-
-          const uint32_t now_ms = millis();
-          if (id(jaam)->connected()) id(jaam_seen_ms) = now_ms;
-          const bool lost = id(jaam_seen_ms) == 0
-                                ? now_ms > 30000
-                                : (now_ms - id(jaam_seen_ms)) > 30000;
-          static int shown = -1;
-          if ((int) lost != shown) {
-            shown = lost;
-            if (lost) {
-              lv_obj_set_style_image_recolor(id(ui_nolink), lv_color_hex(0x707880),
-                                             LV_PART_MAIN);
-              lv_obj_set_style_image_recolor_opa(id(ui_nolink), LV_OPA_COVER,
-                                                 LV_PART_MAIN);
-              lv_obj_remove_flag(id(ui_nolink), LV_OBJ_FLAG_HIDDEN);
-            } else {
-              lv_obj_add_flag(id(ui_nolink), LV_OBJ_FLAG_HIDDEN);
-            }
-          }
       - script.execute: refresh_face
-      - script.execute: refresh_alert_marks
 
 time:
   - platform: homeassistant
     id: ha_time
     timezone: "Europe/Kyiv"
-    on_time:
-      # Only on this one platform: both write the same system clock, so arming
-      # the cron on each of them would fire the minute twice.
-      - hours: 9
-        minutes: 0
-        seconds: 0
-        then:
-          - if:
-              condition:
-                switch.is_on: silence_enabled
-              then:
-                - script.execute: minute_of_silence
     on_time_sync:
       then:
         - script.execute: refresh_face
@@ -1247,17 +911,6 @@ lvgl:
           # network name and its password. Positions are set at runtime by
           # refresh_face, since a two-line face and a four-line face cannot
           # share one set of offsets.
-          # Слот піктограми тривоги:
-          # Центр слота — (194, 94), тобто +74/−26 від центру екрана. Через
-          # align, а не через x/y: силуети різної ширини (32…56 px), і за
-          # фіксованим лівим краєм вони б стрибали.
-          - image:
-              id: ui_alert
-              align: center
-              x: 74
-              y: -26
-              src: img_alert
-              hidden: true
 
           - label:
               id: ui_msg_cap
@@ -1303,16 +956,6 @@ lvgl:
               text_color: 0xC2C8D0
               text: ""
 
-          # Нижній ПРАВИЙ кут, поза кільцем. Не лівий: засічка будильника сидить
-          # на кільці під кутом своєї години, і на ранковий будильник це якраз
-          # нижній лівий сектор — два значки опинялись поруч і зливались.
-          - image:
-              id: ui_nolink
-              align: center
-              x: 89
-              y: 89
-              src: img_nolink
-              hidden: true
 
           - label:
               id: ui_pocket
@@ -1487,17 +1130,6 @@ button:
     on_press:
       - script.execute: show_device_id
 
-  # Otherwise this feature is observable once a day, at nine, and only ever
-  # tomorrow. Diagnostic rather than a normal control: it is for checking that
-  # the thing works, not for holding minutes of silence on demand.
-  - platform: template
-    id: test_silence_button
-    name: "Хвилина мовчання: перевірка"
-    icon: "mdi:candle"
-    entity_category: diagnostic
-    disabled_by_default: true
-    on_press:
-      - script.execute: minute_of_silence
 
   - platform: template
     id: beep_button
@@ -1573,12 +1205,6 @@ switch:
       icon: "mdi:led-on"
       restore_mode: DISABLED
 
-  - platform: template
-    name: "Хвилина мовчання"
-    id: silence_enabled
-    icon: "mdi:candle"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
 
   - platform: template
     name: "LED Auto"

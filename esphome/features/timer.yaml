@@ -163,7 +163,7 @@ script:
       - lambda: |-
           const int state = id(timer_state);
           const int rem = id(timer_remaining_seconds);
-          const bool silence = id(silence_active);
+          const bool silence = (id(htram_arbiter_hub)->get_screen_mode() == 4) || id(htram_arbiter_hub)->is_silence_active();
           const bool slot_held = id(slot_hold);
 
           static int last_screen_mode = -1; // 0 = CLOCK, 1 = TIMER, 2 = OVERLAY_HIDDEN
@@ -201,20 +201,21 @@ script:
           if (want_screen_mode != last_screen_mode) {
             last_screen_mode = want_screen_mode;
             if (want_screen_mode == 1) {
-              // Switch to TIMER screen: hide clock widgets, secdot, and alert icon
-              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot), id(ui_alert)};
+              id(htram_arbiter_hub)->request_screen(2, "timer");
+              // Switch to TIMER screen: hide clock widgets and secdot
+              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot)};
               for (auto *o : clk) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-              // Show timer widgets
               lv_obj_remove_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
               lv_obj_remove_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
               lv_obj_remove_flag(id(ui_timer_cap), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              id(htram_arbiter_hub)->release_screen("timer");
               // Reset caches so elements paint fresh
               prev_d1 = -1;
               prev_d2 = -1;
               prev_digits_color = 0;
               prev_cap = nullptr;
               prev_cap_col = 0;
-            } else {
               // Switch to CLOCK screen: hide timer widgets
               lv_obj_add_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
               lv_obj_add_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
@@ -224,7 +225,6 @@ script:
               for (auto *o : clk) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
               id(refresh_clock).execute();
               id(refresh_slot).execute();
-              id(refresh_alert_icon).execute();
             }
           }
 
@@ -476,7 +476,6 @@ script:
       - script.execute: refresh_timer_ui
       - script.execute: refresh_clock
       - script.execute: refresh_slot
-      - script.execute: refresh_alert_icon
 
   - id: timer_ring
     mode: single
@@ -488,7 +487,7 @@ script:
       - repeat:
           count: 60
           then:
-            - lambda: id(htram_core)->play_rtttl("${timer_rtttl}");
+            - lambda: id(htram_arbiter_hub)->play_rtttl(30, "timer", "${timer_rtttl}");
             - delay: ${timer_repeat_seconds}s
       - script.execute: timer_dismiss
 
@@ -497,7 +496,7 @@ script:
     then:
       - script.stop: timer_ring
       - lambda: |-
-          id(htram_core)->send_stop();
+          id(htram_arbiter_hub)->stop_sound("timer");
           id(timer_state) = 0; // IDLE
           id(timer_preset_idx) = -1;
           id(timer_total_seconds) = 0;
@@ -507,7 +506,6 @@ script:
       - script.execute: refresh_timer_ui
       - script.execute: refresh_clock
       - script.execute: refresh_slot
-      - script.execute: refresh_alert_icon
 
   - id: timer_hold_detector
     mode: restart
@@ -519,7 +517,7 @@ script:
           then:
             - lambda: |-
                 id(timer_cancel_triggered) = true;
-                id(htram_core)->play_rtttl("${timer_cancel_rtttl}");
+                id(htram_arbiter_hub)->play_rtttl(10, "timer", "${timer_cancel_rtttl}");
             - script.execute: timer_cancel
 
   - id: !extend on_button_press
@@ -529,41 +527,6 @@ script:
   - id: !extend on_button_release
     then:
       - script.stop: timer_hold_detector
-
-  - id: !extend handle_feature_button
-    then:
-      - lambda: |-
-          if (id(button_handled)) return;
-
-          if (id(timer_cancel_triggered)) {
-            id(timer_cancel_triggered) = false;
-            id(button_handled) = true;
-            return;
-          }
-
-          if (action == "single") {
-            const int st = id(timer_state);
-            if (st == 4) {
-              id(button_handled) = true;
-              id(timer_dismiss).execute();
-            } else if (st == 1) {
-              id(button_handled) = true;
-              id(timer_cycle_preset).execute();
-            } else if (st == 0) {
-              id(button_handled) = true;
-              id(timer_cycle_preset).execute();
-            } else if (st == 2) {
-              id(button_handled) = true;
-              id(timer_pause).execute();
-            } else if (st == 3) {
-              id(button_handled) = true;
-              id(timer_resume).execute();
-            }
-          } else if (action == "long") {
-            if (id(timer_state) != 0 || id(timer_cancel_triggered)) {
-              id(button_handled) = true;
-            }
-          }
 
   - id: !extend on_face_changed
     then:
@@ -576,6 +539,51 @@ script:
           } else {
             id(refresh_timer_ui).execute();
           }
+
+htram_arbiter:
+  events:
+    - event: button_long
+      context: clock
+      priority: 50
+      name: timer_arm_btn
+      then:
+        - script.execute: timer_cycle_preset
+    - event: button_single
+      context: modal_timer
+      priority: 50
+      name: timer_modal_single_btn
+      then:
+        - lambda: |-
+            const int st = id(timer_state);
+            if (st == 1) id(timer_cycle_preset).execute();
+            else if (st == 2) id(timer_pause).execute();
+            else if (st == 3) id(timer_resume).execute();
+    - event: button_long
+      context: modal_timer
+      priority: 50
+      name: timer_modal_long_btn
+      then:
+        - script.execute: timer_cancel
+    - event: button_single
+      context: ringing
+      priority: 90
+      name: timer_dismiss_single_btn
+      then:
+        - if:
+            condition:
+              lambda: return id(timer_state) == 4;
+            then:
+              - script.execute: timer_dismiss
+    - event: button_double
+      context: ringing
+      priority: 90
+      name: timer_dismiss_double_btn
+      then:
+        - if:
+            condition:
+              lambda: return id(timer_state) == 4;
+            then:
+              - script.execute: timer_dismiss
 
 esphome:
   on_boot:
