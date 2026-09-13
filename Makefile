@@ -40,7 +40,8 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
         status build-esp install-hooks clean help \
         ota-esp ota-esp-all ota-all update-all ota-gd32-all flash-assets-all status-all \
         device device-silence device-status device-beep \
-        container-build container-run container-stop
+        container-build container-run container-stop \
+        remote-control-start remote-control-stop remote-control-status
 
 all: test
 
@@ -78,6 +79,9 @@ help:
 	@echo "  make container-build- Build dev container Docker image"
 	@echo "  make container-run  - Launch dev container shell (Docker)"
 	@echo "  make container-stop - Stop and remove dev container"
+	@echo "  make remote-control-start  - Start Antigravity Remote Control daemon"
+	@echo "  make remote-control-status - Check Antigravity Remote Control status"
+	@echo "  make remote-control-stop   - Stop Antigravity Remote Control daemon"
 	@echo "  make clean         - Remove test binaries, coverage counters, and build artifacts"
 
 # ── Test Suite ───────────────────────────────────────────────────────────────
@@ -387,6 +391,15 @@ container-run:
 
 container-stop:
 	./tools/devcontainer.sh stop
+
+remote-control-start:
+	./tools/remote-control.sh start
+
+remote-control-stop:
+	./tools/remote-control.sh stop
+
+remote-control-status:
+	./tools/remote-control.sh status
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 clean:

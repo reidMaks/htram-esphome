@@ -19,7 +19,7 @@
     "source=${localEnv:HOME}/.local/bin,target=/host-bin,type=bind,readonly"
   ],
   "containerEnv": {
-    "PATH": "/home/ubuntu/.local/bin:/host-bin:/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    "PATH": "/home/ubuntu/.gemini/bin:/home/ubuntu/.local/bin:/host-bin:/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   },
   "customizations": {
     "vscode": {
@@ -38,5 +38,6 @@
       }
     }
   },
-  "postCreateCommand": "sudo chown -R ubuntu:ubuntu /home/ubuntu/.cache /home/ubuntu/.platformio && uv sync && make install-hooks"
+  "postCreateCommand": "sudo chown -R ubuntu:ubuntu /home/ubuntu/.cache /home/ubuntu/.platformio && uv sync && make install-hooks",
+  "postStartCommand": "${containerWorkspaceFolder}/tools/remote-control.sh start"
 }
