@@ -101,6 +101,7 @@ script:
     then:
       - lambda: |-
           if (id(sim_override_time) == 0) return;
+          if (id(htram_arbiter_hub)->is_silence_active()) return;
           auto now = id(ha_time).now();
           if (!now.is_valid()) now = id(net_time).now();
           if (!now.is_valid()) {
@@ -235,9 +236,8 @@ script:
           if (want != 4) {
             id(htram_core)->clear_persistent_asset();
             lv_obj_set_style_bg_color(id(ui_secdot), lv_color_hex(0xB9AFA3), LV_PART_MAIN);
-          }
-
-          if (want == 4) {
+          } else {
+            lv_obj_set_style_bg_color(id(ui_secdot), lv_color_hex(0xC1121F), LV_PART_MAIN);
             return;
           }
 
@@ -368,6 +368,7 @@ script:
     then:
       - lambda: |-
           if (id(slot_hold)) return;
+          if (id(htram_arbiter_hub)->is_silence_active()) return;
           char buf[48];
           if (!id(slot_extra_text).empty() && id(slot_idx) == 2) {
             snprintf(buf, sizeof(buf), "%s", id(slot_extra_text).c_str());

@@ -46,10 +46,6 @@ globals:
     type: float
     restore_value: false
     initial_value: "0.0"
-  - id: timer_cancel_triggered
-    type: bool
-    restore_value: false
-    initial_value: "false"
 
 lvgl:
   widgets:
@@ -388,14 +384,15 @@ script:
   - id: timer_cycle_preset
     then:
       - lambda: |-
+          const bool was_idle = (id(timer_state) == 0);
           id(timer_state) = 1; // ARMING
           id(timer_preset_idx)++;
           if (id(timer_preset_idx) >= 6) {
             id(timer_state) = 0;
             id(timer_preset_idx) = -1;
-            id(htram_core)->send_beep(1760, 30);
-          } else {
-            id(htram_core)->send_beep(1976, 30);
+            id(htram_core)->send_beep(1760, 40);
+          } else if (!was_idle) {
+            id(htram_core)->send_beep(1976, 40);
           }
       - if:
           condition:
@@ -518,36 +515,6 @@ script:
       - script.execute: refresh_clock
       - script.execute: refresh_slot
 
-  - id: timer_hold_detector
-    mode: restart
-    then:
-      - delay: 1000ms
-      - if:
-          condition:
-            lambda: return id(timer_state) != 0;
-          then:
-            - lambda: |-
-                id(timer_cancel_triggered) = true;
-                id(htram_arbiter_hub)->play_rtttl(10, "timer", "${timer_cancel_rtttl}");
-            - script.execute: timer_cancel
-          else:
-            - if:
-                condition:
-                  lambda: return id(htram_arbiter_hub)->get_screen_mode() == 0;
-                then:
-                  - lambda: |-
-                      // Feedback chirp BEFORE opening timer menu!
-                      id(htram_core)->send_beep(2304, 50);
-                  - script.execute: timer_cycle_preset
-
-  - id: !extend on_button_press
-    then:
-      - script.execute: timer_hold_detector
-
-  - id: !extend on_button_release
-    then:
-      - script.stop: timer_hold_detector
-
   - id: !extend on_face_changed
     then:
       - lambda: |-
@@ -568,11 +535,11 @@ htram_arbiter:
       name: timer_arm_btn
       then:
         - lambda: |-
-            if (id(timer_cancel_triggered)) {
-              id(timer_cancel_triggered) = false;
+            if (id(timer_state) != 0) {
+              id(htram_arbiter_hub)->play_rtttl(10, "timer", "${timer_cancel_rtttl}");
+              id(timer_cancel).execute();
               return;
             }
-            if (id(timer_state) == 1) return;
         - script.execute: timer_cycle_preset
     - event: button_single
       context: modal_timer
@@ -589,6 +556,8 @@ htram_arbiter:
       priority: 50
       name: timer_modal_long_btn
       then:
+        - lambda: |-
+            id(htram_arbiter_hub)->play_rtttl(10, "timer", "${timer_cancel_rtttl}");
         - script.execute: timer_cancel
     - event: screen_preempted
       context: modal_timer

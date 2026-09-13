@@ -103,17 +103,12 @@ script:
             id(silence_last_tick_sec) = (int) tv.tv_sec;
           }
           id(silence_ticking) = true;
-          id(face_state) = 4;
 
-          // Repaint face to memorial mode (black bg, memorial red secdot)
-          lv_obj_set_style_bg_color(id(ui_root), lv_color_hex(${silence_bg}), LV_PART_MAIN);
-          lv_obj_set_style_bg_color(id(ui_secdot), lv_color_hex(${silence_fg}), LV_PART_MAIN);
-
-          // Hide clock digits and slots cleanly
-          lv_obj_t *const face[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot)};
-          for (auto *o : face) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-
+      - script.execute: refresh_face
+      - delay: 300ms
+      - lambda: |-
           // Blit Tryzub coat of arms directly from GD32 external SPI Flash (zero DRAM overhead)
+          // Delayed by 300ms so LVGL flushes the black background and hidden digits first!
           id(htram_core)->send_draw_cached_asset(
               htram_gd32::ASSET_ID_TRYZUB, 66, 45,
               Color(${silence_fg}), Color(0x000000), 0);

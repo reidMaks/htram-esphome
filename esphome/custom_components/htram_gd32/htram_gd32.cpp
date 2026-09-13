@@ -280,6 +280,15 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
 
     if (state == 0) {
       ESP_LOGI(TAG, "Button released (held %u ms)", duration_ms);
+      this->cancel_timeout("button_hold");
+
+      if (this->long_press_fired_) {
+        ESP_LOGD(TAG, "Button release after long press consumed");
+        this->long_press_fired_ = false;
+        this->click_count_ = 0;
+        return;
+      }
+
       if (duration_ms >= 600 && duration_ms < 2800) {
         this->cancel_timeout("button_click");
         this->click_count_ = 0;
@@ -319,6 +328,23 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
     } else {
       ESP_LOGD(TAG, "Button pressed");
       this->cancel_timeout("button_clear");
+      this->long_press_fired_ = false;
+      this->set_timeout("button_hold", 800, [this]() {
+        ESP_LOGI(TAG, "Button hold threshold reached (800 ms)");
+        this->long_press_fired_ = true;
+        this->click_count_ = 0;
+        this->cancel_timeout("button_click");
+        // Clear audio confirmation: 100ms tone at 2000 Hz
+        this->send_beep(2000, 100);
+        if (this->button_action_sensor_ != nullptr) {
+          this->button_action_sensor_->publish_state("long");
+          this->set_timeout("button_clear", 1000, [this]() {
+            if (this->button_action_sensor_ != nullptr) {
+              this->button_action_sensor_->publish_state("");
+            }
+          });
+        }
+      });
     }
   } else if (type == 0x05) {
     // pkt_flash_info_t: is_detected(1) mfg(1) mem_type(1) cap(1) status1(1)
