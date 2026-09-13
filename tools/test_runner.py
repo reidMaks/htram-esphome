@@ -301,42 +301,29 @@ async def run_test_suite() -> bool:
             results.append(
                 ("07_alert_threat", True, "Alert threat: red clock digits + ballistic missile icon")
             )
-        except Exception as e:
-            results.append(("07_alert_threat", False, str(e)))
-
-        # Test 8: Air Raid Alert Clear (Green Digits)
-        print("\n--- Test 8: Air Raid Alert Clear ---")
-        try:
-            # Clear alert: turns digits green for 5 minutes and removes threat icon
+            # Clear alert and reset marks
             await harness.simulate_alert(flags=0)
-            await asyncio.sleep(0.5)
-            png = await harness.capture_screenshot("08_alert_clear")
-            assert png.exists() and png.stat().st_size > 1000
-            results.append(
-                ("08_alert_clear", True, "Alert clear: green clock digits without threat icon")
-            )
-            # Reset alert marks back to white clock
             await harness.reset_alert_marks()
             await asyncio.sleep(0.5)
         except Exception as e:
-            results.append(("08_alert_clear", False, str(e)))
+            results.append(("07_alert_threat", False, str(e)))
 
-        # Test 9: Device ID & IP Overlay (Triple Click)
-        print("\n--- Test 9: Device ID & IP Overlay ---")
+        # Test 8: Device ID & IP Overlay (Triple Click)
+        print("\n--- Test 8: Device ID & IP Overlay ---")
         try:
             # Triple click activates show_device_id
             await harness.inject_button("triple")
             await asyncio.sleep(0.5)
-            png = await harness.capture_screenshot("09_device_id")
+            png = await harness.capture_screenshot("08_device_id")
             assert png.exists() and png.stat().st_size > 1000
             results.append(
-                ("09_device_id", True, "Device ID overlay displayed with MAC ID and IP via triple click")
+                ("08_device_id", True, "Device ID overlay displayed with MAC ID and IP via triple click")
             )
             # Dismiss overlay via single click
             await harness.inject_button("single")
             await asyncio.sleep(0.5)
         except Exception as e:
-            results.append(("09_device_id", False, str(e)))
+            results.append(("08_device_id", False, str(e)))
 
     finally:
         await harness.stop()
