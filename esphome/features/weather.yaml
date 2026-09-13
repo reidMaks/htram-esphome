@@ -511,6 +511,7 @@ script:
           };
           for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_weather_ui
       - script.execute: hide_weather_timeout
 
@@ -522,6 +523,8 @@ script:
           id(weather_shown) = false;
           id(htram_arbiter_hub)->release_screen("weather");
           lv_obj_add_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
+          id(face_state) = -1;
+          lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_face
       - script.execute: refresh_clock
       - script.execute: refresh_slot
@@ -555,6 +558,12 @@ htram_arbiter:
       context: modal_weather
       priority: 50
       name: weather_close_btn
+      then:
+        - script.execute: hide_weather
+    - event: button_double
+      context: modal_weather
+      priority: 50
+      name: weather_close_double_btn
       then:
         - script.execute: hide_weather
     - event: screen_preempted

@@ -101,7 +101,7 @@ script:
     then:
       - lambda: |-
           if (id(sim_override_time) == 0) return;
-          if (id(htram_arbiter_hub)->is_silence_active()) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
           auto now = id(ha_time).now();
           if (!now.is_valid()) now = id(net_time).now();
           if (!now.is_valid()) {
@@ -180,6 +180,7 @@ script:
     then:
       - lambda: |-
           if (id(slot_hold)) return;  // the ID / IP overlay owns the face
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0 && !id(htram_arbiter_hub)->is_silence_active()) return;
 
           // The fallback AP is the only state where the device is actively
           // asking for help and can do nothing else useful -- no HA, no
@@ -368,7 +369,7 @@ script:
     then:
       - lambda: |-
           if (id(slot_hold)) return;
-          if (id(htram_arbiter_hub)->is_silence_active()) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
           char buf[48];
           if (!id(slot_extra_text).empty() && id(slot_idx) == 2) {
             snprintf(buf, sizeof(buf), "%s", id(slot_extra_text).c_str());
@@ -410,6 +411,7 @@ script:
     mode: restart
     then:
       - lambda: |-
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
           // Charge level and API link are independent facts, so they no longer
           // gate each other: coupling them meant every gap between API clients
           // (an `esphome logs` session ending counts) hid the battery.
@@ -477,8 +479,10 @@ interval:
                            (lv_coord_t) lroundf(120.0f + 113.0f * sinf(a) - 3.5f));
             if (now.minute != last_min) {
               last_min = now.minute;
-              id(refresh_clock).execute();
-              if (id(slot_idx) == 0) id(refresh_slot).execute();
+              if (id(htram_arbiter_hub)->get_screen_mode() == 0) {
+                id(refresh_clock).execute();
+                if (id(slot_idx) == 0) id(refresh_slot).execute();
+              }
             }
           }
 
@@ -497,6 +501,7 @@ interval:
     then:
       - lambda: |-
           if (id(htram_core)->is_ota_mode()) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
           int max_slots = id(slot_extra_text).empty() ? 2 : 3;
           id(slot_idx) = (id(slot_idx) + 1) % max_slots;
           id(refresh_slot).execute();

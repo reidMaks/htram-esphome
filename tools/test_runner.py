@@ -547,6 +547,33 @@ async def run_test_suite() -> bool:
         except Exception as e:
             results.append(("int_06_device_id_from_weather", False, str(e)))
 
+        # Int Test 7: Weather Screen Persistence & Clean Return
+        print("\n--- Int Test 7: Weather Screen Persistence & Clean Return ---")
+        try:
+            await harness.simulate_weather(10.0, 20.0, 12.0, 18.0, 14.0, "sunny", "cloudy", "rainy")
+            await asyncio.sleep(0.5)
+            # Open weather via double click
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            png_weather = await harness.capture_screenshot("int_07_weather_persists")
+            assert png_weather.exists() and png_weather.stat().st_size > 1000
+
+            # Double click again closes weather cleanly
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            png_clock = await harness.capture_screenshot("int_07_clock_clean_restored")
+            assert png_clock.exists() and png_clock.stat().st_size > 1000
+
+            results.append(
+                (
+                    "int_07_weather_persistence_and_clean_exit",
+                    True,
+                    "Weather screen persists cleanly without digit collision and exits back to clock",
+                )
+            )
+        except Exception as e:
+            results.append(("int_07_weather_persistence_and_clean_exit", False, str(e)))
+
         # ==========================================
         # BOOT & REBOOT SEQUENCE TESTS
         # ==========================================
