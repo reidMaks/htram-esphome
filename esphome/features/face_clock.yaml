@@ -10,6 +10,11 @@
 esphome:
   includes:
     - orbit_dot.h
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_face_clock), id(ui_face_root));
 
 lvgl:
   widgets:
@@ -72,6 +77,7 @@ script:
           if (id(slot_hold)) return;
           if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
           lv_obj_remove_flag(id(ui_face_clock), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_invalidate(id(ui_face_clock));
           id(refresh_clock).execute();
           id(refresh_slot).execute();
 
@@ -151,8 +157,22 @@ script:
     then:
       - lambda: |-
           lv_obj_t *const d[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
-          for (auto *o : d)
+          for (auto *o : d) {
             lv_obj_set_style_text_color(o, lv_color_hex(color), LV_PART_MAIN);
+            lv_obj_invalidate(o);
+          }
+
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face == 0) {
+            lv_obj_remove_flag(id(ui_face_clock), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_invalidate(id(ui_face_clock));
+            id(refresh_clock).execute();
+            id(refresh_slot).execute();
+          } else {
+            lv_obj_add_flag(id(ui_face_clock), LV_OBJ_FLAG_HIDDEN);
+          }
 
 interval:
   - interval: 7s

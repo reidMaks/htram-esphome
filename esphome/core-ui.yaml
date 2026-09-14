@@ -172,11 +172,16 @@ script:
           #endif
           const bool net = (id(sim_override_net) != -1) ? (id(sim_override_net) == 1) : real_net;
 
+          bool real_have_time = id(ha_time).now().is_valid() ||
+                                id(net_time).now().is_valid() ||
+                                (::time(nullptr) > 1700000000);
+          const bool have_time = (id(sim_override_time) != -1) ? (id(sim_override_time) == 1) : real_have_time;
+
           // Priority, as written down in TODO §13: the AP outranks everything
           // (a device asking to be configured can do nothing else useful), then
           // the minute of silence, then the ordinary faces.
           const bool silence = id(htram_arbiter_hub)->is_silence_active();
-          const int want = ap ? 3 : (silence ? 4 : (net ? 0 : 2));
+          const int want = ap ? 3 : (silence ? 4 : (have_time ? 0 : (net ? 1 : 2)));
           if (want != 3) id(ap_manual) = false;
           const int prev_face = id(face_state);
           if (want == prev_face) return;
@@ -252,9 +257,10 @@ script:
             return;
           }
 
-          lv_label_set_text(id(ui_msg), "немає мережі");
+          lv_label_set_text(id(ui_msg), net ? "немає часу" : "немає мережі");
           lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -14);
-          lv_label_set_text(id(ui_msg_sub), "шукаю мережу");
+          lv_label_set_text(id(ui_msg_sub),
+                            net ? "чекаю сервер часу" : "шукаю мережу");
           lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 16);
           lv_obj_remove_flag(id(ui_msg), LV_OBJ_FLAG_HIDDEN);
           lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);

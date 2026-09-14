@@ -169,6 +169,7 @@ script:
           id(htram_arbiter_hub)->reset_audio();
           id(htram_core)->clear_persistent_asset();
           id(face_state) = -1;
+          lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_face
       - script.execute: refresh_slot
       - script.execute: refresh_pocket
