@@ -73,6 +73,15 @@ button:
           id(htram_arbiter_hub)->dispatch_button_action("triple");
 
   - platform: template
+    name: "Simulate Quadruple Click"
+    id: btn_sim_quadruple
+    icon: "mdi:gesture-tap-box"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(htram_arbiter_hub)->dispatch_button_action("quadruple");
+
+  - platform: template
     name: "Simulate Long Press"
     id: btn_sim_long
     icon: "mdi:gesture-tap-hold"

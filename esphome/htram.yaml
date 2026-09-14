@@ -37,3 +37,4 @@ packages:
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
+  graphs: !include features/graphs.yaml

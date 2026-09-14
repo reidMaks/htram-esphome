@@ -18,6 +18,7 @@ packages:
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
+  graphs: !include features/graphs.yaml
   debug: !include features/debug.yaml
 
 api:
@@ -112,3 +113,11 @@ api:
             id(timer_remaining_seconds) = seconds;
             id(refresh_timer_ui).execute();
             id(refresh_slot).execute();
+
+    - service: simulate_graphs_page
+      variables:
+        page: int
+      then:
+        - lambda: |-
+            id(graphs_page) = page;
+            id(refresh_graphs_ui).execute();

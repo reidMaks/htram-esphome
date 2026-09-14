@@ -42,3 +42,4 @@ packages:
   alert: !include features/alert.yaml
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
+  graphs: !include features/graphs.yaml

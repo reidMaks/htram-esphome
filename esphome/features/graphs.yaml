@@ -1,0 +1,891 @@
+# HTRAM Feature: Графіки показників за добу (Daily Telemetry Graphs)
+#
+# Надає модальний екран перегляду добових графіків (24 години):
+# - CO2 (смарагдовий графік із заливкою, шкалою 0..24h та мін/макс мітками);
+# - Температура (теплий бурштиновий графік із заливкою);
+# - Вологість (небесно-блакитний графік із заливкою);
+# - Триптих (три компактні sparkline-графіки один під одним);
+# - Суміщений графік (всі 3 нормалізовані криві на спільній осі часу).
+#
+# Керування:
+# - 4 кліки кнопки (button_quadruple) з годинника відкривають екран графіків;
+# - Подвійний клік (button_double) перемикає варіанти/метрики по колу (0..4);
+# - Одинарний клік (button_single) закриває екран і повертає на годинник;
+# - Автозакриття через 60 с бездіяльності.
+
+substitutions:
+  graphs_co2_entity: "sensor.htram_9436b0_co2"
+  graphs_temp_entity: "sensor.htram_9436b0_temperature"
+  graphs_hum_entity: "sensor.htram_9436b0_humidity"
+  graphs_screen_timeout: "60s"
+
+globals:
+  - id: graphs_shown
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: graphs_page
+    type: int
+    restore_value: false
+    initial_value: "0" # 0=CO2, 1=Temp, 2=Hum, 3=Triptych Stacked, 4=Combined Overlay
+
+  - id: graphs_co2_data
+    type: "std::vector<float>"
+    restore_value: false
+    initial_value: "std::vector<float>{620, 610, 600, 595, 590, 610, 680, 820, 1050, 1180, 1250, 1310, 1280, 1220, 1270, 1340, 1390, 1350, 1210, 980, 850, 760, 690, 640}"
+
+  - id: graphs_temp_data
+    type: "std::vector<float>"
+    restore_value: false
+    initial_value: "std::vector<float>{19.8, 19.6, 19.5, 19.4, 19.4, 19.5, 19.8, 20.2, 20.8, 21.4, 21.9, 22.3, 22.6, 22.7, 22.5, 22.2, 21.8, 21.3, 20.9, 20.6, 20.4, 20.3, 20.0, 19.9}"
+
+  - id: graphs_hum_data
+    type: "std::vector<float>"
+    restore_value: false
+    initial_value: "std::vector<float>{68.0, 69.5, 71.0, 72.5, 73.0, 72.0, 70.0, 67.5, 64.0, 61.5, 59.0, 57.5, 56.0, 56.5, 58.0, 61.0, 64.5, 68.0, 71.0, 73.5, 74.5, 74.0, 71.5, 69.5}"
+
+button:
+  - platform: template
+    name: "Показати графіки"
+    id: btn_show_graphs
+    icon: "mdi:chart-line"
+    on_press:
+      - script.execute: show_graphs
+
+lvgl:
+  widgets:
+    - obj:
+        id: ui_graphs_face
+        align: center
+        width: 240
+        height: 240
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        scrollable: false
+        clickable: false
+        hidden: true
+        widgets:
+          # =================================================================
+          # КАРТКА 1: Детальний графік однієї метрики (CO2 / Темп / Волог)
+          # =================================================================
+          - obj:
+              id: ui_graphs_card_dedicated
+              align: center
+              width: 240
+              height: 240
+              bg_opa: TRANSP
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              widgets:
+                - label:
+                    id: ui_graphs_title
+                    align: top_mid
+                    y: 20
+                    text_font: font_msg
+                    text_color: 0xF0EAE0
+                    text: "CO2 ЗА ДОБУ"
+
+                - label:
+                    id: ui_graphs_val
+                    align: top_mid
+                    y: 44
+                    text_font: font_msg
+                    text_color: 0x34D399
+                    text: "1270 ppm"
+
+                - label:
+                    id: ui_graphs_range
+                    align: top_mid
+                    y: 68
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "мін 590  макс 1390"
+
+                # Область графіка
+                - obj:
+                    id: ui_graphs_plot_area
+                    align: top_mid
+                    y: 90
+                    width: 196
+                    height: 94
+                    bg_opa: TRANSP
+                    border_width: 0
+                    pad_all: 0
+                    scrollable: false
+                    clickable: false
+                    widgets:
+                      # Горизонтальні лінії орієнтирів
+                      - obj:
+                          x: 4
+                          y: 8
+                          width: 188
+                          height: 1
+                          bg_color: 0x2A323D
+                          bg_opa: cover
+                          border_width: 0
+                          pad_all: 0
+                      - obj:
+                          x: 4
+                          y: 46
+                          width: 188
+                          height: 1
+                          bg_color: 0x222832
+                          bg_opa: cover
+                          border_width: 0
+                          pad_all: 0
+                      - obj:
+                          x: 4
+                          y: 86
+                          width: 188
+                          height: 1
+                          bg_color: 0x3D4756
+                          bg_opa: cover
+                          border_width: 0
+                          pad_all: 0
+
+                      # Основна лінія графіка
+                      - line:
+                          id: ui_graphs_curve
+                          line_width: 2
+                          line_rounded: true
+                          line_color: 0x34D399
+                          points:
+                            - [4, 86]
+                            - [188, 86]
+
+                      # Точкові мітки мінімуму та максимуму
+                      - obj:
+                          id: ui_graphs_max_dot
+                          width: 5
+                          height: 5
+                          radius: 2
+                          bg_color: 0xF59E0B
+                          bg_opa: cover
+                          border_width: 0
+                          pad_all: 0
+                      - obj:
+                          id: ui_graphs_min_dot
+                          width: 5
+                          height: 5
+                          radius: 2
+                          bg_color: 0x38BDF8
+                          bg_opa: cover
+                          border_width: 0
+                          pad_all: 0
+
+                # Підписи осі часу
+                - label:
+                    align: top_mid
+                    x: -84
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "00"
+                - label:
+                    align: top_mid
+                    x: -42
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "06"
+                - label:
+                    align: top_mid
+                    x: 0
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "12"
+                - label:
+                    align: top_mid
+                    x: 42
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "18"
+                - label:
+                    align: top_mid
+                    x: 84
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "24"
+
+          # =================================================================
+          # КАРТКА 2: Триптих (три міні-sparkline один під одним)
+          # =================================================================
+          - obj:
+              id: ui_graphs_card_stacked
+              align: center
+              width: 240
+              height: 240
+              bg_opa: TRANSP
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              hidden: true
+              widgets:
+                # Рядок 1: CO2
+                - label:
+                    id: ui_gstack_co2_lbl
+                    align: top_mid
+                    y: 20
+                    text_font: font_slot
+                    text_color: 0x34D399
+                    text: "CO2: 1270 ppm"
+                - obj:
+                    id: ui_gstack_co2_box
+                    align: top_mid
+                    y: 38
+                    width: 170
+                    height: 28
+                    bg_opa: TRANSP
+                    border_width: 0
+                    pad_all: 0
+                    scrollable: false
+                    widgets:
+                      - obj:
+                          x: 2
+                          y: 26
+                          width: 166
+                          height: 1
+                          bg_color: 0x2A323D
+                          bg_opa: cover
+                          border_width: 0
+                      - line:
+                          id: ui_gstack_co2_line
+                          line_width: 2
+                          line_rounded: true
+                          line_color: 0x34D399
+                          points:
+                            - [2, 26]
+                            - [166, 26]
+
+                # Рядок 2: Температура
+                - label:
+                    id: ui_gstack_temp_lbl
+                    align: top_mid
+                    y: 72
+                    text_font: font_slot
+                    text_color: 0xF59E0B
+                    text: "ТЕМП: 20.3 °C"
+                - obj:
+                    id: ui_gstack_temp_box
+                    align: top_mid
+                    y: 90
+                    width: 190
+                    height: 28
+                    bg_opa: TRANSP
+                    border_width: 0
+                    pad_all: 0
+                    scrollable: false
+                    widgets:
+                      - obj:
+                          x: 2
+                          y: 26
+                          width: 186
+                          height: 1
+                          bg_color: 0x2A323D
+                          bg_opa: cover
+                          border_width: 0
+                      - line:
+                          id: ui_gstack_temp_line
+                          line_width: 2
+                          line_rounded: true
+                          line_color: 0xF59E0B
+                          points:
+                            - [2, 26]
+                            - [186, 26]
+
+                # Рядок 3: Вологість
+                - label:
+                    id: ui_gstack_hum_lbl
+                    align: top_mid
+                    y: 124
+                    text_font: font_slot
+                    text_color: 0x38BDF8
+                    text: "ВОЛОГ: 74 %"
+                - obj:
+                    id: ui_gstack_hum_box
+                    align: top_mid
+                    y: 142
+                    width: 170
+                    height: 28
+                    bg_opa: TRANSP
+                    border_width: 0
+                    pad_all: 0
+                    scrollable: false
+                    widgets:
+                      - obj:
+                          x: 2
+                          y: 26
+                          width: 166
+                          height: 1
+                          bg_color: 0x2A323D
+                          bg_opa: cover
+                          border_width: 0
+                      - line:
+                          id: ui_gstack_hum_line
+                          line_width: 2
+                          line_rounded: true
+                          line_color: 0x38BDF8
+                          points:
+                            - [2, 26]
+                            - [166, 26]
+
+                # Вісь часу
+                - label:
+                    align: top_mid
+                    x: -70
+                    y: 180
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "00"
+                - label:
+                    align: top_mid
+                    x: -35
+                    y: 180
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "06"
+                - label:
+                    align: top_mid
+                    x: 0
+                    y: 180
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "12"
+                - label:
+                    align: top_mid
+                    x: 35
+                    y: 180
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "18"
+                - label:
+                    align: top_mid
+                    x: 70
+                    y: 180
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "24"
+
+          # =================================================================
+          # КАРТКА 3: Суміщений огляд (всі три криві на одній сітці)
+          # =================================================================
+          - obj:
+              id: ui_graphs_card_combined
+              align: center
+              width: 240
+              height: 240
+              bg_opa: TRANSP
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              hidden: true
+              widgets:
+                - label:
+                    id: ui_gcomb_title
+                    align: top_mid
+                    y: 22
+                    text_font: font_slot
+                    text_color: 0xF0EAE0
+                    text: "ДОБОВИЙ ОГЛЯД"
+
+                - label:
+                    id: ui_gcomb_legend
+                    align: top_mid
+                    y: 46
+                    text_font: font_slot
+                    text_color: 0xA0A8B0
+                    text: "CO2 (зел)  Т (ор)  RH (син)"
+
+                - obj:
+                    id: ui_gcomb_plot_area
+                    align: top_mid
+                    y: 72
+                    width: 196
+                    height: 110
+                    bg_opa: TRANSP
+                    border_width: 0
+                    pad_all: 0
+                    scrollable: false
+                    widgets:
+                      - obj:
+                          x: 4
+                          y: 8
+                          width: 188
+                          height: 1
+                          bg_color: 0x2A323D
+                          bg_opa: cover
+                          border_width: 0
+                      - obj:
+                          x: 4
+                          y: 52
+                          width: 188
+                          height: 1
+                          bg_color: 0x222832
+                          bg_opa: cover
+                          border_width: 0
+                      - obj:
+                          x: 4
+                          y: 98
+                          width: 188
+                          height: 1
+                          bg_color: 0x3D4756
+                          bg_opa: cover
+                          border_width: 0
+
+                      - line:
+                          id: ui_gcomb_co2_line
+                          line_width: 2
+                          line_rounded: true
+                          line_color: 0x34D399
+                          points:
+                            - [4, 98]
+                            - [188, 98]
+                      - line:
+                          id: ui_gcomb_temp_line
+                          line_width: 2
+                          line_rounded: true
+                          line_color: 0xF59E0B
+                          points:
+                            - [4, 98]
+                            - [188, 98]
+                      - line:
+                          id: ui_gcomb_hum_line
+                          line_width: 2
+                          line_rounded: true
+                          line_color: 0x38BDF8
+                          points:
+                            - [4, 98]
+                            - [188, 98]
+
+                - label:
+                    align: top_mid
+                    x: -80
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "00"
+                - label:
+                    align: top_mid
+                    x: -40
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "06"
+                - label:
+                    align: top_mid
+                    x: 0
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "12"
+                - label:
+                    align: top_mid
+                    x: 40
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "18"
+                - label:
+                    align: top_mid
+                    x: 80
+                    y: 186
+                    text_font: font_slot
+                    text_color: 0x707880
+                    text: "24"
+
+          # =================================================================
+          # ТОЧКИ ПАГІНАЦІЇ (індикатор активної сторінки 0..4)
+          # =================================================================
+          - obj:
+              id: ui_gdot0
+              align: top_mid
+              x: -24
+              y: 212
+              width: 5
+              height: 5
+              radius: 2
+              bg_color: 0xF0EAE0
+              bg_opa: cover
+              border_width: 0
+              pad_all: 0
+          - obj:
+              id: ui_gdot1
+              align: top_mid
+              x: -12
+              y: 212
+              width: 5
+              height: 5
+              radius: 2
+              bg_color: 0x505860
+              bg_opa: 50%
+              border_width: 0
+              pad_all: 0
+          - obj:
+              id: ui_gdot2
+              align: top_mid
+              x: 0
+              y: 212
+              width: 5
+              height: 5
+              radius: 2
+              bg_color: 0x505860
+              bg_opa: 50%
+              border_width: 0
+              pad_all: 0
+          - obj:
+              id: ui_gdot3
+              align: top_mid
+              x: 12
+              y: 212
+              width: 5
+              height: 5
+              radius: 2
+              bg_color: 0x505860
+              bg_opa: 50%
+              border_width: 0
+              pad_all: 0
+          - obj:
+              id: ui_gdot4
+              align: top_mid
+              x: 24
+              y: 212
+              width: 5
+              height: 5
+              radius: 2
+              bg_color: 0x505860
+              bg_opa: 50%
+              border_width: 0
+              pad_all: 0
+
+script:
+  - id: refresh_graphs_ui
+    then:
+      - lambda: |-
+          static lv_obj_t *s_area_bars[24] = {nullptr};
+          static bool s_bars_created = false;
+
+          // Динамічне створення 24 вертикальних смуг заливки (area fill)
+          if (!s_bars_created) {
+            for (int i = 0; i < 24; i++) {
+              lv_obj_t *b = lv_obj_create(id(ui_graphs_plot_area));
+              lv_obj_set_style_bg_opa(b, LV_OPA_30, LV_PART_MAIN);
+              lv_obj_set_style_border_width(b, 0, LV_PART_MAIN);
+              lv_obj_set_style_radius(b, 1, LV_PART_MAIN);
+              lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+              lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+              lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
+              s_area_bars[i] = b;
+            }
+            s_bars_created = true;
+          }
+
+          int page = id(graphs_page);
+
+          if (page <= 2) {
+            // Режим детального перегляду окремої метрики
+            lv_obj_remove_flag(id(ui_graphs_card_dedicated), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_graphs_card_stacked), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_graphs_card_combined), LV_OBJ_FLAG_HIDDEN);
+
+            for (int i = 0; i < 24; i++) {
+              if (s_area_bars[i]) lv_obj_remove_flag(s_area_bars[i], LV_OBJ_FLAG_HIDDEN);
+            }
+
+            const std::vector<float> *data_vec = nullptr;
+            const char *title_str = "";
+            const char *unit_str = "";
+            uint32_t metric_color = 0x34D399;
+            bool is_float = false;
+
+            if (page == 0) {
+              data_vec = &id(graphs_co2_data);
+              title_str = "CO2 ЗА ДОБУ";
+              unit_str = " ppm";
+              metric_color = 0x34D399; // Смарагдовий
+              is_float = false;
+            } else if (page == 1) {
+              data_vec = &id(graphs_temp_data);
+              title_str = "ТЕМПЕРАТУРА";
+              unit_str = " °C";
+              metric_color = 0xF59E0B; // Теплий бурштин
+              is_float = true;
+            } else {
+              data_vec = &id(graphs_hum_data);
+              title_str = "ВОЛОГІСТЬ";
+              unit_str = " %";
+              metric_color = 0x38BDF8; // Небесно-блакитний
+              is_float = false;
+            }
+
+            float min_v = 999999.0f, max_v = -999999.0f;
+            for (float v : *data_vec) {
+              if (!isnan(v)) {
+                if (v < min_v) min_v = v;
+                if (v > max_v) max_v = v;
+              }
+            }
+            if (min_v > max_v) { min_v = 0.0f; max_v = 100.0f; }
+            float cur_v = (*data_vec)[14]; // поточна точка
+            if (isnan(cur_v)) cur_v = max_v;
+
+            char buf[64];
+            lv_label_set_text(id(ui_graphs_title), title_str);
+
+            if (is_float) {
+              snprintf(buf, sizeof(buf), "%.1f%s", cur_v, unit_str);
+            } else {
+              snprintf(buf, sizeof(buf), "%.0f%s", cur_v, unit_str);
+            }
+            lv_label_set_text(id(ui_graphs_val), buf);
+            lv_obj_set_style_text_color(id(ui_graphs_val), lv_color_hex(metric_color), LV_PART_MAIN);
+
+            if (is_float) {
+              snprintf(buf, sizeof(buf), "мін %.1f  макс %.1f", min_v, max_v);
+            } else {
+              snprintf(buf, sizeof(buf), "мін %.0f  макс %.0f", min_v, max_v);
+            }
+            lv_label_set_text(id(ui_graphs_range), buf);
+
+            static lv_point_precise_t s_pts[24];
+            float span = (max_v > min_v) ? (max_v - min_v) : 1.0f;
+            int min_idx = 0, max_idx = 0;
+
+            for (int i = 0; i < 24; i++) {
+              float v = (*data_vec)[i];
+              if (isnan(v)) v = min_v;
+              if (v <= min_v) min_idx = i;
+              if (v >= max_v) max_idx = i;
+              float norm = (v - min_v) / span;
+              int py = 84 - (int)(norm * 74.0f); // діапазон від 10 до 84
+              s_pts[i].x = 4 + i * 8;
+              s_pts[i].y = py;
+
+              if (s_area_bars[i] != nullptr) {
+                lv_obj_set_pos(s_area_bars[i], s_pts[i].x - 2, py);
+                lv_obj_set_size(s_area_bars[i], 5, 86 - py);
+                lv_obj_set_style_bg_color(s_area_bars[i], lv_color_hex(metric_color), LV_PART_MAIN);
+              }
+            }
+            lv_line_set_points(id(ui_graphs_curve)->obj, s_pts, 24);
+            lv_obj_set_style_line_color(id(ui_graphs_curve)->obj, lv_color_hex(metric_color), LV_PART_MAIN);
+
+            lv_obj_set_pos(id(ui_graphs_max_dot), s_pts[max_idx].x - 2, s_pts[max_idx].y - 2);
+            lv_obj_set_pos(id(ui_graphs_min_dot), s_pts[min_idx].x - 2, s_pts[min_idx].y - 2);
+
+          } else if (page == 3) {
+            // Режим Триптиха (три компактні графіки)
+            lv_obj_add_flag(id(ui_graphs_card_dedicated), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_graphs_card_stacked), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_graphs_card_combined), LV_OBJ_FLAG_HIDDEN);
+
+            for (int i = 0; i < 24; i++) {
+              if (s_area_bars[i]) lv_obj_add_flag(s_area_bars[i], LV_OBJ_FLAG_HIDDEN);
+            }
+
+            // Розрахунок кривої CO2
+            static lv_point_precise_t s_stk_co2[24];
+            float c_min = 590.0f, c_max = 1390.0f;
+            float c_span = c_max - c_min;
+            for (int i = 0; i < 24; i++) {
+              float v = id(graphs_co2_data)[i];
+              float n = (v - c_min) / c_span;
+              s_stk_co2[i].x = 2 + (int)(i * 7.1f);
+              s_stk_co2[i].y = 25 - (int)(n * 22.0f);
+            }
+            lv_line_set_points(id(ui_gstack_co2_line)->obj, s_stk_co2, 24);
+
+            // Розрахунок кривої Температури
+            static lv_point_precise_t s_stk_t[24];
+            float t_min = 19.4f, t_max = 22.7f;
+            float t_span = t_max - t_min;
+            for (int i = 0; i < 24; i++) {
+              float v = id(graphs_temp_data)[i];
+              float n = (v - t_min) / t_span;
+              s_stk_t[i].x = 2 + (int)(i * 8.0f);
+              s_stk_t[i].y = 25 - (int)(n * 22.0f);
+            }
+            lv_line_set_points(id(ui_gstack_temp_line)->obj, s_stk_t, 24);
+
+            // Розрахунок кривої Вологості
+            static lv_point_precise_t s_stk_h[24];
+            float h_min = 56.0f, h_max = 74.5f;
+            float h_span = h_max - h_min;
+            for (int i = 0; i < 24; i++) {
+              float v = id(graphs_hum_data)[i];
+              float n = (v - h_min) / h_span;
+              s_stk_h[i].x = 2 + (int)(i * 7.1f);
+              s_stk_h[i].y = 25 - (int)(n * 22.0f);
+            }
+            lv_line_set_points(id(ui_gstack_hum_line)->obj, s_stk_h, 24);
+
+          } else if (page == 4) {
+            // Режим суміщеного графіка (3 нормалізовані криві)
+            lv_obj_add_flag(id(ui_graphs_card_dedicated), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_graphs_card_stacked), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_graphs_card_combined), LV_OBJ_FLAG_HIDDEN);
+
+            for (int i = 0; i < 24; i++) {
+              if (s_area_bars[i]) lv_obj_add_flag(s_area_bars[i], LV_OBJ_FLAG_HIDDEN);
+            }
+
+            static lv_point_precise_t s_cmb_co2[24];
+            static lv_point_precise_t s_cmb_t[24];
+            static lv_point_precise_t s_cmb_h[24];
+
+            float c_min = 590.0f, c_max = 1390.0f, c_span = c_max - c_min;
+            float t_min = 19.4f, t_max = 22.7f, t_span = t_max - t_min;
+            float h_min = 56.0f, h_max = 74.5f, h_span = h_max - h_min;
+
+            for (int i = 0; i < 24; i++) {
+              int px = 4 + i * 8;
+              float nc = (id(graphs_co2_data)[i] - c_min) / c_span;
+              float nt = (id(graphs_temp_data)[i] - t_min) / t_span;
+              float nh = (id(graphs_hum_data)[i] - h_min) / h_span;
+
+              s_cmb_co2[i].x = px;
+              s_cmb_co2[i].y = 96 - (int)(nc * 86.0f);
+
+              s_cmb_t[i].x = px;
+              s_cmb_t[i].y = 96 - (int)(nt * 86.0f);
+
+              s_cmb_h[i].x = px;
+              s_cmb_h[i].y = 96 - (int)(nh * 86.0f);
+            }
+
+            lv_line_set_points(id(ui_gcomb_co2_line)->obj, s_cmb_co2, 24);
+            lv_line_set_points(id(ui_gcomb_temp_line)->obj, s_cmb_t, 24);
+            lv_line_set_points(id(ui_gcomb_hum_line)->obj, s_cmb_h, 24);
+          }
+
+          // Оновлення індикаторів пагінації
+          lv_obj_t *dots[] = { id(ui_gdot0), id(ui_gdot1), id(ui_gdot2), id(ui_gdot3), id(ui_gdot4) };
+          for (int i = 0; i < 5; i++) {
+            if (i == page) {
+              lv_obj_set_style_bg_color(dots[i], lv_color_hex(0xF0EAE0), LV_PART_MAIN);
+              lv_obj_set_style_bg_opa(dots[i], LV_OPA_COVER, LV_PART_MAIN);
+            } else {
+              lv_obj_set_style_bg_color(dots[i], lv_color_hex(0x505860), LV_PART_MAIN);
+              lv_obj_set_style_bg_opa(dots[i], LV_OPA_50, LV_PART_MAIN);
+            }
+          }
+
+  - id: show_graphs
+    mode: restart
+    then:
+      - lambda: |-
+          if (!id(htram_arbiter_hub)->request_screen(1, "graphs")) {
+            ESP_LOGW("graphs", "Screen request denied by arbiter");
+            return;
+          }
+          id(graphs_shown) = true;
+          id(face_state) = -1;
+
+          // Приховуємо стандартні екрани
+          lv_obj_t *const hide[] = {
+              id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
+              id(ui_slot), id(ui_pocket), id(ui_msg),
+              id(ui_msg_sub), id(ui_msg_cap), id(ui_msg2),
+              id(ui_ap_card), id(ui_ap_qr), id(ui_devid), id(ui_devid_cap)
+          };
+          for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+
+          // Показуємо модальний контейнер графіків
+          lv_obj_remove_flag(id(ui_graphs_face), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_invalidate(id(ui_root));
+      - script.execute: refresh_graphs_ui
+      - script.execute: hide_graphs_timeout
+
+  - id: hide_graphs
+    mode: restart
+    then:
+      - script.stop: hide_graphs_timeout
+      - lambda: |-
+          id(graphs_shown) = false;
+          id(htram_arbiter_hub)->release_screen("graphs");
+          lv_obj_add_flag(id(ui_graphs_face), LV_OBJ_FLAG_HIDDEN);
+          id(face_state) = -1;
+          lv_obj_invalidate(id(ui_root));
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
+
+  - id: hide_graphs_timeout
+    mode: restart
+    then:
+      - delay: ${graphs_screen_timeout}
+      - script.execute: hide_graphs
+
+  - id: next_graph_metric
+    mode: restart
+    then:
+      - lambda: |-
+          id(graphs_page) = (id(graphs_page) + 1) % 5;
+      - script.execute: refresh_graphs_ui
+      - script.execute: hide_graphs_timeout
+
+  # Точки інтеграції життєвого циклу
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face != 0 && id(graphs_shown)) {
+            id(hide_graphs).execute();
+          }
+
+  - id: !extend on_alarm_started
+    then:
+      - lambda: |-
+          if (id(graphs_shown)) {
+            id(hide_graphs).execute();
+          }
+
+htram_arbiter:
+  events:
+    # 4 кліки у звичайному режимі годинника відкривають екран графіків
+    - event: button_quadruple
+      context: clock
+      priority: 50
+      name: graphs_open_btn
+      then:
+        - script.execute: show_graphs
+
+    # Одинарний клік всередині модального вікна закриває його
+    - event: button_single
+      context: modal_graphs
+      priority: 50
+      name: graphs_close_btn
+      then:
+        - script.execute: hide_graphs
+
+    # Подвійний клік перемикає метрики / варіанти перегляду
+    - event: button_double
+      context: modal_graphs
+      priority: 50
+      name: graphs_next_btn
+      then:
+        - script.execute: next_graph_metric
+
+    # Витіснення пріоритетнішим екраном (хвилина мовчання, тривога тощо)
+    - event: screen_preempted
+      context: modal_graphs
+      priority: 100
+      name: graphs_preempted
+      then:
+        - script.execute: hide_graphs
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_graphs_face), id(ui_root));
+            lv_obj_add_flag(id(ui_graphs_face), LV_OBJ_FLAG_HIDDEN);

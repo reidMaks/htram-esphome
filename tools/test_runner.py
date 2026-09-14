@@ -378,6 +378,61 @@ async def run_test_suite() -> bool:
         except Exception as e:
             results.append(("08_device_id", False, str(e)))
 
+        # Test 9: Daily Telemetry Graphs Modal & Layout Variants
+        print("\n--- Test 9: Daily Telemetry Graphs & Layout Variants ---")
+        try:
+            # 4 clicks from clock opens graphs modal
+            await harness.inject_button("quadruple")
+            await asyncio.sleep(0.6)
+
+            # Page 0: Variant 1a - Dedicated CO2 Graph
+            await harness.call_service("simulate_graphs_page", {"page": 0})
+            await asyncio.sleep(0.4)
+            png_co2 = await harness.capture_screenshot("09_graphs_co2_detailed")
+            assert png_co2.exists() and png_co2.stat().st_size > 1000
+
+            # Page 1: Variant 1b - Dedicated Temperature Graph
+            await harness.call_service("simulate_graphs_page", {"page": 1})
+            await asyncio.sleep(0.4)
+            png_temp = await harness.capture_screenshot("10_graphs_temp_detailed")
+            assert png_temp.exists() and png_temp.stat().st_size > 1000
+
+            # Page 2: Variant 1c - Dedicated Humidity Graph
+            await harness.call_service("simulate_graphs_page", {"page": 2})
+            await asyncio.sleep(0.4)
+            png_hum = await harness.capture_screenshot("11_graphs_hum_detailed")
+            assert png_hum.exists() and png_hum.stat().st_size > 1000
+
+            # Page 3: Variant 2 - Stacked Triple Sparklines (Triptych)
+            await harness.call_service("simulate_graphs_page", {"page": 3})
+            await asyncio.sleep(0.4)
+            png_stk = await harness.capture_screenshot("12_graphs_stacked_triptych")
+            assert png_stk.exists() and png_stk.stat().st_size > 1000
+
+            # Page 4: Variant 3 - Combined Multi-line Overlay
+            await harness.call_service("simulate_graphs_page", {"page": 4})
+            await asyncio.sleep(0.4)
+            png_comb = await harness.capture_screenshot("13_graphs_combined_overlay")
+            assert png_comb.exists() and png_comb.stat().st_size > 1000
+
+            # Double click cycles to next page (wraps 4 -> 0)
+            await harness.inject_button("double")
+            await asyncio.sleep(0.4)
+
+            # Single click dismisses modal and restores clock face
+            await harness.inject_button("single")
+            await asyncio.sleep(0.5)
+
+            results.append(
+                (
+                    "09_telemetry_graphs_suite",
+                    True,
+                    "Daily graphs: dedicated CO2/Temp/Hum, stacked triptych, and combined overlay captured",
+                )
+            )
+        except Exception as e:
+            results.append(("09_telemetry_graphs_suite", False, str(e)))
+
         # ==========================================
         # INTEGRATION TESTS & SCENARIO EXPLORATION
         # ==========================================
