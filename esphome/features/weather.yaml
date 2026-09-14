@@ -526,8 +526,6 @@ script:
           id(face_state) = -1;
           lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_face
-      - script.execute: refresh_clock
-      - script.execute: refresh_slot
       - script.execute: refresh_pocket
 
   # Точки інтеграції
