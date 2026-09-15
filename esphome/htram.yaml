@@ -16,6 +16,7 @@
 #       ref: main
 #       files:
 #         - esphome/htram-core.yaml
+#         - esphome/features/face_clock.yaml
 #         - esphome/features/silence.yaml
 #         - esphome/features/alert.yaml
 #         - esphome/features/alarm.yaml
@@ -32,6 +33,7 @@ substitutions:
 
 packages:
   core: !include htram-core.yaml
+  face_clock: !include features/face_clock.yaml
   silence: !include features/silence.yaml
   alert: !include features/alert.yaml
   alarm: !include features/alarm.yaml

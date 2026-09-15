@@ -197,9 +197,7 @@ script:
           static uint32_t shown = 0xF0EAE0;
           if (want == shown) return;
           shown = want;
-          lv_obj_t *const d[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
-          for (auto *o : d)
-            lv_obj_set_style_text_color(o, lv_color_hex(want), LV_PART_MAIN);
+          id(apply_face_alert_color).execute(want);
 
 interval:
   - interval: 1s

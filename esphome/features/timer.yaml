@@ -206,9 +206,9 @@ script:
             last_screen_mode = want_screen_mode;
             if (want_screen_mode == 1) {
               id(htram_arbiter_hub)->request_screen(2, "timer");
-              // Switch to TIMER screen: hide clock widgets and secdot
-              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot)};
-              for (auto *o : clk) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+              // Switch to TIMER screen: hide face and secdot
+              lv_obj_add_flag(id(ui_face_root), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(ui_secdot), LV_OBJ_FLAG_HIDDEN);
               lv_obj_remove_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
               lv_obj_remove_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
               lv_obj_remove_flag(id(ui_timer_cap), LV_OBJ_FLAG_HIDDEN);
@@ -224,10 +224,9 @@ script:
               lv_obj_add_flag(id(ui_timer_d1), LV_OBJ_FLAG_HIDDEN);
               lv_obj_add_flag(id(ui_timer_d2), LV_OBJ_FLAG_HIDDEN);
               lv_obj_add_flag(id(ui_timer_cap), LV_OBJ_FLAG_HIDDEN);
-              // Show clock widgets and secdot
-              lv_obj_t *const clk[] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2), id(ui_slot), id(ui_secdot)};
-              for (auto *o : clk) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-              id(refresh_clock).execute();
+              // Show face and secdot
+              lv_obj_remove_flag(id(ui_face_root), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_remove_flag(id(ui_secdot), LV_OBJ_FLAG_HIDDEN);
               id(refresh_slot).execute();
             }
           }
@@ -480,7 +479,6 @@ script:
           id(slot_extra_text) = "";
           if (id(slot_idx) >= 2) id(slot_idx) = 0;
       - script.execute: refresh_timer_ui
-      - script.execute: refresh_clock
       - script.execute: refresh_slot
 
   - id: timer_ring
@@ -512,7 +510,6 @@ script:
           id(slot_extra_text) = "";
           if (id(slot_idx) >= 2) id(slot_idx) = 0;
       - script.execute: refresh_timer_ui
-      - script.execute: refresh_clock
       - script.execute: refresh_slot
 
   - id: !extend on_face_changed

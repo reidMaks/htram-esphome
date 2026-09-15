@@ -504,8 +504,7 @@ script:
           id(weather_shown) = true;
           id(face_state) = -1;
           lv_obj_t *const hide[] = {
-              id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2),
-              id(ui_slot), id(ui_pocket), id(ui_msg),
+              id(ui_face_root), id(ui_pocket), id(ui_msg),
               id(ui_msg_sub), id(ui_msg_cap), id(ui_msg2),
               id(ui_ap_card), id(ui_ap_qr), id(ui_devid), id(ui_devid_cap)
           };
@@ -523,11 +522,11 @@ script:
           id(weather_shown) = false;
           id(htram_arbiter_hub)->release_screen("weather");
           lv_obj_add_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_face_root), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
           id(face_state) = -1;
           lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_face
-      - script.execute: refresh_clock
-      - script.execute: refresh_slot
       - script.execute: refresh_pocket
 
   # Точки інтеграції

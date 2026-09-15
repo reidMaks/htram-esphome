@@ -14,6 +14,8 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  includes:
+    - sim_time.h
   on_boot:
     - priority: 600
       then:
@@ -28,8 +30,6 @@ esphome:
         - lambda: |-
             id(htram_arbiter_hub)->set_core(id(htram_core));
         - script.execute: refresh_face
-        - script.execute: refresh_clock
-        - script.execute: refresh_slot
 
 host:
 
@@ -134,6 +134,52 @@ api:
         - script.execute: refresh_slot
         - script.execute: refresh_pocket
 
+    - service: set_sim_time
+      variables:
+        epoch: int
+        freeze: bool
+      then:
+        - lambda: |-
+            htram_sim::set_time((time_t) epoch, freeze);
+            id(face_state) = -1;
+            id(slot_idx) = 0;
+            id(htram_arbiter_hub)->dispatch_event("time_synced");
+            id(htram_arbiter_hub)->dispatch_event("time_second");
+            id(htram_arbiter_hub)->dispatch_event("time_minute");
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+
+    - service: set_sim_slot
+      variables:
+        idx: int
+      then:
+        - lambda: |-
+            id(slot_idx) = idx;
+        - script.execute: refresh_slot
+
+    - service: step_sim_time
+      variables:
+        seconds: int
+      then:
+        - lambda: |-
+            htram_sim::step_time(seconds);
+            id(htram_arbiter_hub)->dispatch_event("time_second");
+            id(htram_arbiter_hub)->dispatch_event("time_minute");
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+
+    - service: reset_sim_time
+      then:
+        - lambda: |-
+            htram_sim::reset_time();
+            id(face_state) = -1;
+            id(slot_idx) = 0;
+            id(htram_arbiter_hub)->dispatch_event("time_synced");
+        - script.execute: refresh_face
+        - script.execute: refresh_clock
+        - script.execute: refresh_slot
+
 external_components:
   - source:
       type: local
@@ -153,15 +199,6 @@ htram_gd32:
 htram_arbiter:
   id: htram_arbiter_hub
   events:
-    - event: button_single
-      context: clock
-      priority: 10
-      name: core_cycle_slot
-      then:
-        - lambda: |-
-            int max_slots = id(slot_extra_text).empty() ? 2 : 3;
-            id(slot_idx) = (id(slot_idx) + 1) % max_slots;
-            id(refresh_slot).execute();
     - event: button_triple
       context: any
       priority: 10
@@ -192,8 +229,6 @@ htram_arbiter:
             lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
             id(slot_hold) = false;
         - script.execute: refresh_face
-        - script.execute: refresh_clock
-        - script.execute: refresh_slot
         - script.execute: refresh_pocket
     - event: screen_preempted
       context: modal_overlay
@@ -215,10 +250,10 @@ time:
     timezone: "Europe/Kyiv"
     on_time_sync:
       then:
-        - lambda: id(face_state) = -1;
+        - lambda: |-
+            id(face_state) = -1;
+            id(htram_arbiter_hub)->dispatch_event("time_synced");
         - script.execute: refresh_face
-        - script.execute: refresh_clock
-        - script.execute: refresh_slot
   - platform: host
     id: net_time
     timezone: "Europe/Kyiv"
