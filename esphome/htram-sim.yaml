@@ -13,6 +13,7 @@ substitutions:
 
 packages:
   core: !include htram-sim-core.yaml
+  face_clock: !include features/face_clock.yaml
   silence: !include features/silence.yaml
   alert: !include features/alert.yaml
   alarm: !include features/alarm.yaml

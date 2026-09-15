@@ -179,15 +179,6 @@ htram_gd32:
 htram_arbiter:
   id: htram_arbiter_hub
   events:
-    - event: button_single
-      context: clock
-      priority: 10
-      name: core_cycle_slot
-      then:
-        - lambda: |-
-            int max_slots = id(slot_extra_text).empty() ? 2 : 3;
-            id(slot_idx) = (id(slot_idx) + 1) % max_slots;
-            id(refresh_slot).execute();
     - event: button_triple
       context: any
       priority: 10
@@ -218,8 +209,6 @@ htram_arbiter:
             lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
             id(slot_hold) = false;
         - script.execute: refresh_face
-        - script.execute: refresh_clock
-        - script.execute: refresh_slot
         - script.execute: refresh_pocket
     - event: screen_preempted
       context: modal_overlay
@@ -327,10 +316,10 @@ time:
     timezone: "Europe/Kyiv"
     on_time_sync:
       then:
-        - lambda: id(face_state) = -1;
+        - lambda: |-
+            id(face_state) = -1;
+            id(htram_arbiter_hub)->dispatch_event("time_synced");
         - script.execute: refresh_face
-        - script.execute: refresh_clock
-        - script.execute: refresh_slot
 
   # The face is a clock, and until now the only thing that could set it was Home
   # Assistant -- so a unit that rebooted while HA was down showed dashes forever.
@@ -341,10 +330,10 @@ time:
     timezone: "Europe/Kyiv"
     on_time_sync:
       then:
-        - lambda: id(face_state) = -1;
+        - lambda: |-
+            id(face_state) = -1;
+            id(htram_arbiter_hub)->dispatch_event("time_synced");
         - script.execute: refresh_face
-        - script.execute: refresh_clock
-        - script.execute: refresh_slot
 
 
 sensor:

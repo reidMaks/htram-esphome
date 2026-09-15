@@ -55,9 +55,10 @@ class SimulationHarness:
         """Starts the simulator process and connects to its API."""
         self.ensure_binary()
         print("[*] Launching htram-sim background process...")
+        self.log_file = open(REPO_ROOT / "sim_output.log", "a")
         self.proc = subprocess.Popen(
             [str(SIM_BINARY)],
-            stdout=subprocess.PIPE,
+            stdout=self.log_file,
             stderr=subprocess.STDOUT,
             cwd=REPO_ROOT,
         )
@@ -91,6 +92,10 @@ class SimulationHarness:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
             self.proc = None
+
+        if hasattr(self, "log_file") and self.log_file:
+            self.log_file.close()
+            self.log_file = None
 
     async def call_service(self, name: str, data: dict[str, Any] | None = None) -> None:
         """Executes a custom service on the simulator."""

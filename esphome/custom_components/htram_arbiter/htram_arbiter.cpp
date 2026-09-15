@@ -168,7 +168,9 @@ bool HtramArbiter::request_screen(int mode, const std::string &owner) {
     this->screen_mode_ = mode;
     this->screen_owner_ = owner;
 
-    if (!prev_owner.empty() && prev_owner != owner && prev_owner != "clock") {
+    if (prev_owner == "clock" && owner != "clock") {
+      this->dispatch_event_for_context("screen_hide", "clock");
+    } else if (!prev_owner.empty() && prev_owner != owner && prev_owner != "clock") {
       ESP_LOGI(TAG, "Screen preemption: '%s' preempted by '%s'", prev_owner.c_str(), owner.c_str());
       std::string prev_ctx = "modal_" + prev_owner;
       this->dispatch_event_for_context("screen_preempted", prev_ctx);
@@ -185,6 +187,7 @@ bool HtramArbiter::release_screen(const std::string &owner) {
     ESP_LOGI(TAG, "Screen released by '%s', returning to SCREEN_CLOCK", owner.c_str());
     this->screen_mode_ = SCREEN_CLOCK;
     this->screen_owner_ = "clock";
+    this->dispatch_event("screen_idle");
     return true;
   }
   return false;

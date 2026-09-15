@@ -72,6 +72,25 @@ htram_arbiter:
       name: silence_test_abort_long
       then:
         - script.execute: stop_silence_test
+    - event: time_second
+      context: silence_sacred
+      priority: 10
+      name: silence_on_second_sacred
+      then:
+        - lambda: |-
+            auto now = id(ha_time).now();
+            if (now.is_valid()) set_orbit_dot(id(ui_secdot), now.second * 6.0f, 0xC1121F);
+    - event: time_second
+      context: silence_test
+      priority: 10
+      name: silence_on_second_test
+      then:
+        - lambda: |-
+            time_t t = ::time(nullptr);
+            int sec = (t > 0) ? (t % 60) : 0;
+            auto now = id(ha_time).now();
+            if (now.is_valid()) sec = now.second;
+            set_orbit_dot(id(ui_secdot), sec * 6.0f, 0xC1121F);
 
 script:
   - id: start_minute_of_silence
@@ -150,8 +169,8 @@ script:
           id(htram_arbiter_hub)->reset_audio();
           id(htram_core)->clear_persistent_asset();
           id(face_state) = -1;
+          lv_obj_invalidate(id(ui_root));
       - script.execute: refresh_face
-      - script.execute: refresh_clock
       - script.execute: refresh_slot
       - script.execute: refresh_pocket
       - script.execute: refresh_leds
@@ -208,3 +227,7 @@ interval:
               }
             }
           }
+
+esphome:
+  includes:
+    - orbit_dot.h

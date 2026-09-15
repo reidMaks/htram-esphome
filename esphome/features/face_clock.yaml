@@ -1,0 +1,245 @@
+# HTRAM Feature: Циферблат годинника (Face Clock)
+#
+# Головний циферблат за замовчуванням (Idle Face / Mode 0):
+# - 4 великі скошені цифри 92px (ui_h1..ui_m2);
+# - Позиціонування секундної цятки по орбіті (ui_secdot через set_orbit_dot);
+# - Інформаційний слот (ui_slot): дата, сенсори кімнати (T/H), додатковий текст (таймер тощо);
+# - Ротація слота кожні 7 секунд або 1 клік кнопки;
+# - Автоматичне відновлення після модальних вікон (подія Arbiter screen_idle).
+
+esphome:
+  includes:
+    - orbit_dot.h
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_face_clock), id(ui_face_root));
+
+lvgl:
+  widgets:
+    - obj:
+        id: ui_face_clock
+        align: center
+        width: 240
+        height: 240
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        scrollable: false
+        clickable: false
+        widgets:
+          - label:
+              id: ui_h1
+              align: top_mid
+              x: -46
+              y: 44
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+          - label:
+              id: ui_h2
+              align: top_mid
+              x: 14
+              y: 44
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+          - label:
+              id: ui_m1
+              align: top_mid
+              x: -14
+              y: 120
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+          - label:
+              id: ui_m2
+              align: top_mid
+              x: 46
+              y: 120
+              text_font: font_clock
+              text_color: 0xF0EAE0
+              text: "-"
+          - label:
+              id: ui_slot
+              align: bottom_mid
+              y: -25
+              text_font: font_slot
+              text_color: 0xC2C8D0
+              text: ""
+
+script:
+  - id: refresh_face_clock
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(slot_hold)) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
+          lv_obj_remove_flag(id(ui_face_clock), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_invalidate(id(ui_face_clock));
+          id(refresh_clock).execute();
+          id(refresh_slot).execute();
+
+  - id: !extend refresh_clock
+    then:
+      - lambda: |-
+          if (id(sim_override_time) == 0) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) now = id(net_time).now();
+          if (!now.is_valid()) {
+            time_t t = ::time(nullptr);
+            if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+          }
+          if (!now.is_valid()) {
+            lv_label_set_text(id(ui_h1), "-");
+            lv_label_set_text(id(ui_h2), "-");
+            lv_label_set_text(id(ui_m1), "-");
+            lv_label_set_text(id(ui_m2), "-");
+            return;
+          }
+          static int prev[4] = {-1, -1, -1, -1};
+          const int cur[4] = {now.hour / 10, now.hour % 10,
+                              now.minute / 10, now.minute % 10};
+          lv_obj_t *const lbl[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
+          char buf[2] = {0, 0};
+          for (int i = 0; i < 4; i++) {
+            const char *existing = lv_label_get_text(lbl[i]);
+            if (cur[i] == prev[i] && existing != nullptr && existing[0] == ('0' + cur[i])) continue;
+            prev[i] = cur[i];
+            buf[0] = '0' + cur[i];
+            lv_label_set_text(lbl[i], buf);
+          }
+
+  - id: !extend refresh_slot
+    then:
+      - lambda: |-
+          if (id(slot_hold)) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
+          char buf[48];
+          if (!id(slot_extra_text).empty() && id(slot_idx) == 2) {
+            snprintf(buf, sizeof(buf), "%s", id(slot_extra_text).c_str());
+          } else {
+            switch (id(slot_idx)) {
+            case 0: {
+              auto now = id(ha_time).now();
+              if (!now.is_valid()) now = id(net_time).now();
+              if (!now.is_valid()) {
+                time_t t = ::time(nullptr);
+                if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+              }
+              if (!now.is_valid()) {
+                snprintf(buf, sizeof(buf), "чекаю час...");
+                break;
+              }
+              static const char *const DAYS[] = {"", "Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"};
+              static const char *const MONTHS[] = {
+                  "", "січ", "лют", "бер", "кві", "тра", "чер",
+                  "лип", "сер", "вер", "жов", "лис", "гру"};
+              snprintf(buf, sizeof(buf), "%s, %d %s",
+                       DAYS[now.day_of_week >= 1 && now.day_of_week <= 7 ? now.day_of_week : 0],
+                       now.day_of_month,
+                       MONTHS[now.month >= 1 && now.month <= 12 ? now.month : 0]);
+              break;
+            }
+            default: {
+              if (isnan(id(sensor_temp).state) || isnan(id(sensor_hum).state)) return;
+              snprintf(buf, sizeof(buf), "%.1f°  %.0f%%",
+                       id(sensor_temp).state, id(sensor_hum).state);
+              break;
+            }
+          }
+          }
+          lv_label_set_text(id(ui_slot), buf);
+
+  - id: !extend apply_face_alert_color
+    then:
+      - lambda: |-
+          lv_obj_t *const d[4] = {id(ui_h1), id(ui_h2), id(ui_m1), id(ui_m2)};
+          for (auto *o : d) {
+            lv_obj_set_style_text_color(o, lv_color_hex(color), LV_PART_MAIN);
+            lv_obj_invalidate(o);
+          }
+
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face == 0) {
+            lv_obj_remove_flag(id(ui_face_clock), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_invalidate(id(ui_face_clock));
+            id(refresh_clock).execute();
+            id(refresh_slot).execute();
+          } else {
+            lv_obj_add_flag(id(ui_face_clock), LV_OBJ_FLAG_HIDDEN);
+          }
+
+interval:
+  - interval: 7s
+    then:
+      - lambda: |-
+          if (id(htram_core)->is_ota_mode()) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
+          int max_slots = id(slot_extra_text).empty() ? 2 : 3;
+          id(slot_idx) = (id(slot_idx) + 1) % max_slots;
+          id(refresh_slot).execute();
+
+htram_arbiter:
+  events:
+    - event: time_second
+      context: clock
+      priority: 10
+      name: face_clock_on_second
+      then:
+        - lambda: |-
+            if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) now = id(net_time).now();
+            if (!now.is_valid()) {
+              time_t t = ::time(nullptr);
+              if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+            }
+            if (now.is_valid()) {
+              set_orbit_dot(id(ui_secdot), now.second * 6.0f, 0xB9AFA3);
+            }
+
+    - event: time_minute
+      context: clock
+      priority: 10
+      name: face_clock_on_minute
+      then:
+        - script.execute: refresh_clock
+        - lambda: |-
+            if (id(slot_idx) == 0) id(refresh_slot).execute();
+
+    - event: screen_hide
+      context: clock
+      priority: 10
+      name: face_clock_on_hide
+      then:
+        - lambda: |-
+            lv_obj_add_flag(id(ui_face_clock), LV_OBJ_FLAG_HIDDEN);
+
+    - event: screen_idle
+      context: clock
+      priority: 10
+      name: face_clock_on_idle
+      then:
+        - script.execute: refresh_face_clock
+
+    - event: time_synced
+      context: any
+      priority: 10
+      name: face_clock_on_time_sync
+      then:
+        - script.execute: refresh_face_clock
+
+    - event: button_single
+      context: clock
+      priority: 10
+      name: face_clock_cycle_slot
+      then:
+        - lambda: |-
+            int max_slots = id(slot_extra_text).empty() ? 2 : 3;
+            id(slot_idx) = (id(slot_idx) + 1) % max_slots;
+            id(refresh_slot).execute();
