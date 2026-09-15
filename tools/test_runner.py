@@ -24,6 +24,26 @@ SIM_CONFIG = REPO_ROOT / "esphome/htram-sim.yaml"
 SCREENSHOTS_DIR = REPO_ROOT / "docs/screenshots"
 
 
+def count_clock_digit_colors(png_path: Path) -> dict[str, int]:
+    """Counts pixels in the clock digits area by color family (red, green, white)."""
+    im = Image.open(png_path).convert("RGB")
+    pix = im.load()
+    reds, greens, whites = 0, 0, 0
+    if pix is not None:
+        for y in range(50, 170):
+            for x in range(50, 190):
+                p = pix[x, y]
+                if isinstance(p, tuple) and len(p) >= 3:
+                    r, g, b = int(p[0]), int(p[1]), int(p[2])
+                    if r > 180 and g < 100 and b < 100:
+                        reds += 1
+                    elif g > 180 and r < 100 and b < 180:
+                        greens += 1
+                    elif r > 200 and g > 200 and b > 200:
+                        whites += 1
+    return {"reds": reds, "greens": greens, "whites": whites}
+
+
 class SimulationHarness:
     """Manages the lifecycle and API communication with the host simulator."""
 
@@ -176,6 +196,10 @@ class SimulationHarness:
         """Resets alert clock marks back to normal."""
         await self.call_service("reset_alert_marks")
 
+    async def expire_alert_mark(self) -> None:
+        """Simulates alert mark expiration (sets timestamp to past) without manual refresh."""
+        await self.call_service("expire_alert_mark")
+
     async def ring_alarm(self) -> None:
         """Triggers alarm ringing."""
         await self.call_service("ring_alarm")
@@ -203,7 +227,6 @@ class SimulationHarness:
     async def simulate_reboot_resync(self) -> None:
         """Simulates post-flash reboot and arbiter resync."""
         await self.call_service("simulate_reboot_resync")
-
 
     async def capture_screenshot(self, basename: str) -> Path:
         """Dumps framebuffer to PPM and converts to optimized PNG."""
@@ -370,7 +393,11 @@ async def run_test_suite() -> bool:
             png = await harness.capture_screenshot("08_device_id")
             assert png.exists() and png.stat().st_size > 1000
             results.append(
-                ("08_device_id", True, "Device ID overlay displayed with MAC ID and IP via triple click")
+                (
+                    "08_device_id",
+                    True,
+                    "Device ID overlay displayed with MAC ID and IP via triple click",
+                )
             )
             # Dismiss overlay via single click
             await harness.inject_button("single")
@@ -573,6 +600,56 @@ async def run_test_suite() -> bool:
             )
         except Exception as e:
             results.append(("int_07_weather_persistence_and_clean_exit", False, str(e)))
+
+        # Int Test 8: Air Raid Alert Clear Auto-Expiry (5m Expiration)
+        print("\n--- Int Test 8: Air Raid Alert Clear Auto-Expiry ---")
+        try:
+            # 1. Alert active -> verify RED clock digits
+            await harness.simulate_alert(flags=1)
+            await asyncio.sleep(0.4)
+            png_alert = await harness.capture_screenshot("int_08_alert_active")
+            colors_alert = count_clock_digit_colors(png_alert)
+            assert colors_alert["reds"] > 500, (
+                f"Expected red clock digits during alert, got {colors_alert}"
+            )
+            assert colors_alert["greens"] == 0, (
+                f"Expected 0 green pixels during alert, got {colors_alert}"
+            )
+
+            # 2. Alert all-clear -> verify GREEN clock digits
+            await harness.simulate_alert(flags=0)
+            await asyncio.sleep(0.4)
+            png_clear = await harness.capture_screenshot("int_08_alert_cleared_green")
+            colors_clear = count_clock_digit_colors(png_clear)
+            assert colors_clear["greens"] > 500, (
+                f"Expected green clock digits on all-clear, got {colors_clear}"
+            )
+            assert colors_clear["reds"] == 0, (
+                f"Expected 0 red pixels on all-clear, got {colors_clear}"
+            )
+
+            # 3. 5m timer expiration -> advance mark timestamp to past
+            await harness.expire_alert_mark()
+            # Wait for the automatic 1s interval in alert.yaml to tick
+            await asyncio.sleep(1.4)
+            png_expired = await harness.capture_screenshot("int_08_alert_expired_white")
+            colors_expired = count_clock_digit_colors(png_expired)
+            assert colors_expired["whites"] > 500, (
+                f"Expected white clock digits after expiry, got {colors_expired}"
+            )
+            assert colors_expired["greens"] == 0, (
+                f"Expected 0 green pixels after expiry, got {colors_expired}"
+            )
+
+            results.append(
+                (
+                    "int_08_alert_clear_auto_expiry",
+                    True,
+                    "Alert clear marks digits green, automatically expires back to white via 1s interval",
+                )
+            )
+        except Exception as e:
+            results.append(("int_08_alert_clear_auto_expiry", False, str(e)))
 
         # ==========================================
         # BOOT & REBOOT SEQUENCE TESTS
@@ -834,7 +911,6 @@ async def run_test_suite() -> bool:
             )
         except Exception as e:
             results.append(("ha_06_debug_buttons", False, str(e)))
-
 
     finally:
         await harness.stop()

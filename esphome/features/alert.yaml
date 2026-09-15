@@ -37,9 +37,15 @@ jaam_ws:
           if (air != id(alert_active)) {
             id(alert_active) = air;
             auto now = id(ha_time).now();
-            if (now.is_valid()) {
-              id(alert_mark_until) = now.timestamp + ${alert_mark_minutes} * 60;
-              id(alert_mark_color) = air ? 0xE5484D : 0x3DD68C;
+            if (!now.is_valid()) now = id(net_time).now();
+            time_t epoch = ::time(nullptr);
+            const uint32_t ts = now.is_valid() ? now.timestamp : (uint32_t) epoch;
+            if (air) {
+              id(alert_mark_until) = 0;
+              id(alert_mark_color) = 0xE5484D;
+            } else {
+              id(alert_mark_until) = ts + ${alert_mark_minutes} * 60;
+              id(alert_mark_color) = 0x3DD68C;
             }
             id(play_alert_sound).execute(air);
           }
@@ -177,10 +183,16 @@ script:
     then:
       - lambda: |-
           auto now = id(ha_time).now();
-          if (!now.is_valid()) return;
-          const uint32_t t = now.timestamp;
-          const bool marked = t < (uint32_t) id(alert_mark_until);
-          const uint32_t want = marked ? (uint32_t) id(alert_mark_color) : 0xF0EAE0;
+          if (!now.is_valid()) now = id(net_time).now();
+          time_t epoch = ::time(nullptr);
+          const uint32_t t = now.is_valid() ? now.timestamp : (uint32_t) epoch;
+
+          uint32_t want = 0xF0EAE0;
+          if (id(alert_active)) {
+            want = 0xE5484D; // Red while alert is in progress
+          } else if (t < (uint32_t) id(alert_mark_until)) {
+            want = (uint32_t) id(alert_mark_color); // Green for 5m after all-clear
+          }
 
           static uint32_t shown = 0xF0EAE0;
           if (want == shown) return;
@@ -190,6 +202,10 @@ script:
             lv_obj_set_style_text_color(o, lv_color_hex(want), LV_PART_MAIN);
 
 interval:
+  - interval: 1s
+    then:
+      - script.execute: refresh_alert_marks
+
   - interval: 5s
     then:
       - lambda: |-
@@ -218,3 +234,4 @@ esphome:
             lv_obj_set_parent(id(ui_alert), id(ui_root));
             lv_obj_set_parent(id(ui_nolink), id(ui_root));
         - script.execute: refresh_alert_icon
+        - script.execute: refresh_alert_marks

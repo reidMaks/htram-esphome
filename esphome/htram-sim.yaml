@@ -88,6 +88,15 @@ api:
             id(alert_mark_until) = 0;
             id(refresh_alert_marks).execute();
 
+    - service: expire_alert_mark
+      then:
+        - lambda: |-
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) now = id(net_time).now();
+            time_t epoch = ::time(nullptr);
+            uint32_t ts = now.is_valid() ? now.timestamp : (uint32_t) epoch;
+            id(alert_mark_until) = (int)(ts - 1);
+
     - service: ring_alarm
       then:
         - script.execute: alarm_ring
