@@ -148,43 +148,43 @@ lvgl:
               text: "--° ... --°"
 
           # Точки півкола в нижній половині:
-          # Точка 1: Ранок (ліворуч, x = -64, y = -18..36)
+          # Точка 1: Ранок (ліворуч, x = -66, y = -12..50)
           - label:
               id: ui_weather_col1_lbl
               align: center
-              x: -64
-              y: -18
+              x: -66
+              y: -12
               text_font: font_slot
               text_color: 0x707880
               text: "9:00"
           - image:
               id: ui_weather_col1_img
               align: center
-              x: -64
-              y: 4
+              x: -66
+              y: 18
               src: img_weather_sunny
           - image:
               id: ui_weather_col1_img2
               align: center
-              x: -64
-              y: 4
+              x: -66
+              y: 18
               src: img_weather_sunny
               hidden: true
           - label:
               id: ui_weather_col1_temp
               align: center
-              x: -64
-              y: 36
+              x: -66
+              y: 50
               text_font: font_msg
               text_color: 0xF0EAE0
               text: "--°"
 
-          # Точка 2: День (по центру нижче, x = 0, y = 8..64)
+          # Точка 2: День (по центру нижче, x = 0, y = 16..78)
           - label:
               id: ui_weather_col2_lbl
               align: center
               x: 0
-              y: 8
+              y: 16
               text_font: font_slot
               text_color: 0x707880
               text: "14:00"
@@ -192,51 +192,51 @@ lvgl:
               id: ui_weather_col2_img
               align: center
               x: 0
-              y: 30
+              y: 46
               src: img_weather_sunny
           - image:
               id: ui_weather_col2_img2
               align: center
               x: 0
-              y: 30
+              y: 46
               src: img_weather_sunny
               hidden: true
           - label:
               id: ui_weather_col2_temp
               align: center
               x: 0
-              y: 64
+              y: 78
               text_font: font_msg
               text_color: 0xF0EAE0
               text: "--°"
 
-          # Точка 3: Вечір (праворуч, x = 64, y = -18..36)
+          # Точка 3: Вечір (праворуч, x = 66, y = -12..50)
           - label:
               id: ui_weather_col3_lbl
               align: center
-              x: 64
-              y: -18
+              x: 66
+              y: -12
               text_font: font_slot
               text_color: 0x707880
               text: "19:00"
           - image:
               id: ui_weather_col3_img
               align: center
-              x: 64
-              y: 4
+              x: 66
+              y: 18
               src: img_weather_cloudy
           - image:
               id: ui_weather_col3_img2
               align: center
-              x: 64
-              y: 4
+              x: 66
+              y: 18
               src: img_weather_cloudy
               hidden: true
           - label:
               id: ui_weather_col3_temp
               align: center
-              x: 64
-              y: 36
+              x: 66
+              y: 50
               text_font: font_msg
               text_color: 0xF0EAE0
               text: "--°"

@@ -35,6 +35,7 @@ TEST_BIN_SPI_FLASH:= $(TEST_DIR)/test_spi_flash_bin
 TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
 .PHONY: all test test-gd32 test-esphome test-tools test-configs test-sim \
+        preview-ui inspect-ui \
         lint lint-c lint-py lint-yaml format format-check \
         coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
         status build-esp install-hooks clean help \
@@ -52,6 +53,9 @@ help:
 	@echo "  make test-esphome  - Run ESP32 / ESPHome C++ unit tests (Unity)"
 	@echo "  make test-tools    - Run Python tools tests via pytest (CRC, mask generator)"
 	@echo "  make test-configs  - Validate ESPHome YAML device configurations"
+	@echo "  make test-sim      - Run Host Simulation feature tests (Unity/Harness)"
+	@echo "  make preview-ui    - Capture on-demand UI preview (Usage: make preview-ui [SCREEN=weather|clock|timer|alert|silence])"
+	@echo "  make inspect-ui    - Inspect UI screen geometry & bezel margins (Usage: make inspect-ui [IMAGE=path.png])"
 	@echo "  make lint          - Run all linters and static analyzers (C/C++, Python, YAML)"
 	@echo "  make lint-c        - Run GCC/G++ -fanalyzer static analysis on C/C++ source code"
 	@echo "  make lint-py       - Run ruff and mypy on Python scripts and tests"
@@ -152,6 +156,17 @@ test-configs:
 test-sim:
 	@echo "==> Running Host Simulation Feature Tests & Capturing Screenshots..."
 	uv run python3 tools/test_runner.py
+
+SCREEN   ?= weather
+IMAGE    ?= docs/screenshots/after_weather.png
+
+preview-ui:
+	@echo "==> Capturing on-demand UI preview for screen '$(SCREEN)'..."
+	uv run python3 tools/preview_ui.py capture $(SCREEN)
+
+inspect-ui:
+	@echo "==> Inspecting UI geometry for '$(IMAGE)'..."
+	uv run python3 tools/preview_ui.py inspect $(IMAGE)
 
 # ── Linters & Static Analysis ────────────────────────────────────────────────
 lint: lint-c lint-yaml lint-py
