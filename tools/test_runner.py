@@ -322,6 +322,8 @@ async def run_test_suite() -> bool:
             # Set alarm to 07:30 while timer is running
             await harness.simulate_alarm(enabled=True, hour=7, minute=30)
             await asyncio.sleep(0.5)
+            await harness.set_sim_slot(2)
+            await asyncio.sleep(0.3)
             png = await harness.capture_screenshot("04_dual_bezel_ticks")
             assert png.exists() and png.stat().st_size > 1000
             results.append(
@@ -848,6 +850,7 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.3)
             # HA triggers melody stop
             await harness.call_service("stop_melody")
+            await harness.set_sim_slot(0)
             await asyncio.sleep(0.3)
             png_audio = await harness.capture_screenshot("ha_03_audio_services")
             assert png_audio.exists() and png_audio.stat().st_size > 1000
@@ -867,6 +870,7 @@ async def run_test_suite() -> bool:
             # Set brightness to 80% and temp trim to -1.0 °C
             await harness.set_number("Screen Brightness", 80.0)
             await harness.set_number("Підстроювання температури", -1.0)
+            await harness.set_sim_slot(0)
             await asyncio.sleep(0.5)
             png_trim = await harness.capture_screenshot("ha_04_number_controls")
             assert png_trim.exists() and png_trim.stat().st_size > 1000
