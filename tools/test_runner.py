@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SIM_BINARY = REPO_ROOT / "esphome/.esphome/build/htram-sim/.pioenvs/htram-sim/program"
 SIM_CONFIG = REPO_ROOT / "esphome/htram-sim.yaml"
 SCREENSHOTS_DIR = REPO_ROOT / "docs/screenshots"
+BASELINE_SIM_TIME = 1789411500  # 2026-09-14 21:45:00 EEST (Monday, 14 Sep, 0s dot)
 
 
 class SimulationHarness:
@@ -209,6 +210,22 @@ class SimulationHarness:
         """Simulates post-flash reboot and arbiter resync."""
         await self.call_service("simulate_reboot_resync")
 
+    async def set_sim_time(self, epoch: int, freeze: bool = True) -> None:
+        """Sets simulator time to a deterministic epoch (frozen by default)."""
+        await self.call_service("set_sim_time", {"epoch": epoch, "freeze": freeze})
+
+    async def step_sim_time(self, seconds: int) -> None:
+        """Advances simulator time by seconds."""
+        await self.call_service("step_sim_time", {"seconds": seconds})
+
+    async def reset_sim_time(self) -> None:
+        """Restores simulator time to host system clock."""
+        await self.call_service("reset_sim_time")
+
+    async def set_sim_slot(self, idx: int) -> None:
+        """Sets the active status slot index (0=date, 1=sensors, 2=extra text)."""
+        await self.call_service("set_sim_slot", {"idx": idx})
+
 
     async def capture_screenshot(self, basename: str) -> Path:
         """Dumps framebuffer to PPM and converts to optimized PNG."""
@@ -237,6 +254,7 @@ async def run_test_suite() -> bool:
 
     try:
         await harness.start()
+        await harness.set_sim_time(BASELINE_SIM_TIME, freeze=True)
 
         # Test 1: Standard Clock Face
         print("\n--- Test 1: Standard Clock Face ---")
@@ -479,6 +497,8 @@ async def run_test_suite() -> bool:
             # Single click snoozes alarm
             await harness.inject_button("single")
             await asyncio.sleep(0.5)
+            await harness.set_sim_slot(2)
+            await asyncio.sleep(0.3)
             png = await harness.capture_screenshot("int_04_alarm_snooze_with_timer")
             assert png.exists() and png.stat().st_size > 1000
             results.append(
@@ -520,6 +540,8 @@ async def run_test_suite() -> bool:
             # Silence ends -> verify timer restored
             await harness.simulate_silence(active=False)
             await asyncio.sleep(0.5)
+            await harness.set_sim_slot(2)
+            await asyncio.sleep(0.3)
             png_restored = await harness.capture_screenshot("int_05_timer_restored_after_silence")
             assert png_restored.exists() and png_restored.stat().st_size > 1000
             # Clean up
@@ -566,6 +588,8 @@ async def run_test_suite() -> bool:
             # Double click again closes weather cleanly
             await harness.inject_button("double")
             await asyncio.sleep(0.5)
+            await harness.set_sim_slot(0)
+            await asyncio.sleep(0.3)
             png_clock = await harness.capture_screenshot("int_07_clock_clean_restored")
             assert png_clock.exists() and png_clock.stat().st_size > 1000
 
@@ -621,6 +645,7 @@ async def run_test_suite() -> bool:
         print("\n--- Boot Test 3: Time Synchronized (годинник з цифрами) ---")
         try:
             await harness.simulate_boot_state(net=1, time=1)
+            await harness.set_sim_time(BASELINE_SIM_TIME, freeze=True)
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("boot_03_time_synced")
             assert png.exists() and png.stat().st_size > 1000
@@ -638,6 +663,7 @@ async def run_test_suite() -> bool:
         print("\n--- Boot Test 4: Post-Flash / GD32 Restart Resync ---")
         try:
             await harness.simulate_reboot_resync()
+            await harness.set_sim_time(BASELINE_SIM_TIME, freeze=True)
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("boot_04_reboot_resync")
             assert png.exists() and png.stat().st_size > 1000
@@ -657,6 +683,7 @@ async def run_test_suite() -> bool:
             await harness.stop()
             await asyncio.sleep(1.0)
             await harness.start()
+            await harness.set_sim_time(BASELINE_SIM_TIME, freeze=True)
             await asyncio.sleep(1.5)
             png = await harness.capture_screenshot("boot_05_cold_boot_process")
             assert png.exists() and png.stat().st_size > 1000
