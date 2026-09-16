@@ -25,12 +25,10 @@ globals:
     type: int
     restore_value: false
     initial_value: "-1"
-
-image:
-  - platform: file
-    file: "${repo_url}/images/bell_mask.png"
-    id: img_bell
-    type: BINARY
+  - id: alarm_bell_drawn
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 lvgl:
   widgets:
@@ -54,13 +52,6 @@ lvgl:
           arc_opa: TRANSP
         knob:
           bg_opa: TRANSP
-    - image:
-        id: ui_bell
-        align: center
-        x: 74
-        y: -26
-        src: img_bell
-        hidden: true
 
 datetime:
   - platform: template
@@ -156,11 +147,6 @@ script:
 
           if (ringing || snoozing) {
             id(htram_arbiter_hub)->request_status_icon("alarm", 50);
-            lv_obj_set_style_image_recolor(
-                id(ui_bell),
-                lv_color_hex(ringing ? 0xFF9E3D : 0x707880),
-                LV_PART_MAIN);
-            lv_obj_set_style_image_recolor_opa(id(ui_bell), LV_OPA_COVER, LV_PART_MAIN);
           } else {
             id(htram_arbiter_hub)->clear_status_icon("alarm");
           }
@@ -168,9 +154,13 @@ script:
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
           const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show) {
-            lv_obj_remove_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
-          } else {
-            lv_obj_add_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
+            const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_BELL, 194, 94, Color(c), Color(0x000000), 1);
+            id(alarm_bell_drawn) = true;
+          } else if (id(alarm_bell_drawn)) {
+            id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+            id(alarm_bell_drawn) = false;
           }
 
   - id: alarm_ring
@@ -233,7 +223,10 @@ script:
           id(alarm_ui_sig) = -1;
           if (face != 0) {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(ui_bell), LV_OBJ_FLAG_HIDDEN);
+            if (id(alarm_bell_drawn)) {
+              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+              id(alarm_bell_drawn) = false;
+            }
           } else {
             id(refresh_alarm_ui).execute();
           }
@@ -248,5 +241,4 @@ esphome:
       then:
         - lambda: |-
             lv_obj_set_parent(id(ui_alarm_tick), id(ui_root));
-            lv_obj_set_parent(id(ui_bell), id(ui_root));
         - script.execute: refresh_alarm_ui
