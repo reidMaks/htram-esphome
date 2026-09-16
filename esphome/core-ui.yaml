@@ -444,6 +444,26 @@ interval:
             id(refresh_face).execute();
           }
 
+htram_arbiter:
+  events:
+    # System Bezel Heartbeat: default orbiting seconds dot across all screens
+    - event: time_second
+      context: any
+      priority: 1
+      name: core_orbit_dot
+      then:
+        - lambda: |-
+            if (lv_obj_has_flag(id(ui_secdot), LV_OBJ_FLAG_HIDDEN)) return;
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) now = id(net_time).now();
+            if (!now.is_valid()) {
+              time_t t = ::time(nullptr);
+              if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+            }
+            if (now.is_valid()) {
+              set_orbit_dot(id(ui_secdot), now.second * 6.0f, 0xB9AFA3);
+            }
+
 lvgl:
   displays:
     - htram_display

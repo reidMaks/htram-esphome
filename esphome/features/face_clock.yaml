@@ -2,14 +2,11 @@
 #
 # Головний циферблат за замовчуванням (Idle Face / Mode 0):
 # - 4 великі скошені цифри 92px (ui_h1..ui_m2);
-# - Позиціонування секундної цятки по орбіті (ui_secdot через set_orbit_dot);
 # - Інформаційний слот (ui_slot): дата, сенсори кімнати (T/H), додатковий текст (таймер тощо);
 # - Ротація слота кожні 7 секунд або 1 клік кнопки;
 # - Автоматичне відновлення після модальних вікон (подія Arbiter screen_idle).
 
 esphome:
-  includes:
-    - orbit_dot.h
   on_boot:
     - priority: -100
       then:
@@ -186,23 +183,6 @@ interval:
 
 htram_arbiter:
   events:
-    - event: time_second
-      context: clock
-      priority: 10
-      name: face_clock_on_second
-      then:
-        - lambda: |-
-            if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
-            auto now = id(ha_time).now();
-            if (!now.is_valid()) now = id(net_time).now();
-            if (!now.is_valid()) {
-              time_t t = ::time(nullptr);
-              if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
-            }
-            if (now.is_valid()) {
-              set_orbit_dot(id(ui_secdot), now.second * 6.0f, 0xB9AFA3);
-            }
-
     - event: time_minute
       context: clock
       priority: 10
