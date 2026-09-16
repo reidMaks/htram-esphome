@@ -228,6 +228,7 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
     // pkt_hello_t: proto_ver(1) fw_ver(2 LE) build_flags(1) build_epoch(4 LE) git_hash(4 LE).
     // fw_ver is nibble-encoded major.minor.patch, e.g. 0x0100 -> "1.0.0" (see firmware protocol.h).
     uint16_t fw = data[4] | (data[5] << 8);
+    this->raw_fw_ver_ = fw;
     uint8_t flags = data[6];
     uint32_t epoch = (uint32_t) data[7] | ((uint32_t) data[8] << 8) | ((uint32_t) data[9] << 16) |
                      ((uint32_t) data[10] << 24);
@@ -1278,6 +1279,105 @@ void HtramGd32Component::send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t
   this->write_array(crc_bytes, 2);
 }
 
+size_t encode_tga_rle_rgb565(const uint16_t *pixels, size_t num_pixels, uint8_t *out, size_t max_out) {
+  if (pixels == nullptr || out == nullptr || num_pixels == 0 || max_out < 3) {
+    return 0;
+  }
+  size_t in_idx = 0;
+  size_t out_idx = 0;
+
+  while (in_idx < num_pixels) {
+    uint16_t cur = pixels[in_idx];
+    size_t run_len = 1;
+    while (in_idx + run_len < num_pixels && pixels[in_idx + run_len] == cur && run_len < 128) {
+      run_len++;
+    }
+
+    if (run_len >= 2) {
+      if (out_idx + 3 > max_out) break;
+      out[out_idx++] = (uint8_t)(0x80 | (run_len - 1));
+      out[out_idx++] = (uint8_t)(cur >> 8);
+      out[out_idx++] = (uint8_t)(cur & 0xFF);
+      in_idx += run_len;
+    } else {
+      size_t raw_len = 0;
+      while (in_idx + raw_len < num_pixels && raw_len < 128) {
+        if (in_idx + raw_len + 1 < num_pixels && pixels[in_idx + raw_len] == pixels[in_idx + raw_len + 1]) {
+          break;
+        }
+        raw_len++;
+      }
+      if (raw_len == 0) {
+        raw_len = 1;
+      }
+      if (out_idx + 1 + raw_len * 2 > max_out) break;
+      out[out_idx++] = (uint8_t)(raw_len - 1);
+      for (size_t i = 0; i < raw_len; i++) {
+        uint16_t p = pixels[in_idx + i];
+        out[out_idx++] = (uint8_t)(p >> 8);
+        out[out_idx++] = (uint8_t)(p & 0xFF);
+      }
+      in_idx += raw_len;
+    }
+  }
+  return out_idx;
+}
+
+size_t decode_tga_rle_rgb565(const uint8_t *in, size_t in_len, uint16_t *out, size_t max_out_pixels) {
+  if (in == nullptr || out == nullptr) return 0;
+  size_t in_idx = 0;
+  size_t out_pixels = 0;
+
+  while (in_idx < in_len && out_pixels < max_out_pixels) {
+    uint8_t hdr = in[in_idx++];
+    if (hdr & 0x80) {
+      size_t count = (hdr & 0x7F) + 1;
+      if (in_idx + 2 > in_len) break;
+      uint16_t pixel = ((uint16_t)in[in_idx] << 8) | in[in_idx + 1];
+      in_idx += 2;
+      for (size_t i = 0; i < count && out_pixels < max_out_pixels; i++) {
+        out[out_pixels++] = pixel;
+      }
+    } else {
+      size_t count = (hdr & 0x7F) + 1;
+      if (in_idx + count * 2 > in_len) break;
+      for (size_t i = 0; i < count && out_pixels < max_out_pixels; i++) {
+        uint16_t pixel = ((uint16_t)in[in_idx] << 8) | in[in_idx + 1];
+        in_idx += 2;
+        out[out_pixels++] = pixel;
+      }
+    }
+  }
+  return out_pixels;
+}
+
+void HtramGd32Component::send_draw_rect_rle(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *rle_data, size_t len) {
+  if (ota_mode_ || this->simulation_mode_) return;
+  uint8_t hdr[9];
+  hdr[0] = 0xAA;
+  hdr[1] = 0x55;
+  hdr[2] = 0x16;  // CMD_TYPE_DRAW_RECT_RLE
+  hdr[3] = x;
+  hdr[4] = y;
+  hdr[5] = w;
+  hdr[6] = h;
+  hdr[7] = (uint8_t)(len & 0xFF);
+  hdr[8] = (uint8_t)(len >> 8);
+
+  uint16_t crc = 0x0000;
+  for (size_t i = 2; i < 9; i++) {
+    crc = crc16_ccitt_update(crc, hdr[i]);
+  }
+  for (size_t i = 0; i < len; i++) {
+    crc = crc16_ccitt_update(crc, rle_data[i]);
+  }
+
+  this->write_array(hdr, sizeof(hdr));
+  this->write_array(rle_data, len);
+  uint8_t crc_bytes[2] = {(uint8_t)(crc & 0xFF), (uint8_t)(crc >> 8)};
+  this->write_array(crc_bytes, 2);
+}
+
 void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y,
                                                 uint16_t fg_color, uint16_t bg_color,
                                                 uint8_t flags) {
@@ -1403,9 +1503,74 @@ void HtramGd32Display::draw_pixels_at(int x_start, int y_start, int w, int h, co
 
   if (this->simulation_mode_) return;
 
-  // Sized well under the GD32's 2 KB ring: a chunk already in flight when the
-  // hold-off is raised still has to fit in whatever ring space is left.
   const int max_bytes_per_chunk = 512;
+
+  if (this->parent_->supports_rle()) {
+    int y_row = 0;
+    while (y_row < h) {
+      this->rle_pixels_.clear();
+      int cur_h = 0;
+      size_t best_encoded_len = 0;
+
+      while (y_row + cur_h < h) {
+        int r = cur_h;
+        size_t prev_pixel_count = this->rle_pixels_.size();
+        for (int c = 0; c < w; c++) {
+          int src_idx = ((y_offset + y_row + r) * stride + (x_offset + c)) * bytes_per_pixel;
+          uint16_t pixel = big_endian ? (((uint16_t)ptr[src_idx] << 8) | ptr[src_idx + 1])
+                                      : (((uint16_t)ptr[src_idx + 1] << 8) | ptr[src_idx]);
+          this->rle_pixels_.push_back(pixel);
+        }
+
+        size_t max_enc_bound = this->rle_pixels_.size() * 2 + (this->rle_pixels_.size() / 128 + 2) * 2;
+        if (this->rle_encoded_.size() < max_enc_bound) {
+          this->rle_encoded_.resize(max_enc_bound);
+        }
+
+        size_t enc_len = encode_tga_rle_rgb565(this->rle_pixels_.data(), this->rle_pixels_.size(),
+                                               this->rle_encoded_.data(), this->rle_encoded_.size());
+
+        if (enc_len <= (size_t)max_bytes_per_chunk) {
+          cur_h++;
+          best_encoded_len = enc_len;
+        } else {
+          if (cur_h == 0) {
+            cur_h = 1;
+            best_encoded_len = enc_len;
+          } else {
+            this->rle_pixels_.resize(prev_pixel_count);
+            best_encoded_len = encode_tga_rle_rgb565(this->rle_pixels_.data(), this->rle_pixels_.size(),
+                                                     this->rle_encoded_.data(), this->rle_encoded_.size());
+          }
+          break;
+        }
+      }
+
+      int cur_y = y_start + y_row;
+      size_t raw_len = (size_t)w * cur_h * bytes_per_pixel;
+      this->parent_->wait_for_flow(1200);
+
+      if (best_encoded_len < raw_len) {
+        this->parent_->send_draw_rect_rle(x_start, cur_y, w, cur_h, this->rle_encoded_.data(), best_encoded_len);
+      } else {
+        if (this->chunk_buffer_.size() < raw_len) {
+          this->chunk_buffer_.resize(raw_len);
+        }
+        uint8_t *dst = this->chunk_buffer_.data();
+        for (size_t i = 0; i < this->rle_pixels_.size(); i++) {
+          uint16_t p = this->rle_pixels_[i];
+          dst[i * 2] = (uint8_t)(p >> 8);
+          dst[i * 2 + 1] = (uint8_t)(p & 0xFF);
+        }
+        this->parent_->send_draw_rect(x_start, cur_y, w, cur_h, this->chunk_buffer_.data(), raw_len);
+      }
+
+      App.feed_wdt();
+      delay(1);
+      y_row += cur_h;
+    }
+    return;
+  }
 
   int max_rows_per_chunk = max_bytes_per_chunk / (w * bytes_per_pixel);
   if (max_rows_per_chunk < 1) max_rows_per_chunk = 1;

@@ -16,6 +16,8 @@ extern uint8_t mock_display_last_y;
 extern uint8_t mock_display_last_w;
 extern uint8_t mock_display_last_h;
 extern uint16_t mock_display_last_pixel;
+extern uint16_t mock_display_pixel_history[256];
+extern int mock_display_pixel_history_count;
 extern int mock_display_draw_cached_asset_called;
 extern uint16_t mock_display_last_asset_id;
 extern uint8_t mock_display_last_asset_x;

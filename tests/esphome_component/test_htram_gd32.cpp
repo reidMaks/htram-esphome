@@ -612,6 +612,22 @@ void test_outgoing_commands(void) {
   TEST_ASSERT_EQUAL(20, g_comp->mock_tx_bytes[4]);
 
   g_comp->mock_clear_tx();
+  uint8_t rle_payload[3] = {0xE3, 0x00, 0x00};
+  g_comp->send_draw_rect_rle(10, 20, 10, 10, rle_payload, 3);
+  TEST_ASSERT_EQUAL(14, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);
+  TEST_ASSERT_EQUAL_HEX8(0x55, g_comp->mock_tx_bytes[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x16, g_comp->mock_tx_bytes[2]);
+  TEST_ASSERT_EQUAL(10, g_comp->mock_tx_bytes[3]);
+  TEST_ASSERT_EQUAL(20, g_comp->mock_tx_bytes[4]);
+  TEST_ASSERT_EQUAL(10, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL(10, g_comp->mock_tx_bytes[6]);
+  TEST_ASSERT_EQUAL_UINT16(3, g_comp->mock_tx_bytes[7] | (g_comp->mock_tx_bytes[8] << 8));
+  uint16_t exp_rle_crc = crc16_ccitt(&g_comp->mock_tx_bytes[2], 7 + 3);
+  uint16_t act_rle_crc = g_comp->mock_tx_bytes[12] | (g_comp->mock_tx_bytes[13] << 8);
+  TEST_ASSERT_EQUAL_HEX16(exp_rle_crc, act_rle_crc);
+
+  g_comp->mock_clear_tx();
   g_comp->send_draw_cached_asset(2, 84, 70, 0xF800, 0x0000, 1);
   TEST_ASSERT_EQUAL(14, g_comp->mock_tx_bytes.size());
   TEST_ASSERT_EQUAL_HEX8(0xAA, g_comp->mock_tx_bytes[0]);
@@ -1081,7 +1097,67 @@ void test_display_pixel_drawing(void) {
   }
   TEST_ASSERT_TRUE(found_draw_rect);
   TEST_ASSERT_FALSE(found_asset_cmd);
+
+  // Now enable RLE support and test flush with RLE
+  g_comp->set_raw_fw_ver(0x0130);
+  TEST_ASSERT_TRUE(g_comp->supports_rle());
+  g_comp->mock_clear_tx();
+  disp.draw_pixels_at(0, 0, 50, 50, dirty_buf, display::COLOR_ORDER_RGB, display::COLOR_BITNESS_565, true, 0, 0, 0);
+  bool found_draw_rect_rle = false;
+  for (size_t i = 0; i + 3 <= g_comp->mock_tx_bytes.size(); i++) {
+    if (g_comp->mock_tx_bytes[i] == 0xAA && g_comp->mock_tx_bytes[i + 1] == 0x55) {
+      if (g_comp->mock_tx_bytes[i + 2] == 0x16)
+        found_draw_rect_rle = true;
+    }
+  }
+  TEST_ASSERT_TRUE(found_draw_rect_rle);
+
   g_comp->clear_cached_assets();
+}
+
+void test_tga_rle_roundtrip(void) {
+  // Case 1: Solid black run of 500 pixels
+  std::vector<uint16_t> solid(500, 0x0000);
+  std::vector<uint8_t> encoded(2048, 0);
+  size_t enc_len = htram_gd32::encode_tga_rle_rgb565(solid.data(), solid.size(), encoded.data(), encoded.size());
+  // 500 pixels = 3x 128 runs + 1x 116 run = 4 runs * 3 bytes = 12 bytes!
+  TEST_ASSERT_EQUAL(12, enc_len);
+
+  std::vector<uint16_t> decoded(500, 0xFFFF);
+  size_t dec_pixels = htram_gd32::decode_tga_rle_rgb565(encoded.data(), enc_len, decoded.data(), decoded.size());
+  TEST_ASSERT_EQUAL(500, dec_pixels);
+  for (size_t i = 0; i < 500; i++) {
+    TEST_ASSERT_EQUAL_HEX16(0x0000, decoded[i]);
+  }
+
+  // Case 2: Alternating pixels (worst case for RLE)
+  std::vector<uint16_t> alt(200);
+  for (size_t i = 0; i < 200; i++) {
+    alt[i] = (uint16_t)(i * 0x101);
+  }
+  enc_len = htram_gd32::encode_tga_rle_rgb565(alt.data(), alt.size(), encoded.data(), encoded.size());
+  // 200 raw pixels = 128 raw (1 + 256 = 257) + 72 raw (1 + 144 = 145) = 402 bytes.
+  TEST_ASSERT_EQUAL(402, enc_len);
+  dec_pixels = htram_gd32::decode_tga_rle_rgb565(encoded.data(), enc_len, decoded.data(), decoded.size());
+  TEST_ASSERT_EQUAL(200, dec_pixels);
+  for (size_t i = 0; i < 200; i++) {
+    TEST_ASSERT_EQUAL_HEX16(alt[i], decoded[i]);
+  }
+
+  // Case 3: Mixed (repeated runs and individual pixels)
+  std::vector<uint16_t> mixed = {
+      0x0000, 0x0000, 0x0000, 0x0000,  // run 4
+      0xF800,                          // raw 1
+      0x07E0, 0x07E0, 0x07E0,          // run 3
+      0x001F, 0xFFFF,                  // raw 2
+      0x1234, 0x1234                   // run 2
+  };
+  enc_len = htram_gd32::encode_tga_rle_rgb565(mixed.data(), mixed.size(), encoded.data(), encoded.size());
+  dec_pixels = htram_gd32::decode_tga_rle_rgb565(encoded.data(), enc_len, decoded.data(), decoded.size());
+  TEST_ASSERT_EQUAL(mixed.size(), dec_pixels);
+  for (size_t i = 0; i < mixed.size(); i++) {
+    TEST_ASSERT_EQUAL_HEX16(mixed[i], decoded[i]);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1221,6 +1297,7 @@ int main(void) {
   RUN_TEST(test_execute_ota_with_spi_flash_success);
   RUN_TEST(test_execute_ota_with_spi_flash_staging_failure);
   RUN_TEST(test_display_pixel_drawing);
+  RUN_TEST(test_tga_rle_roundtrip);
   RUN_TEST(test_ota_web_handler);
   RUN_TEST(test_execute_assets_upload_safety_and_validation);
   RUN_TEST(test_execute_assets_upload_success);

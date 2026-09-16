@@ -260,6 +260,7 @@ typedef enum {
     STATE_TYPE,
     STATE_HEADER,
     STATE_PIXELS,
+    STATE_PIXELS_RLE,
     STATE_MELODY,
     STATE_FLASH_CHUNK,
     STATE_CRC0,
@@ -284,6 +285,18 @@ static uint8_t pixel_hi = 0;
 static uint8_t pixel_phase = 0;
 static uint8_t rx_crc0 = 0;
 
+/* CMD_DRAW_RECT_RLE: TGA-standard 16-bit RGB565 RLE stream */
+typedef enum {
+    RLE_SUB_HEADER,
+    RLE_SUB_PIXEL_HI,
+    RLE_SUB_PIXEL_LO
+} rle_substate_t;
+
+static rle_substate_t rle_substate = RLE_SUB_HEADER;
+static uint8_t rle_is_run = 0;
+static uint8_t rle_count = 0;
+static uint8_t rle_pixel_hi = 0;
+
 /* CMD_PLAY_MELODY: streamed count*(freq16_LE, dur16_LE) */
 #define MELODY_MAX_NOTES 96
 static uint8_t melody_buf[MELODY_MAX_NOTES * 4];
@@ -299,9 +312,10 @@ static uint8_t flash_chunk_buf[256];
 
 static inline void reset_rx_state(void)
 {
-    if (rx_state == STATE_PIXELS) {
+    if (rx_state == STATE_PIXELS || rx_state == STATE_PIXELS_RLE) {
         display_end_pixels();
     }
+    rle_substate = RLE_SUB_HEADER;
     rx_state = STATE_MAGIC0;
 }
 
@@ -343,7 +357,7 @@ void protocol_process_rx(void)
             calc_crc = crc16_ccitt_update(0x0000, b);
             cmd_buf_idx = 0;
 
-            if (current_cmd == CMD_TYPE_DRAW_RECT) {
+            if (current_cmd == CMD_TYPE_DRAW_RECT || current_cmd == CMD_TYPE_DRAW_RECT_RLE) {
                 cmd_buf_expected = 6; /* X (1), Y (1), W (1), H (1), Length (2) */
                 rx_state = STATE_HEADER;
             } else if (current_cmd == CMD_TYPE_SET_BACKLIGHT) {
@@ -399,7 +413,7 @@ void protocol_process_rx(void)
             cmd_buf[cmd_buf_idx++] = b;
 
             if (cmd_buf_idx >= cmd_buf_expected) {
-                if (current_cmd == CMD_TYPE_DRAW_RECT) {
+                if (current_cmd == CMD_TYPE_DRAW_RECT || current_cmd == CMD_TYPE_DRAW_RECT_RLE) {
                     rect_x = cmd_buf[0];
                     rect_y = cmd_buf[1];
                     rect_w = cmd_buf[2];
@@ -412,8 +426,13 @@ void protocol_process_rx(void)
 #endif
                         g_external_display_active = 1;
                         display_start_pixels(rect_x, rect_y, rect_w, rect_h);
-                        pixel_phase = 0;
-                        rx_state = STATE_PIXELS;
+                        if (current_cmd == CMD_TYPE_DRAW_RECT_RLE) {
+                            rle_substate = RLE_SUB_HEADER;
+                            rx_state = STATE_PIXELS_RLE;
+                        } else {
+                            pixel_phase = 0;
+                            rx_state = STATE_PIXELS;
+                        }
                     } else {
                         rx_state = STATE_CRC0;
                     }
@@ -468,6 +487,43 @@ void protocol_process_rx(void)
                 uint16_t pixel = ((uint16_t)pixel_hi << 8) | b;
                 display_send_pixel_stream(pixel);
                 pixel_phase = 0;
+            }
+
+            if (bytes_left > 0) {
+                bytes_left--;
+            }
+            if (bytes_left == 0) {
+                display_end_pixels();
+                rx_state = STATE_CRC0;
+            }
+            break;
+
+        case STATE_PIXELS_RLE:
+            calc_crc = crc16_ccitt_update(calc_crc, b);
+            if (rle_substate == RLE_SUB_HEADER) {
+                rle_is_run = (b & 0x80) != 0;
+                rle_count = (b & 0x7F) + 1;
+                rle_substate = RLE_SUB_PIXEL_HI;
+            } else if (rle_substate == RLE_SUB_PIXEL_HI) {
+                rle_pixel_hi = b;
+                rle_substate = RLE_SUB_PIXEL_LO;
+            } else { /* RLE_SUB_PIXEL_LO */
+                uint16_t pixel = ((uint16_t)rle_pixel_hi << 8) | b;
+                if (rle_is_run) {
+                    while (rle_count > 0) {
+                        display_send_pixel_stream(pixel);
+                        rle_count--;
+                    }
+                    rle_substate = RLE_SUB_HEADER;
+                } else {
+                    display_send_pixel_stream(pixel);
+                    rle_count--;
+                    if (rle_count == 0) {
+                        rle_substate = RLE_SUB_HEADER;
+                    } else {
+                        rle_substate = RLE_SUB_PIXEL_HI;
+                    }
+                }
             }
 
             if (bytes_left > 0) {

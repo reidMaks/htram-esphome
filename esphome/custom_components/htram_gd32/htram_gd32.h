@@ -99,6 +99,9 @@ static constexpr FlashAssetMeta FLASH_ASSET_METAS[ASSET_ID_COUNT] = {
   {36, 29},   // 28: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT
 };
 
+size_t encode_tga_rle_rgb565(const uint16_t *pixels, size_t num_pixels, uint8_t *out, size_t max_out);
+size_t decode_tga_rle_rgb565(const uint8_t *in, size_t in_len, uint16_t *out, size_t max_out_pixels);
+
 class HtramGd32Display;
 
 class HtramGd32Component : public Component, public uart::UARTDevice {
@@ -156,6 +159,9 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void send_stop();                          // silence / cancel current melody
   void play_rtttl(const std::string &song);  // parse RTTTL, stream to GD32
   void send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *pixel_data, size_t len);
+  void send_draw_rect_rle(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *rle_data, size_t len);
+  bool supports_rle() const { return this->simulation_mode_ || this->raw_fw_ver_ >= 0x0130; }
+  void set_raw_fw_ver(uint16_t ver) { this->raw_fw_ver_ = ver; }
   void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
   void send_draw_cached_asset_raw(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
   void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 0) {
@@ -239,6 +245,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   bool long_press_fired_{false};
   switch_::Switch *led_switch_[3]{nullptr, nullptr, nullptr};  // 0=red 1=yellow 2=green
   bool led_state_[3]{false, false, false};
+  uint16_t raw_fw_ver_{0};
   std::string fw_version_;  // last published, to avoid redundant updates
   std::string spi_flash_status_;
   uint8_t last_flash_ack_cmd_{0};
@@ -341,6 +348,8 @@ class HtramGd32Display : public display::Display {
   std::vector<CachedAsset> cached_assets_;
   HtramGd32Component *parent_{nullptr};
   std::vector<uint8_t> chunk_buffer_;
+  std::vector<uint16_t> rle_pixels_;
+  std::vector<uint8_t> rle_encoded_;
 #ifndef USE_ESP32
   uint16_t framebuffer_[240 * 240]{0};
 #endif

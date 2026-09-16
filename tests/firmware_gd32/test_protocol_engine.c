@@ -328,6 +328,152 @@ void test_cmd_draw_rect_zero_dim(void) {
   TEST_ASSERT_EQUAL(0, mock_display_start_pixels_called);
 }
 
+void test_cmd_draw_rect_rle_solid(void) {
+  /* 10x10 = 100 pixels, all black (0x0000).
+   * RLE run of 100: header = 0x80 | 99 = 0xE3, followed by 0x00, 0x00 (3 bytes). */
+  uint8_t pkt[15];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_DRAW_RECT_RLE;
+  pkt[3] = 5;     /* x */
+  pkt[4] = 10;    /* y */
+  pkt[5] = 10;    /* w */
+  pkt[6] = 10;    /* h */
+  pkt[7] = 3;     /* length lo (3 compressed bytes) */
+  pkt[8] = 0;     /* length hi */
+  pkt[9] = 0xE3;  /* RLE run of 100 */
+  pkt[10] = 0x00; /* pixel hi */
+  pkt[11] = 0x00; /* pixel lo */
+
+  uint16_t crc = crc16_ccitt(&pkt[2], 7 + 3);
+  pkt[12] = (uint8_t)(crc & 0xFF);
+  pkt[13] = (uint8_t)(crc >> 8);
+
+  mock_display_reset();
+  inject_rx_bytes(pkt, 14);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(1, mock_display_start_pixels_called);
+  TEST_ASSERT_EQUAL_UINT8(5, mock_display_last_x);
+  TEST_ASSERT_EQUAL_UINT8(10, mock_display_last_y);
+  TEST_ASSERT_EQUAL_UINT8(10, mock_display_last_w);
+  TEST_ASSERT_EQUAL_UINT8(10, mock_display_last_h);
+  TEST_ASSERT_EQUAL(100, mock_display_send_pixel_stream_called);
+  TEST_ASSERT_EQUAL_HEX16(0x0000, mock_display_last_pixel);
+  TEST_ASSERT_EQUAL(1, mock_display_end_pixels_called);
+  TEST_ASSERT_TRUE(protocol_is_external_display_active());
+}
+
+void test_cmd_draw_rect_rle_raw(void) {
+  /* 3 distinct pixels: 0xF800, 0x07E0, 0x001F (3 pixels = 6 bytes + 1 header = 7 bytes) */
+  uint8_t pkt[19];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_DRAW_RECT_RLE;
+  pkt[3] = 0;    /* x */
+  pkt[4] = 0;    /* y */
+  pkt[5] = 3;    /* w */
+  pkt[6] = 1;    /* h */
+  pkt[7] = 7;    /* length lo */
+  pkt[8] = 0;    /* length hi */
+  pkt[9] = 0x02; /* Raw run of 3 pixels (count = 2 + 1) */
+  pkt[10] = 0xF8;
+  pkt[11] = 0x00; /* 0xF800 */
+  pkt[12] = 0x07;
+  pkt[13] = 0xE0; /* 0x07E0 */
+  pkt[14] = 0x00;
+  pkt[15] = 0x1F; /* 0x001F */
+
+  uint16_t crc = crc16_ccitt(&pkt[2], 7 + 7);
+  pkt[16] = (uint8_t)(crc & 0xFF);
+  pkt[17] = (uint8_t)(crc >> 8);
+
+  mock_display_reset();
+  inject_rx_bytes(pkt, 18);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(1, mock_display_start_pixels_called);
+  TEST_ASSERT_EQUAL(3, mock_display_send_pixel_stream_called);
+  TEST_ASSERT_EQUAL(3, mock_display_pixel_history_count);
+  TEST_ASSERT_EQUAL_HEX16(0xF800, mock_display_pixel_history[0]);
+  TEST_ASSERT_EQUAL_HEX16(0x07E0, mock_display_pixel_history[1]);
+  TEST_ASSERT_EQUAL_HEX16(0x001F, mock_display_pixel_history[2]);
+  TEST_ASSERT_EQUAL(1, mock_display_end_pixels_called);
+}
+
+void test_cmd_draw_rect_rle_mixed(void) {
+  /* 4 red (0xF800), 2 raw (0xFFFF, 0x0000), 3 green (0x07E0) = 9 pixels total.
+   * RLE run of 4: header 0x83, 0xF8, 0x00 (3 bytes)
+   * Raw run of 2: header 0x01, 0xFF, 0xFF, 0x00, 0x00 (5 bytes)
+   * RLE run of 3: header 0x82, 0x07, 0xE0 (3 bytes)
+   * Total payload = 11 bytes. */
+  uint8_t pkt[23];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_DRAW_RECT_RLE;
+  pkt[3] = 2;  /* x */
+  pkt[4] = 3;  /* y */
+  pkt[5] = 3;  /* w */
+  pkt[6] = 3;  /* h (3x3 = 9 pixels) */
+  pkt[7] = 11; /* length lo */
+  pkt[8] = 0;  /* length hi */
+
+  pkt[9] = 0x83;
+  pkt[10] = 0xF8;
+  pkt[11] = 0x00; /* 4x 0xF800 */
+  pkt[12] = 0x01;
+  pkt[13] = 0xFF;
+  pkt[14] = 0xFF;
+  pkt[15] = 0x00;
+  pkt[16] = 0x00; /* 0xFFFF, 0x0000 */
+  pkt[17] = 0x82;
+  pkt[18] = 0x07;
+  pkt[19] = 0xE0; /* 3x 0x07E0 */
+
+  uint16_t crc = crc16_ccitt(&pkt[2], 7 + 11);
+  pkt[20] = (uint8_t)(crc & 0xFF);
+  pkt[21] = (uint8_t)(crc >> 8);
+
+  mock_display_reset();
+  inject_rx_bytes(pkt, 22);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(1, mock_display_start_pixels_called);
+  TEST_ASSERT_EQUAL(9, mock_display_send_pixel_stream_called);
+  TEST_ASSERT_EQUAL(9, mock_display_pixel_history_count);
+  for (int i = 0; i < 4; i++) {
+    TEST_ASSERT_EQUAL_HEX16(0xF800, mock_display_pixel_history[i]);
+  }
+  TEST_ASSERT_EQUAL_HEX16(0xFFFF, mock_display_pixel_history[4]);
+  TEST_ASSERT_EQUAL_HEX16(0x0000, mock_display_pixel_history[5]);
+  for (int i = 6; i < 9; i++) {
+    TEST_ASSERT_EQUAL_HEX16(0x07E0, mock_display_pixel_history[i]);
+  }
+  TEST_ASSERT_EQUAL(1, mock_display_end_pixels_called);
+}
+
+void test_cmd_draw_rect_rle_zero_dim(void) {
+  uint8_t pkt[12];
+  pkt[0] = PROTOCOL_MAGIC0;
+  pkt[1] = PROTOCOL_MAGIC1;
+  pkt[2] = CMD_TYPE_DRAW_RECT_RLE;
+  pkt[3] = 0;
+  pkt[4] = 0;
+  pkt[5] = 0; /* w=0 */
+  pkt[6] = 0; /* h=0 */
+  pkt[7] = 0;
+  pkt[8] = 0;
+  uint16_t crc = crc16_ccitt(&pkt[2], 7);
+  pkt[9] = (uint8_t)(crc & 0xFF);
+  pkt[10] = (uint8_t)(crc >> 8);
+
+  mock_display_reset();
+  inject_rx_bytes(pkt, 11);
+  protocol_process_rx();
+
+  TEST_ASSERT_EQUAL(0, mock_display_start_pixels_called);
+}
+
 void test_cmd_enter_bootloader_valid(void) {
   uint8_t pkt[10];
   pkt[0] = PROTOCOL_MAGIC0;
@@ -1037,6 +1183,10 @@ int main(void) {
   RUN_TEST(test_cmd_play_melody);
   RUN_TEST(test_cmd_draw_rect);
   RUN_TEST(test_cmd_draw_rect_zero_dim);
+  RUN_TEST(test_cmd_draw_rect_rle_solid);
+  RUN_TEST(test_cmd_draw_rect_rle_raw);
+  RUN_TEST(test_cmd_draw_rect_rle_mixed);
+  RUN_TEST(test_cmd_draw_rect_rle_zero_dim);
   RUN_TEST(test_cmd_draw_cached_asset_valid);
   RUN_TEST(test_cmd_draw_cached_asset_invalid_crc);
   RUN_TEST(test_cmd_enter_bootloader_valid);

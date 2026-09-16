@@ -8,7 +8,7 @@
 #define PROTOCOL_MAGIC1             0x55
 
 #define PROTOCOL_VERSION            0x01
-#define GD32_FW_VERSION             0x0120 /* v1.2.0 */
+#define GD32_FW_VERSION             0x0130 /* v1.3.0 */
 
 /* ── Packet Types ── */
 #define PKT_TYPE_TELEMETRY          0x01
@@ -25,6 +25,7 @@
 #define CMD_TYPE_BEEP               0x13
 #define CMD_TYPE_PLAY_MELODY        0x14
 #define CMD_TYPE_DRAW_CACHED_ASSET  0x15
+#define CMD_TYPE_DRAW_RECT_RLE      0x16
 #define CMD_TYPE_ENTER_BOOTLOADER   0x1F
 #define CMD_TYPE_GET_FLASH_INFO     0x20
 #define CMD_TYPE_FLASH_ERASE_SECTOR 0x21
