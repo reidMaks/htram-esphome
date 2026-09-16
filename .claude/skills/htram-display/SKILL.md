@@ -69,7 +69,7 @@ Defined in [`esphome/custom_components/htram_gd32/htram_gd32.h`](file:///workspa
 - `ASSET_ID_BELL` (1): Alarm bell icon (30x40)
 - `ASSET_ID_ALERT` (2), `ASSET_ID_ALERT_SMALL` (3): Air raid warning sirens
 - `ASSET_ID_THREAT_BALLISTIC` (4), `THREAT_KAB` (5), `THREAT_MISSILE` (6), `THREAT_DRONE` (7), `THREAT_RECON` (8)
-- `ASSET_ID_WEATHER_SUNNY` (9) through `ASSET_ID_WEATHER_SNOWY` (24): Weather condition icons and multi-layer masks
+- `ASSET_ID_WEATHER_SUNNY` (9) through `ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT` (28): Weather condition icons and multi-layer masks
 
 #### How to Draw from ESPHome
 From an ESPHome lambda or C++ action:

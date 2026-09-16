@@ -6,12 +6,15 @@ from PIL import Image
 
 from tools.images.generate_weather_icons import (
     SIZE,
+    make_clearnight,
     make_cloudy,
     make_fog,
     make_lightning,
     make_lightning_layers,
     make_partlycloudy,
     make_partlycloudy_layers,
+    make_partlycloudy_night,
+    make_partlycloudy_night_layers,
     make_rainy,
     make_rainy_layers,
     make_snowy,
@@ -27,7 +30,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 def test_single_layer_icon_generators():
     for name, gen_fn in [
         ("sunny", make_sunny),
+        ("clearnight", make_clearnight),
         ("partlycloudy", make_partlycloudy),
+        ("partlycloudy_night", make_partlycloudy_night),
         ("cloudy", make_cloudy),
         ("rainy", make_rainy),
         ("lightning", make_lightning),
@@ -50,6 +55,7 @@ def test_single_layer_icon_generators():
 def test_multilayer_icon_generators():
     generators = [
         ("partlycloudy", make_partlycloudy_layers, ["sun", "cloud"]),
+        ("partlycloudy_night", make_partlycloudy_night_layers, ["moon", "cloud"]),
         ("rainy", make_rainy_layers, ["cloud", "drops"]),
         ("lightning", make_lightning_layers, ["cloud", "bolt"]),
         ("snowy", make_snowy_layers, ["cloud", "flakes"]),
@@ -130,5 +136,7 @@ def test_generate_weather_icons_cli():
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     assert "Saved weather_sunny_mask.png" in res.stdout
+    assert "Saved weather_clearnight_mask.png" in res.stdout
     assert "Saved weather_partlycloudy_sun_mask.png" in res.stdout
     assert "Saved weather_partlycloudy_cloud_mask.png" in res.stdout
+    assert "Saved weather_partlycloudy_night_moon_mask.png" in res.stdout

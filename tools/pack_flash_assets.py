@@ -81,6 +81,10 @@ CANONICAL_ASSETS = [
     (22, "weather_partlycloudy", "weather_partlycloudy_mask.png"),
     (23, "weather_lightning", "weather_lightning_mask.png"),
     (24, "weather_snowy", "weather_snowy_mask.png"),
+    (25, "weather_clearnight", "weather_clearnight_mask.png"),
+    (26, "weather_partlycloudy_night_moon", "weather_partlycloudy_night_moon_mask.png"),
+    (27, "weather_partlycloudy_night_cld", "weather_partlycloudy_night_cloud_mask.png"),
+    (28, "weather_partlycloudy_night", "weather_partlycloudy_night_mask.png"),
 ]
 
 

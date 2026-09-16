@@ -46,6 +46,21 @@ def make_sunny():
     return im
 
 
+def make_clearnight():
+    im = Image.new("L", (SIZE, SIZE), 0)
+    d = ImageDraw.Draw(im)
+    cx, cy = SIZE * 0.50, SIZE * 0.50
+    r_outer = SIZE * 0.36
+    # Outer circle
+    d.ellipse([cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer], fill=255)
+    # Inner cutout circle (offset up-right to leave a crescent on the left/bottom)
+    r_inner = SIZE * 0.30
+    cut_cx = cx + SIZE * 0.15
+    cut_cy = cy - SIZE * 0.14
+    d.ellipse([cut_cx - r_inner, cut_cy - r_inner, cut_cx + r_inner, cut_cy + r_inner], fill=0)
+    return im
+
+
 def make_partlycloudy():
     im = Image.new("L", (SIZE, SIZE), 0)
     d = ImageDraw.Draw(im)
@@ -232,6 +247,47 @@ def make_partlycloudy_layers():
     }
 
 
+def make_partlycloudy_night_layers():
+    im_moon = Image.new("L", (SIZE, SIZE), 0)
+    d_moon = ImageDraw.Draw(im_moon)
+
+    # Moon in top right: outer curve points top-right
+    moon_cx, moon_cy = SIZE * 0.66, SIZE * 0.34
+    r_outer = SIZE * 0.22
+    d_moon.ellipse([moon_cx - r_outer, moon_cy - r_outer, moon_cx + r_outer, moon_cy + r_outer], fill=255)
+
+    # Inner cutout towards bottom-left (towards cloud)
+    r_inner = SIZE * 0.18
+    cut_cx = moon_cx - SIZE * 0.09
+    cut_cy = moon_cy + SIZE * 0.08
+    d_moon.ellipse([cut_cx - r_inner, cut_cy - r_inner, cut_cx + r_inner, cut_cy + r_inner], fill=0)
+
+    # Cloud covering bottom left
+    cloud_cx, cloud_cy = SIZE * 0.42, SIZE * 0.58
+    rx, ry = SIZE * 0.38, SIZE * 0.25
+    draw_cloud(d_moon, cloud_cx, cloud_cy, rx * 1.08, ry * 1.08, fill=0)
+
+    im_cloud = Image.new("L", (SIZE, SIZE), 0)
+    d_cloud = ImageDraw.Draw(im_cloud)
+    draw_cloud(d_cloud, cloud_cx, cloud_cy, rx, ry, fill=255)
+
+    im_comb = Image.new("L", (SIZE, SIZE), 0)
+    im_comb.paste(im_moon, (0, 0))
+    im_comb.paste(im_cloud, (0, 0), mask=im_cloud)
+    bbox = im_comb.getbbox()
+
+    return {
+        "weather_partlycloudy_night_moon_mask.png": (im_moon, bbox),
+        "weather_partlycloudy_night_cloud_mask.png": (im_cloud, bbox),
+        "weather_partlycloudy_night_mask.png": (im_comb, bbox),
+    }
+
+
+def make_partlycloudy_night():
+    layers = make_partlycloudy_night_layers()
+    return layers["weather_partlycloudy_night_mask.png"][0]
+
+
 def make_rainy_layers():
     im_cloud = Image.new("L", (SIZE, SIZE), 0)
     d_cloud = ImageDraw.Draw(im_cloud)
@@ -353,6 +409,7 @@ def main():
     # Single-layer icons
     singles = {
         "weather_sunny_mask.png": make_sunny(),
+        "weather_clearnight_mask.png": make_clearnight(),
         "weather_cloudy_mask.png": make_cloudy(),
         "weather_fog_mask.png": make_fog(),
         "weather_windy_mask.png": make_windy(),
@@ -363,6 +420,7 @@ def main():
     # Multi-layer icons
     layered_generators = [
         make_partlycloudy_layers(),
+        make_partlycloudy_night_layers(),
         make_rainy_layers(),
         make_lightning_layers(),
         make_snowy_layers(),
