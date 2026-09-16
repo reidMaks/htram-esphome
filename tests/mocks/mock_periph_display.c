@@ -15,6 +15,8 @@ uint8_t mock_display_last_y = 0;
 uint8_t mock_display_last_w = 0;
 uint8_t mock_display_last_h = 0;
 uint16_t mock_display_last_pixel = 0;
+uint16_t mock_display_pixel_history[256];
+int mock_display_pixel_history_count = 0;
 int mock_display_draw_cached_asset_called = 0;
 uint16_t mock_display_last_asset_id = 0;
 uint8_t mock_display_last_asset_x = 0;
@@ -33,6 +35,9 @@ void display_start_pixels(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
 }
 
 void display_send_pixel_stream(uint16_t pixel) {
+  if (mock_display_pixel_history_count < 256) {
+    mock_display_pixel_history[mock_display_pixel_history_count++] = pixel;
+  }
   mock_display_send_pixel_stream_called++;
   mock_display_last_pixel = pixel;
 }
@@ -67,6 +72,7 @@ void mock_display_reset(void) {
   mock_display_last_w = 0;
   mock_display_last_h = 0;
   mock_display_last_pixel = 0;
+  mock_display_pixel_history_count = 0;
   mock_display_draw_cached_asset_called = 0;
   mock_display_last_asset_id = 0;
   mock_display_last_asset_x = 0;
