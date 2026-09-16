@@ -133,13 +133,13 @@ script:
           const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show) {
             if (id(alert_icon_drawn_asset) >= 0 && id(alert_icon_drawn_asset) != (int) asset_id) {
-              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 194, 94);
+              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
             }
             id(htram_core)->send_draw_cached_asset_centered(
-                asset_id, 194, 94, Color(0xE5484D), Color(0x000000), 1);
+                asset_id, 190, 86, Color(0xE5484D), Color(0x000000), 1);
             id(alert_icon_drawn_asset) = (int) asset_id;
           } else if (id(alert_icon_drawn_asset) >= 0) {
-            id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 194, 94);
+            id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
             id(alert_icon_drawn_asset) = -1;
           }
 
@@ -168,7 +168,7 @@ script:
       - lambda: |-
           if (face != 0) {
             if (id(alert_icon_drawn_asset) >= 0) {
-              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 194, 94);
+              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
               id(alert_icon_drawn_asset) = -1;
             }
             if (id(alert_nolink_drawn)) {

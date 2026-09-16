@@ -156,10 +156,10 @@ script:
           if (can_show) {
             const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
             id(htram_core)->send_draw_cached_asset_centered(
-                htram_gd32::ASSET_ID_BELL, 194, 94, Color(c), Color(0x000000), 1);
+                htram_gd32::ASSET_ID_BELL, 190, 86, Color(c), Color(0x000000), 1);
             id(alarm_bell_drawn) = true;
           } else if (id(alarm_bell_drawn)) {
-            id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+            id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
             id(alarm_bell_drawn) = false;
           }
 
@@ -168,8 +168,11 @@ script:
     then:
       - lambda: |-
           id(alarm_ringing) = true;
-          id(face_state) = -1;
-      - script.execute: refresh_face
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) {
+            id(face_state) = -1;
+            id(refresh_face).execute();
+          }
+      - script.execute: refresh_alarm_ui
       - script.execute: on_alarm_started
       # 100 × 3 с ≈ п'ять хвилин: будильник, що надривається в порожній
       # кімнаті годину, — це не наполегливість, а несправність.
@@ -224,7 +227,7 @@ script:
           if (face != 0) {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
             if (id(alarm_bell_drawn)) {
-              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
               id(alarm_bell_drawn) = false;
             }
           } else {
