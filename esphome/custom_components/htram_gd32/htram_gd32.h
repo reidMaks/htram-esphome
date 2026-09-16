@@ -62,6 +62,43 @@ enum FlashAssetId : uint16_t {
   ASSET_ID_COUNT = 29
 };
 
+struct FlashAssetMeta {
+  uint8_t width;
+  uint8_t height;
+};
+
+static constexpr FlashAssetMeta FLASH_ASSET_METAS[ASSET_ID_COUNT] = {
+  {72, 100},  // 0: ASSET_ID_TRYZUB
+  {30, 40},   // 1: ASSET_ID_BELL
+  {44, 40},   // 2: ASSET_ID_ALERT
+  {19, 17},   // 3: ASSET_ID_ALERT_SMALL
+  {40, 40},   // 4: ASSET_ID_THREAT_BALLISTIC
+  {32, 40},   // 5: ASSET_ID_THREAT_KAB
+  {39, 40},   // 6: ASSET_ID_THREAT_MISSILE
+  {53, 40},   // 7: ASSET_ID_THREAT_DRONE
+  {56, 40},   // 8: ASSET_ID_THREAT_RECON
+  {36, 36},   // 9: ASSET_ID_WEATHER_SUNNY
+  {36, 28},   // 10: ASSET_ID_WEATHER_PARTLYCLOUDY_SUN
+  {36, 28},   // 11: ASSET_ID_WEATHER_PARTLYCLOUDY_CLOUD
+  {36, 20},   // 12: ASSET_ID_WEATHER_CLOUDY
+  {36, 34},   // 13: ASSET_ID_WEATHER_RAINY_CLOUD
+  {36, 34},   // 14: ASSET_ID_WEATHER_RAINY_DROPS
+  {36, 35},   // 15: ASSET_ID_WEATHER_LIGHTNING_CLOUD
+  {36, 35},   // 16: ASSET_ID_WEATHER_LIGHTNING_BOLT
+  {36, 33},   // 17: ASSET_ID_WEATHER_SNOWY_CLOUD
+  {36, 33},   // 18: ASSET_ID_WEATHER_SNOWY_FLAKES
+  {36, 26},   // 19: ASSET_ID_WEATHER_FOG
+  {36, 30},   // 20: ASSET_ID_WEATHER_WINDY
+  {36, 34},   // 21: ASSET_ID_WEATHER_RAINY
+  {36, 28},   // 22: ASSET_ID_WEATHER_PARTLYCLOUDY
+  {36, 35},   // 23: ASSET_ID_WEATHER_LIGHTNING
+  {36, 33},   // 24: ASSET_ID_WEATHER_SNOWY
+  {36, 36},   // 25: ASSET_ID_WEATHER_CLEARNIGHT
+  {36, 29},   // 26: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_MOON
+  {36, 29},   // 27: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_CLOUD
+  {36, 29},   // 28: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT
+};
+
 class HtramGd32Display;
 
 class HtramGd32Component : public Component, public uart::UARTDevice {
@@ -123,10 +160,18 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 0) {
     this->send_draw_cached_asset(asset_id, x, y, display::ColorUtil::color_to_565(fg_color), display::ColorUtil::color_to_565(bg_color), flags);
   }
+  void send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 1);
+  void send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 1) {
+    this->send_draw_cached_asset_centered(asset_id, cx, cy, display::ColorUtil::color_to_565(fg_color), display::ColorUtil::color_to_565(bg_color), flags);
+  }
+  void send_clear_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y);
+  void send_clear_cached_asset_centered(uint16_t asset_id, int cx, int cy);
+  void send_clear_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color = 0);
   void send_flash_backup_fw(uint8_t slot);
   void send_flash_confirm_boot();
   void send_flash_restore_fw(uint8_t slot);
   void clear_persistent_asset();
+  void clear_cached_assets();
 
   bool is_ota_mode() const { return ota_mode_; }
 
@@ -263,9 +308,14 @@ class HtramGd32Display : public display::Display {
   const uint16_t *get_framebuffer() const { return this->framebuffer_; }
   bool dump_ppm(const std::string &path) const;
   void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
+  void render_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
+  void clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color = 0);
 #endif
+  void clear_cached_assets() {
+    this->cached_assets_.clear();
+  }
   void clear_persistent_asset() {
-    this->persistent_asset_.active = false;
+    this->clear_cached_assets();
 #ifndef USE_ESP32
     std::fill_n(this->framebuffer_, 240 * 240, (uint16_t) 0);
 #endif
@@ -275,17 +325,17 @@ class HtramGd32Display : public display::Display {
   int get_width_internal() override { return 240; }
   int get_height_internal() override { return 240; }
 
-  struct PersistentAsset {
+  struct CachedAsset {
     uint16_t asset_id{0};
     uint8_t x{0};
     uint8_t y{0};
     uint16_t fg_color{0};
     uint16_t bg_color{0};
     uint8_t flags{0};
-    bool active{false};
+    bool active{true};
   };
 
-  PersistentAsset persistent_asset_;
+  std::vector<CachedAsset> cached_assets_;
   HtramGd32Component *parent_{nullptr};
   std::vector<uint8_t> chunk_buffer_;
 #ifndef USE_ESP32
@@ -321,6 +371,38 @@ inline void HtramGd32Component::clear_persistent_asset() {
   if (this->display_ != nullptr) {
     this->display_->clear_persistent_asset();
   }
+}
+
+inline void HtramGd32Component::clear_cached_assets() {
+  if (this->display_ != nullptr) {
+    this->display_->clear_cached_assets();
+  }
+}
+
+inline void HtramGd32Component::send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy,
+                                                               uint16_t fg_color, uint16_t bg_color,
+                                                               uint8_t flags) {
+  if (asset_id >= ASSET_ID_COUNT) return;
+  auto meta = FLASH_ASSET_METAS[asset_id];
+  int x = cx - (int) meta.width / 2;
+  int y = cy - (int) meta.height / 2;
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+  this->send_draw_cached_asset(asset_id, (uint8_t) x, (uint8_t) y, fg_color, bg_color, flags);
+}
+
+inline void HtramGd32Component::send_clear_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y) {
+  this->send_draw_cached_asset(asset_id, x, y, (uint16_t) 0, (uint16_t) 0, (uint8_t) 0);
+}
+
+inline void HtramGd32Component::send_clear_cached_asset_centered(uint16_t asset_id, int cx, int cy) {
+  if (asset_id >= ASSET_ID_COUNT) return;
+  auto meta = FLASH_ASSET_METAS[asset_id];
+  int x = cx - (int) meta.width / 2;
+  int y = cy - (int) meta.height / 2;
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+  this->send_clear_cached_asset(asset_id, (uint8_t) x, (uint8_t) y);
 }
 
 #ifdef HTRAM_HAS_WEB_HANDLERS

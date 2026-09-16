@@ -90,53 +90,14 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
-
-image:
-  - platform: file
-    file: "${repo_url}/images/alert_mask.png"
-    id: img_alert
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/alert_small_mask.png"
-    id: img_nolink
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_ballistic_mask.png"
-    id: img_ballistic
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_kab_mask.png"
-    id: img_kab
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_missile_mask.png"
-    id: img_missile
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_drone_mask.png"
-    id: img_drone
-    type: BINARY
-  - platform: file
-    file: "${repo_url}/images/threat_recon_mask.png"
-    id: img_recon
-    type: BINARY
-
-lvgl:
-  widgets:
-    - image:
-        id: ui_alert
-        align: center
-        x: 74
-        y: -26
-        src: img_alert
-        hidden: true
-    - image:
-        id: ui_nolink
-        align: center
-        x: 89
-        y: 89
-        src: img_nolink
-        hidden: true
+  - id: alert_icon_drawn_asset
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  - id: alert_nolink_drawn
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 script:
   - id: play_alert_sound
@@ -155,17 +116,14 @@ script:
     then:
       - lambda: |-
           const bool alert = id(alert_active);
+          uint16_t asset_id = htram_gd32::ASSET_ID_ALERT;
           if (alert) {
             id(htram_arbiter_hub)->request_status_icon("alert", 100);
-            auto *src = id(img_alert);
-            if (id(alert_ballistic))     src = id(img_ballistic);
-            else if (id(alert_kab))      src = id(img_kab);
-            else if (id(alert_missile))  src = id(img_missile);
-            else if (id(alert_drone))    src = id(img_drone);
-            else if (id(alert_recon))    src = id(img_recon);
-            lv_image_set_src(id(ui_alert), src->get_lv_image_dsc());
-            lv_obj_set_style_image_recolor(id(ui_alert), lv_color_hex(0xE5484D), LV_PART_MAIN);
-            lv_obj_set_style_image_recolor_opa(id(ui_alert), LV_OPA_COVER, LV_PART_MAIN);
+            if (id(alert_ballistic))     asset_id = htram_gd32::ASSET_ID_THREAT_BALLISTIC;
+            else if (id(alert_kab))      asset_id = htram_gd32::ASSET_ID_THREAT_KAB;
+            else if (id(alert_missile))  asset_id = htram_gd32::ASSET_ID_THREAT_MISSILE;
+            else if (id(alert_drone))    asset_id = htram_gd32::ASSET_ID_THREAT_DRONE;
+            else if (id(alert_recon))    asset_id = htram_gd32::ASSET_ID_THREAT_RECON;
           } else {
             id(htram_arbiter_hub)->clear_status_icon("alert");
           }
@@ -174,9 +132,15 @@ script:
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
           const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show) {
-            lv_obj_remove_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
-          } else {
-            lv_obj_add_flag(id(ui_alert), LV_OBJ_FLAG_HIDDEN);
+            if (id(alert_icon_drawn_asset) >= 0 && id(alert_icon_drawn_asset) != (int) asset_id) {
+              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 194, 94);
+            }
+            id(htram_core)->send_draw_cached_asset_centered(
+                asset_id, 194, 94, Color(0xE5484D), Color(0x000000), 1);
+            id(alert_icon_drawn_asset) = (int) asset_id;
+          } else if (id(alert_icon_drawn_asset) >= 0) {
+            id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 194, 94);
+            id(alert_icon_drawn_asset) = -1;
           }
 
   - id: refresh_alert_marks
@@ -199,6 +163,22 @@ script:
           shown = want;
           id(apply_face_alert_color).execute(want);
 
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face != 0) {
+            if (id(alert_icon_drawn_asset) >= 0) {
+              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 194, 94);
+              id(alert_icon_drawn_asset) = -1;
+            }
+            if (id(alert_nolink_drawn)) {
+              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_ALERT_SMALL, 209, 209);
+              id(alert_nolink_drawn) = false;
+            }
+          } else {
+            id(refresh_alert_icon).execute();
+          }
+
 interval:
   - interval: 1s
     then:
@@ -212,15 +192,14 @@ interval:
           const bool lost = id(jaam_seen_ms) == 0
                                 ? now_ms > 30000
                                 : (now_ms - id(jaam_seen_ms)) > 30000;
-          static int shown = -1;
-          if ((int) lost != shown) {
-            shown = lost;
+          if (lost != id(alert_nolink_drawn)) {
+            id(alert_nolink_drawn) = lost;
             if (lost) {
-              lv_obj_set_style_image_recolor(id(ui_nolink), lv_color_hex(0x707880), LV_PART_MAIN);
-              lv_obj_set_style_image_recolor_opa(id(ui_nolink), LV_OPA_COVER, LV_PART_MAIN);
-              lv_obj_remove_flag(id(ui_nolink), LV_OBJ_FLAG_HIDDEN);
+              id(htram_core)->send_draw_cached_asset_centered(
+                  htram_gd32::ASSET_ID_ALERT_SMALL, 209, 209, Color(0x707880), Color(0x000000), 1);
             } else {
-              lv_obj_add_flag(id(ui_nolink), LV_OBJ_FLAG_HIDDEN);
+              id(htram_core)->send_clear_cached_asset_centered(
+                  htram_gd32::ASSET_ID_ALERT_SMALL, 209, 209);
             }
           }
 
@@ -228,8 +207,5 @@ esphome:
   on_boot:
     - priority: -100
       then:
-        - lambda: |-
-            lv_obj_set_parent(id(ui_alert), id(ui_root));
-            lv_obj_set_parent(id(ui_nolink), id(ui_root));
         - script.execute: refresh_alert_icon
         - script.execute: refresh_alert_marks

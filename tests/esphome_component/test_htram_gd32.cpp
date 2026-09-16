@@ -627,6 +627,24 @@ void test_outgoing_commands(void) {
   uint16_t act_asset_crc = g_comp->mock_tx_bytes[12] | (g_comp->mock_tx_bytes[13] << 8);
   TEST_ASSERT_EQUAL_HEX16(exp_asset_crc, act_asset_crc);
 
+  // Test centered cached asset blitting (e.g. bell: 30x40 at cx=194, cy=94 -> x=179, y=74)
+  g_comp->mock_clear_tx();
+  g_comp->send_draw_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94, 0xFF9E, 0x0000, 1);
+  TEST_ASSERT_EQUAL(14, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL(179, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL(74, g_comp->mock_tx_bytes[6]);
+  TEST_ASSERT_EQUAL_HEX16(0xFF9E, g_comp->mock_tx_bytes[7] | (g_comp->mock_tx_bytes[8] << 8));
+
+  // Test centered cached asset clearing (opaque with fg=0, bg=0, flags=0)
+  g_comp->mock_clear_tx();
+  g_comp->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+  TEST_ASSERT_EQUAL(14, g_comp->mock_tx_bytes.size());
+  TEST_ASSERT_EQUAL(179, g_comp->mock_tx_bytes[5]);
+  TEST_ASSERT_EQUAL(74, g_comp->mock_tx_bytes[6]);
+  TEST_ASSERT_EQUAL_HEX16(0x0000, g_comp->mock_tx_bytes[7] | (g_comp->mock_tx_bytes[8] << 8));
+  TEST_ASSERT_EQUAL_HEX16(0x0000, g_comp->mock_tx_bytes[9] | (g_comp->mock_tx_bytes[10] << 8));
+  TEST_ASSERT_EQUAL(0, g_comp->mock_tx_bytes[11]);
+
   g_comp->mock_clear_tx();
   g_comp->send_flash_erase_sector(0x00001000);
   TEST_ASSERT_EQUAL(9, g_comp->mock_tx_bytes.size());
@@ -1021,8 +1039,14 @@ void test_display_pixel_drawing(void) {
   // Test cached asset blitting to framebuffer
   g_comp->set_display(&disp);
   g_comp->send_draw_cached_asset(0, 10, 10, 0xFFFF, 0x0000, 0);  // Asset 0 (tryzub)
+  g_comp->send_draw_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94, 0xFF9E, 0x0000, 1);
   TEST_ASSERT_TRUE(disp.dump_ppm("/tmp/test_dump.ppm"));
   std::remove("/tmp/test_dump.ppm");
+
+  // Test clearing an asset
+  g_comp->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+  g_comp->clear_cached_assets();
+  g_comp->send_clear_rect(0, 0, 10, 10, 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -1307,6 +1307,25 @@ void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, ui
   this->write_array(pkt, sizeof(pkt));
 }
 
+void HtramGd32Component::send_clear_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
+#ifndef USE_ESP32
+  if (this->display_ != nullptr) {
+    this->display_->clear_rect_fb(x, y, w, h, color);
+    if (this->display_->is_simulation_mode()) return;
+  }
+#endif
+  if (ota_mode_) return;
+  if (w == 0 || h == 0) return;
+  std::vector<uint8_t> buf((size_t) w * h * 2, 0);
+  if (color != 0) {
+    for (size_t i = 0; i < (size_t) w * h; i++) {
+      buf[i * 2] = (uint8_t)(color >> 8);
+      buf[i * 2 + 1] = (uint8_t)(color & 0xFF);
+    }
+  }
+  this->send_draw_rect(x, y, w, h, buf.data(), buf.size());
+}
+
 void HtramGd32Display::dump_config() {
   LOG_DISPLAY("", "HTRAM GD32 Display", this);
 }
@@ -1445,7 +1464,55 @@ struct FlashAssetEntry {
 void HtramGd32Display::draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y,
                                                uint16_t fg_color, uint16_t bg_color,
                                                uint8_t flags) {
-  this->persistent_asset_ = {asset_id, x, y, fg_color, bg_color, flags, true};
+  if (fg_color == 0 && bg_color == 0 && (flags & 1) == 0) {
+    this->render_asset_to_fb(asset_id, x, y, 0, 0, 0);
+    for (auto it = this->cached_assets_.begin(); it != this->cached_assets_.end(); ) {
+      if (it->asset_id == asset_id && it->x == x && it->y == y) {
+        it = this->cached_assets_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    return;
+  }
+
+  bool found = false;
+  for (auto &a : this->cached_assets_) {
+    if (a.asset_id == asset_id && a.x == x && a.y == y) {
+      a = {asset_id, x, y, fg_color, bg_color, flags, true};
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    this->cached_assets_.push_back({asset_id, x, y, fg_color, bg_color, flags, true});
+  }
+
+  this->render_asset_to_fb(asset_id, x, y, fg_color, bg_color, flags);
+}
+
+void HtramGd32Display::clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
+  for (int r = 0; r < h; r++) {
+    int py = y + r;
+    if (py < 0 || py >= 240) continue;
+    for (int c = 0; c < w; c++) {
+      int px = x + c;
+      if (px < 0 || px >= 240) continue;
+      this->framebuffer_[py * 240 + px] = color;
+    }
+  }
+  for (auto it = this->cached_assets_.begin(); it != this->cached_assets_.end(); ) {
+    if (it->x >= x && it->x < x + w && it->y >= y && it->y < y + h) {
+      it = this->cached_assets_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+void HtramGd32Display::render_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y,
+                                          uint16_t fg_color, uint16_t bg_color,
+                                          uint8_t flags) {
   static std::vector<uint8_t> asset_bin_data;
   static bool attempted_load = false;
   if (!attempted_load) {
@@ -1514,14 +1581,11 @@ void HtramGd32Display::draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uin
 }
 
 bool HtramGd32Display::dump_ppm(const std::string &path) const {
-  if (this->persistent_asset_.active) {
-    const_cast<HtramGd32Display *>(this)->draw_cached_asset_to_fb(
-        this->persistent_asset_.asset_id,
-        this->persistent_asset_.x,
-        this->persistent_asset_.y,
-        this->persistent_asset_.fg_color,
-        this->persistent_asset_.bg_color,
-        this->persistent_asset_.flags);
+  for (const auto &a : this->cached_assets_) {
+    if (a.active) {
+      const_cast<HtramGd32Display *>(this)->render_asset_to_fb(
+          a.asset_id, a.x, a.y, a.fg_color, a.bg_color, a.flags);
+    }
   }
   FILE *f = fopen(path.c_str(), "wb");
   if (!f) {
