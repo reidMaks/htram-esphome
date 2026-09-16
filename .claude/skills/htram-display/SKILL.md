@@ -102,6 +102,13 @@ id(htram_core)->send_draw_cached_asset(
 | UART payload | 14,400 bytes | **14 bytes** |
 | Draw latency | ~160 ms | **< 5 ms** |
 
+### Universal RLE Stream Compression for LVGL Rendering (`0x16`)
+While static UI icons are offloaded to SPI Flash via `send_draw_cached_asset`, all other dynamic LVGL elements (large clock digits, arc meters, modal backgrounds, full-screen clears) are streamed from ESP32 to GD32 over UART.
+- **The Bottleneck**: At 921600 baud, uncompressed RGB565 takes ~1.25 seconds for a full 240×240 repaint (115,200 bytes), causing a visible downward "wipe/sweep" when switching modal screens.
+- **TGA 16-Bit RLE Stream**: `HtramGd32Display::draw_pixels_at` compresses pixel rows into TGA 2.0 PackBits runs. Because HTRAM UI is predominantly deep black (`0x0000`), solid background fills compress by **~85×** (128 black pixels = 3 bytes).
+- **Zero GD32 SRAM Allocation**: GD32 decompressor runs in `STATE_PIXELS_RLE`, directly driving ST7789 SPI bitbang with only 4 bytes of state RAM.
+- **Performance Impact**: Screen invalidations and transitions complete near-instantaneously (~15 ms UART transit vs 1.25 s), completely eliminating digit ghosting and visible line-by-line sweeping.
+
 ---
 
 ## 5. Asset Packing & Flashing Toolchain

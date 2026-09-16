@@ -55,12 +55,13 @@ and [`htram_gd32.h`](file:///workspaces/htram-esphome/esphome/custom_components/
 
 | Type | Name | Wire Length | Purpose |
 |---|---|---|---|
-| `0x10` | `CMD_TYPE_DRAW_RECT` | 10 B + $W \times H \times 2$ | Flush LVGL bounding box with raw RGB565 pixels |
+| `0x10` | `CMD_TYPE_DRAW_RECT` | 10 B + $W \times H \times 2$ | Flush LVGL bounding box with raw RGB565 pixels (legacy / uncompressed) |
 | `0x11` | `CMD_TYPE_SET_BACKLIGHT` | 5 B | Set LCD brightness PWM (0..100) |
 | `0x12` | `CMD_TYPE_SET_LEDS` | 7 B | Set Red, Yellow, Green LED states and global brightness |
 | `0x13` | `CMD_TYPE_BEEP` | 7 B | Trigger passive buzzer frequency (Hz) and duration (ms) |
 | `0x14` | `CMD_TYPE_PLAY_MELODY` | Header + Notes | Stream tone sequence for background GD32 playback |
 | `0x15` | `CMD_TYPE_DRAW_CACHED_ASSET` | **14 B** | Render 1-bit asset from SPI Flash at (X, Y) with colors |
+| `0x16` | `CMD_TYPE_DRAW_RECT_RLE` | **10 B + comp_len** | Stream TGA 16-bit RGB565 RLE compressed pixels directly to ST7789 |
 | `0x1F` | `CMD_TYPE_ENTER_BOOTLOADER` | 8 B | Enter ROM bootloader (guarded by key `0xDEADBEEF`) |
 | `0x20` | `CMD_TYPE_GET_FLASH_INFO` | 5 B | Query SPI Flash JEDEC ID and status |
 | `0x21` | `CMD_TYPE_FLASH_ERASE_SECTOR` | 9 B | Erase 4 KB sector at address |
@@ -92,7 +93,37 @@ Total size: **14 bytes**.
 
 ---
 
-## 4. Flash Status Codes (`FLASH_ACK_*`)
+## 4. TGA 16-Bit RGB565 RLE Stream Compression (`0x16`)
+
+Binary structure of `CMD_TYPE_DRAW_RECT_RLE`:
+```
+[0xAA 0x55] [0x16] [x: uint8] [y: uint8] [w: uint8] [h: uint8] [comp_len: uint16_LE] [rle_stream: comp_len bytes] [crc16: uint16_LE]
+```
+Header size: **8 bytes prefix** + payload (`comp_len`) + **2 bytes CRC-16-CCITT**.
+
+### Compression Algorithm (Standard TGA 2.0 16-bit RLE)
+The pixel stream consists of contiguous PackBits-style packets:
+- **RLE Run Packet** (`ctrl & 0x80 != 0`):
+  - Count = `(ctrl & 0x7F) + 1` (1 to 128 repeated pixels)
+  - Followed by 2 bytes: `[pixel_lo, pixel_hi]` (RGB565 LE)
+  - Output: `Count` pixels of that identical color.
+- **Raw Packet** (`ctrl & 0x80 == 0`):
+  - Count = `(ctrl & 0x7F) + 1` (1 to 128 non-repeating pixels)
+  - Followed by `Count * 2` bytes: raw RGB565 LE pixel values.
+  - Output: `Count` uncompressed pixels.
+
+### Hardware & Streaming Architecture
+- **Zero SRAM Buffering on GD32**: The decompressor on GD32 uses a streaming state machine consuming only 4 bytes of RAM. As compressed bytes arrive in the UART RX ring, decompressed pixels are immediately pumped to ST7789 GRAM via `display_send_pixel_stream()`. No 115 KB frame buffer or line buffer is required in GD32 SRAM.
+- **UART Bandwidth & Latency Reduction**:
+  - Full black fill / clear / modal transitions: 128 black pixels (256 raw bytes) collapse into **3 bytes** on the wire (~85x compression ratio).
+  - A 240×30 strip (14,400 raw bytes) shrinks to 171 bytes, reducing wire time from ~160 ms to **~2 ms**.
+  - A full 240×240 frame clear drops from ~1.25 seconds to **~15 ms**, completely eliminating visible sweep tear during screen switches.
+- **Backward Compatibility & Rolling Deployments**:
+  - ESP32 checks `supports_rle()` (`raw_fw_ver_ >= 0x0130`). If communicating with older GD32 firmware (v1.2.0), ESP32 automatically falls back to uncompressed `CMD_TYPE_DRAW_RECT` (`0x10`).
+
+---
+
+## 5. Flash Status Codes (`FLASH_ACK_*`)
 
 Returned in `PKT_TYPE_FLASH_ACK` (`0x06`) and `PKT_TYPE_FLASH_DATA` (`0x07`):
 - `0x00`: `FLASH_ACK_OK` - Operation completed successfully.
@@ -107,7 +138,7 @@ Returned in `PKT_TYPE_FLASH_ACK` (`0x06`) and `PKT_TYPE_FLASH_DATA` (`0x07`):
 
 ---
 
-## 5. Changing a Packet Means Changing Two Places
+## 6. Changing a Packet Means Changing Two Places
 
 Frame lengths and structures are strictly checked on both sides.
 `head_packet_len_()` in [`esphome/custom_components/htram_gd32/htram_gd32.cpp`](file:///workspaces/htram-esphome/esphome/custom_components/htram_gd32/htram_gd32.cpp)
@@ -116,7 +147,7 @@ Any mismatch causes silent deserialization offset errors. Always commit both tog
 
 ---
 
-## 6. Software Flow Control
+## 7. Software Flow Control
 
 - **No hardware RTS/CTS** wires connect the ESP32 and GD32.
 - **In-band holdoff (`0x04`)**: Before GD32 performs operations that block for $> 20$ ms (e.g. CO2 Modbus poll, 64 KB SPI Flash erase, flash CRC32 computation), it sends `PKT_TYPE_FLOW(0)`. When done, it sends `PKT_TYPE_FLOW(1)`.
