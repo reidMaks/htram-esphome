@@ -103,6 +103,11 @@ script:
     mode: restart
     then: []
 
+  # Extension point: called after LVGL finishes rendering and flushing all dirty areas to the screen
+  - id: on_screen_drawn
+    mode: restart
+    then: []
+
   # One caption line, three facts, rotating every 7 s.
   # Which unit am I looking at? Triple-click and the caption says so for a few
   # seconds, then goes back to its rotation. Nothing permanent is added to the
@@ -475,6 +480,8 @@ lvgl:
   byte_order: big_endian
   bg_color: 0x000000
   refresh_interval: 200ms
+  on_draw_end:
+    - script.execute: on_screen_drawn
   widgets:
     - obj:
         id: ui_root

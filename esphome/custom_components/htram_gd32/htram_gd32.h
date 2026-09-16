@@ -157,6 +157,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void play_rtttl(const std::string &song);  // parse RTTTL, stream to GD32
   void send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *pixel_data, size_t len);
   void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
+  void send_draw_cached_asset_raw(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
   void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 0) {
     this->send_draw_cached_asset(asset_id, x, y, display::ColorUtil::color_to_565(fg_color), display::ColorUtil::color_to_565(bg_color), flags);
   }
@@ -304,12 +305,14 @@ class HtramGd32Display : public display::Display {
 
   void set_simulation_mode(bool sim) { this->simulation_mode_ = sim; }
   bool is_simulation_mode() const { return this->simulation_mode_; }
+
+  void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
+  void clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color = 0);
+
 #ifndef USE_ESP32
   const uint16_t *get_framebuffer() const { return this->framebuffer_; }
   bool dump_ppm(const std::string &path) const;
-  void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
   void render_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
-  void clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color = 0);
 #endif
   void clear_cached_assets() {
     this->cached_assets_.clear();

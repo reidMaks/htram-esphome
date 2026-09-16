@@ -17,6 +17,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: weather_icons_needed
+    type: bool
+    restore_value: false
+    initial_value: "false"
   - id: weather_valid
     type: bool
     restore_value: false
@@ -165,6 +169,76 @@ script:
   - id: refresh_weather_ui
     then:
       - lambda: |-
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) now = id(net_time).now();
+          if (!now.is_valid()) {
+            time_t t = ::time(nullptr);
+            if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
+          }
+          char buf[48];
+          if (now.is_valid()) {
+            static const char *const DAYS[] = {"", "Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"};
+            static const char *const MONTHS[] = {
+                "", "січ", "лют", "бер", "кві", "тра", "чер",
+                "лип", "сер", "вер", "жов", "лис", "гру"};
+            snprintf(buf, sizeof(buf), "%s, %d %s",
+                     DAYS[now.day_of_week >= 1 && now.day_of_week <= 7 ? now.day_of_week : 0],
+                     now.day_of_month,
+                     MONTHS[now.month >= 1 && now.month <= 12 ? now.month : 0]);
+          } else {
+            snprintf(buf, sizeof(buf), "прогноз");
+          }
+          lv_label_set_text(id(ui_weather_title), buf);
+
+          if (!isnan(id(weather_min_temp)) && !isnan(id(weather_max_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f° ... %.0f°",
+                     id(weather_min_temp), id(weather_max_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--° ... --°");
+          }
+          lv_label_set_text(id(ui_weather_range), buf);
+
+          // Колонка 1 (Ранок)
+          snprintf(buf, sizeof(buf), "%d:00", id(weather_morning_hour));
+          lv_label_set_text(id(ui_weather_col1_lbl), buf);
+          if (!isnan(id(weather_morning_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f°", id(weather_morning_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--°");
+          }
+          lv_label_set_text(id(ui_weather_col1_temp), buf);
+
+          // Колонка 2 (День)
+          snprintf(buf, sizeof(buf), "%d:00", id(weather_day_hour));
+          lv_label_set_text(id(ui_weather_col2_lbl), buf);
+          if (!isnan(id(weather_day_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f°", id(weather_day_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--°");
+          }
+          lv_label_set_text(id(ui_weather_col2_temp), buf);
+
+          // Колонка 3 (Вечір)
+          snprintf(buf, sizeof(buf), "%d:00", id(weather_evening_hour));
+          lv_label_set_text(id(ui_weather_col3_lbl), buf);
+          if (!isnan(id(weather_evening_temp))) {
+            snprintf(buf, sizeof(buf), "%.0f°", id(weather_evening_temp));
+          } else {
+            snprintf(buf, sizeof(buf), "--°");
+          }
+          lv_label_set_text(id(ui_weather_col3_temp), buf);
+
+          if (!id(weather_valid)) {
+            lv_label_set_text(id(ui_weather_status), "оновлення...");
+            lv_obj_remove_flag(id(ui_weather_status), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(ui_weather_status), LV_OBJ_FLAG_HIDDEN);
+          }
+
+  - id: draw_weather_icons
+    mode: restart
+    then:
+      - lambda: |-
           auto draw_weather_col = [](int cx, int cy, const std::string &cond, int hour) {
             const bool is_night = (cond == "clear-night") || (hour >= 21 || hour < 6);
             uint16_t asset1 = is_night ? htram_gd32::ASSET_ID_WEATHER_CLEARNIGHT : htram_gd32::ASSET_ID_WEATHER_SUNNY;
@@ -214,80 +288,18 @@ script:
               color1 = 0x38BDF8;
             }
 
-            id(htram_core)->send_draw_cached_asset_centered(asset1, cx, cy, Color(color1), Color(0x000000), 1);
+            // Шар 1 (сонце/місяць/хмара): непрозорий режим (flags = 0, bg = 0x000000)
+            // повністю затирає залишки старих цифр годинника у прямокутнику 36x36
+            id(htram_core)->send_draw_cached_asset_centered(asset1, cx, cy, Color(color1), Color(0x000000), 0);
+            // Шар 2 (хмарка над сонцем, краплі дощу, блискавка): прозорий режим (flags = 1) поверх шару 1
             if (asset2 >= 0) {
               id(htram_core)->send_draw_cached_asset_centered((uint16_t) asset2, cx, cy, Color(color2), Color(0x000000), 1);
             }
           };
 
-          auto now = id(ha_time).now();
-          if (!now.is_valid()) now = id(net_time).now();
-          if (!now.is_valid()) {
-            time_t t = ::time(nullptr);
-            if (t > 1700000000) now = esphome::ESPTime::from_epoch_local(t);
-          }
-          char buf[48];
-          if (now.is_valid()) {
-            static const char *const DAYS[] = {"", "Нд", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"};
-            static const char *const MONTHS[] = {
-                "", "січ", "лют", "бер", "кві", "тра", "чер",
-                "лип", "сер", "вер", "жов", "лис", "гру"};
-            snprintf(buf, sizeof(buf), "%s, %d %s",
-                     DAYS[now.day_of_week >= 1 && now.day_of_week <= 7 ? now.day_of_week : 0],
-                     now.day_of_month,
-                     MONTHS[now.month >= 1 && now.month <= 12 ? now.month : 0]);
-          } else {
-            snprintf(buf, sizeof(buf), "прогноз");
-          }
-          lv_label_set_text(id(ui_weather_title), buf);
-
-          if (!isnan(id(weather_min_temp)) && !isnan(id(weather_max_temp))) {
-            snprintf(buf, sizeof(buf), "%.0f° ... %.0f°",
-                     id(weather_min_temp), id(weather_max_temp));
-          } else {
-            snprintf(buf, sizeof(buf), "--° ... --°");
-          }
-          lv_label_set_text(id(ui_weather_range), buf);
-
-          // Колонка 1 (Ранок)
-          snprintf(buf, sizeof(buf), "%d:00", id(weather_morning_hour));
-          lv_label_set_text(id(ui_weather_col1_lbl), buf);
-          if (!isnan(id(weather_morning_temp))) {
-            snprintf(buf, sizeof(buf), "%.0f°", id(weather_morning_temp));
-          } else {
-            snprintf(buf, sizeof(buf), "--°");
-          }
-          lv_label_set_text(id(ui_weather_col1_temp), buf);
           draw_weather_col(54, 138, id(weather_morning_cond), id(weather_morning_hour));
-
-          // Колонка 2 (День)
-          snprintf(buf, sizeof(buf), "%d:00", id(weather_day_hour));
-          lv_label_set_text(id(ui_weather_col2_lbl), buf);
-          if (!isnan(id(weather_day_temp))) {
-            snprintf(buf, sizeof(buf), "%.0f°", id(weather_day_temp));
-          } else {
-            snprintf(buf, sizeof(buf), "--°");
-          }
-          lv_label_set_text(id(ui_weather_col2_temp), buf);
           draw_weather_col(120, 166, id(weather_day_cond), id(weather_day_hour));
-
-          // Колонка 3 (Вечір)
-          snprintf(buf, sizeof(buf), "%d:00", id(weather_evening_hour));
-          lv_label_set_text(id(ui_weather_col3_lbl), buf);
-          if (!isnan(id(weather_evening_temp))) {
-            snprintf(buf, sizeof(buf), "%.0f°", id(weather_evening_temp));
-          } else {
-            snprintf(buf, sizeof(buf), "--°");
-          }
-          lv_label_set_text(id(ui_weather_col3_temp), buf);
           draw_weather_col(186, 138, id(weather_evening_cond), id(weather_evening_hour));
-
-          if (!id(weather_valid)) {
-            lv_label_set_text(id(ui_weather_status), "оновлення...");
-            lv_obj_remove_flag(id(ui_weather_status), LV_OBJ_FLAG_HIDDEN);
-          } else {
-            lv_obj_add_flag(id(ui_weather_status), LV_OBJ_FLAG_HIDDEN);
-          }
 
   - id: fetch_weather_forecast
     mode: restart
@@ -386,7 +398,9 @@ script:
                                id(weather_evening_hour), id(weather_evening_temp), id(weather_evening_cond).c_str());
 
                       if (id(weather_shown)) {
+                        id(weather_icons_needed) = true;
                         id(refresh_weather_ui).execute();
+                        lv_obj_invalidate(id(ui_weather_face));
                       }
                 on_error:
                   - lambda: |-
@@ -413,6 +427,7 @@ script:
             return;
           }
           id(weather_shown) = true;
+          id(weather_icons_needed) = true;
           id(face_state) = -1;
           lv_obj_t *const hide[] = {
               id(ui_face_root), id(ui_pocket), id(ui_msg),
@@ -432,6 +447,7 @@ script:
       - script.stop: hide_weather_timeout
       - lambda: |-
           id(weather_shown) = false;
+          id(weather_icons_needed) = false;
           id(htram_arbiter_hub)->release_screen("weather");
           id(htram_core)->clear_cached_assets();
           lv_obj_add_flag(id(ui_weather_face), LV_OBJ_FLAG_HIDDEN);
@@ -443,6 +459,14 @@ script:
       - script.execute: refresh_pocket
 
   # Точки інтеграції
+  - id: !extend on_screen_drawn
+    then:
+      - lambda: |-
+          if (id(weather_shown) && id(weather_icons_needed)) {
+            id(weather_icons_needed) = false;
+            id(draw_weather_icons).execute();
+          }
+
   - id: !extend on_face_changed
     then:
       - lambda: |-

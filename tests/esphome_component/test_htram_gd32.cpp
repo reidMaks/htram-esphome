@@ -1047,6 +1047,41 @@ void test_display_pixel_drawing(void) {
   g_comp->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
   g_comp->clear_cached_assets();
   g_comp->send_clear_rect(0, 0, 10, 10, 0);
+
+  // Test raw cached asset drawing and clean draw_pixels_at
+  disp.set_simulation_mode(false);
+  g_comp->mock_clear_tx();
+  g_comp->send_draw_cached_asset_raw(htram_gd32::ASSET_ID_BELL, 10, 10, 0xFF9E, 0x0000, 1);
+  bool found_asset = false;
+  for (size_t i = 0; i + 14 <= g_comp->mock_tx_bytes.size(); i++) {
+    if (g_comp->mock_tx_bytes[i] == 0xAA && g_comp->mock_tx_bytes[i + 1] == 0x55 &&
+        g_comp->mock_tx_bytes[i + 2] == 0x15) {
+      uint16_t id = g_comp->mock_tx_bytes[i + 3] | (g_comp->mock_tx_bytes[i + 4] << 8);
+      if (id == htram_gd32::ASSET_ID_BELL) {
+        found_asset = true;
+        break;
+      }
+    }
+  }
+  TEST_ASSERT_TRUE(found_asset);
+
+  // Flush dirty rectangle [0, 0, 50, 50] - verify clean flush without mid-stream asset re-blits
+  g_comp->mock_clear_tx();
+  uint8_t dirty_buf[50 * 50 * 2] = {0};
+  disp.draw_pixels_at(0, 0, 50, 50, dirty_buf, display::COLOR_ORDER_RGB, display::COLOR_BITNESS_565, true, 0, 0, 0);
+  bool found_draw_rect = false;
+  bool found_asset_cmd = false;
+  for (size_t i = 0; i + 3 <= g_comp->mock_tx_bytes.size(); i++) {
+    if (g_comp->mock_tx_bytes[i] == 0xAA && g_comp->mock_tx_bytes[i + 1] == 0x55) {
+      if (g_comp->mock_tx_bytes[i + 2] == 0x10)
+        found_draw_rect = true;
+      if (g_comp->mock_tx_bytes[i + 2] == 0x15)
+        found_asset_cmd = true;
+    }
+  }
+  TEST_ASSERT_TRUE(found_draw_rect);
+  TEST_ASSERT_FALSE(found_asset_cmd);
+  g_comp->clear_cached_assets();
 }
 
 // ---------------------------------------------------------------------------

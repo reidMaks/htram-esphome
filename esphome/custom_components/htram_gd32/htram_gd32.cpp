@@ -1281,12 +1281,16 @@ void HtramGd32Component::send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t
 void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y,
                                                 uint16_t fg_color, uint16_t bg_color,
                                                 uint8_t flags) {
-#ifndef USE_ESP32
   if (this->display_ != nullptr) {
     this->display_->draw_cached_asset_to_fb(asset_id, x, y, fg_color, bg_color, flags);
     if (this->display_->is_simulation_mode()) return;
   }
-#endif
+  this->send_draw_cached_asset_raw(asset_id, x, y, fg_color, bg_color, flags);
+}
+
+void HtramGd32Component::send_draw_cached_asset_raw(uint16_t asset_id, uint8_t x, uint8_t y,
+                                                    uint16_t fg_color, uint16_t bg_color,
+                                                    uint8_t flags) {
   if (ota_mode_) return;
   uint8_t pkt[14];
   pkt[0] = 0xAA;
@@ -1308,12 +1312,10 @@ void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, ui
 }
 
 void HtramGd32Component::send_clear_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
-#ifndef USE_ESP32
   if (this->display_ != nullptr) {
     this->display_->clear_rect_fb(x, y, w, h, color);
     if (this->display_->is_simulation_mode()) return;
   }
-#endif
   if (ota_mode_) return;
   if (w == 0 || h == 0) return;
   std::vector<uint8_t> buf((size_t) w * h * 2, 0);
@@ -1460,12 +1462,13 @@ struct FlashAssetEntry {
   char name[32];
 } __attribute__((packed));
 
-#ifndef USE_ESP32
 void HtramGd32Display::draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y,
                                                uint16_t fg_color, uint16_t bg_color,
                                                uint8_t flags) {
   if (fg_color == 0 && bg_color == 0 && (flags & 1) == 0) {
+#ifndef USE_ESP32
     this->render_asset_to_fb(asset_id, x, y, 0, 0, 0);
+#endif
     for (auto it = this->cached_assets_.begin(); it != this->cached_assets_.end(); ) {
       if (it->asset_id == asset_id && it->x == x && it->y == y) {
         it = this->cached_assets_.erase(it);
@@ -1488,10 +1491,13 @@ void HtramGd32Display::draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uin
     this->cached_assets_.push_back({asset_id, x, y, fg_color, bg_color, flags, true});
   }
 
+#ifndef USE_ESP32
   this->render_asset_to_fb(asset_id, x, y, fg_color, bg_color, flags);
+#endif
 }
 
 void HtramGd32Display::clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color) {
+#ifndef USE_ESP32
   for (int r = 0; r < h; r++) {
     int py = y + r;
     if (py < 0 || py >= 240) continue;
@@ -1501,6 +1507,7 @@ void HtramGd32Display::clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
       this->framebuffer_[py * 240 + px] = color;
     }
   }
+#endif
   for (auto it = this->cached_assets_.begin(); it != this->cached_assets_.end(); ) {
     if (it->x >= x && it->x < x + w && it->y >= y && it->y < y + h) {
       it = this->cached_assets_.erase(it);
@@ -1509,6 +1516,8 @@ void HtramGd32Display::clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
     }
   }
 }
+
+#ifndef USE_ESP32
 
 void HtramGd32Display::render_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y,
                                           uint16_t fg_color, uint16_t bg_color,
