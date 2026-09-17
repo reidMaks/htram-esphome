@@ -98,6 +98,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: alert_icon_needed
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 script:
   - id: play_alert_sound
@@ -138,9 +142,11 @@ script:
             id(htram_core)->send_draw_cached_asset_centered(
                 asset_id, 190, 86, Color(0xE5484D), Color(0x000000), 1);
             id(alert_icon_drawn_asset) = (int) asset_id;
+            id(alert_icon_needed) = true;
           } else if (id(alert_icon_drawn_asset) >= 0) {
             id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
             id(alert_icon_drawn_asset) = -1;
+            id(alert_icon_needed) = false;
           }
 
   - id: refresh_alert_marks
@@ -177,6 +183,19 @@ script:
             }
           } else {
             id(refresh_alert_icon).execute();
+          }
+
+  - id: !extend on_screen_drawn
+    then:
+      - lambda: |-
+          if (id(alert_icon_needed)) {
+            id(alert_icon_needed) = false;
+            const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
+            const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+            if (can_show && id(alert_icon_drawn_asset) >= 0) {
+              id(htram_core)->send_draw_cached_asset_centered(
+                  (uint16_t) id(alert_icon_drawn_asset), 190, 86, Color(0xE5484D), Color(0x000000), 1);
+            }
           }
 
 interval:

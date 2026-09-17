@@ -29,6 +29,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: alarm_bell_needed
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 lvgl:
   widgets:
@@ -158,9 +162,11 @@ script:
             id(htram_core)->send_draw_cached_asset_centered(
                 htram_gd32::ASSET_ID_BELL, 190, 86, Color(c), Color(0x000000), 1);
             id(alarm_bell_drawn) = true;
+            id(alarm_bell_needed) = true;
           } else if (id(alarm_bell_drawn)) {
             id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
             id(alarm_bell_drawn) = false;
+            id(alarm_bell_needed) = false;
           }
 
   - id: alarm_ring
@@ -237,6 +243,23 @@ script:
   - id: !extend on_alert_changed
     then:
       - script.execute: refresh_alarm_ui
+
+  - id: !extend on_screen_drawn
+    then:
+      - lambda: |-
+          if (id(alarm_bell_needed)) {
+            id(alarm_bell_needed) = false;
+            const bool ringing = id(alarm_ringing);
+            const bool snoozing = id(alarm_snoozing);
+            const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
+            const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+            if (can_show && (ringing || snoozing)) {
+              const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
+              id(htram_core)->send_draw_cached_asset_centered(
+                  htram_gd32::ASSET_ID_BELL, 190, 86, Color(c), Color(0x000000), 1);
+              id(alarm_bell_drawn) = true;
+            }
+          }
 
 esphome:
   on_boot:
