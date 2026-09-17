@@ -1755,12 +1755,8 @@ void HtramGd32Display::render_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t 
 }
 
 bool HtramGd32Display::dump_ppm(const std::string &path) const {
-  for (const auto &a : this->cached_assets_) {
-    if (a.active) {
-      const_cast<HtramGd32Display *>(this)->render_asset_to_fb(
-          a.asset_id, a.x, a.y, a.fg_color, a.bg_color, a.flags);
-    }
-  }
+  // Dump exact framebuffer state without artificial re-blitting, ensuring
+  // hardware ST7789 fidelity (catches any unintended LVGL dirty flush overwrites).
   FILE *f = fopen(path.c_str(), "wb");
   if (!f) {
     ESP_LOGE(TAG, "Failed to open '%s' for screenshot PPM write", path.c_str());
