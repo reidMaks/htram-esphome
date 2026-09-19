@@ -130,13 +130,7 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           else
             # Extract version from protocol.h (e.g. 0x0130 -> v1.3.0)
-            tag=$(python3 -c "
-            import re
-            content = open('inc/protocol.h').read()
-            m = re.search(r'#define\s+GD32_FW_VERSION\s+0x([0-9a-fA-F]+)', content)
-            val = int(m.group(1), 16)
-            print(f'v{(val >> 8) & 0xFF}.{(val >> 4) & 0x0F}.{val & 0x0F}')
-            ")
+            tag=$(python3 -c "import re; m = re.search(r'#define\s+GD32_FW_VERSION\s+0x([0-9a-fA-F]+)', open('inc/protocol.h').read()); val = int(m.group(1), 16); print(f'v{(val >> 8) & 0xFF}.{(val >> 4) & 0x0F}.{val & 0x0F}')")
             # If release already exists on GitHub, skip creation on main push
             if gh release view "$tag" >/dev/null 2>&1; then
               echo "Release $tag already exists on GitHub; skipping automatic release creation on main push."
