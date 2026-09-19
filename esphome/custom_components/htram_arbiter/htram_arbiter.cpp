@@ -55,6 +55,9 @@ std::string HtramArbiter::get_active_context() const {
   if (this->screen_mode_ != SCREEN_CLOCK) {
     return "modal_" + this->screen_owner_;
   }
+  if (this->snooze_active_) {
+    return "snooze";
+  }
   return "clock";
 }
 
@@ -78,6 +81,8 @@ bool HtramArbiter::dispatch_event_for_context(const std::string &event, const st
     } else if (h.context == "modal" && ctx.rfind("modal_", 0) == 0) {
       match = true;
     } else if (h.context == "ringing" && ctx.rfind("ringing_", 0) == 0) {
+      match = true;
+    } else if (h.context == "clock" && ctx == "snooze") {
       match = true;
     }
 
@@ -110,6 +115,11 @@ void HtramArbiter::set_silence_sacred(bool active) {
 void HtramArbiter::set_silence_test(bool active) {
   this->silence_test_ = active;
   ESP_LOGI(TAG, "Silence test mode set to %s", active ? "TRUE" : "FALSE");
+}
+
+void HtramArbiter::set_snooze(bool active) {
+  this->snooze_active_ = active;
+  ESP_LOGI(TAG, "Snooze active mode set to %s", active ? "TRUE" : "FALSE");
 }
 
 bool HtramArbiter::play_rtttl(int priority, const std::string &owner, const std::string &song) {

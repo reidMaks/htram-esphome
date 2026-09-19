@@ -35,7 +35,27 @@ text_sensor:
     icon: "mdi:state-machine"
     entity_category: diagnostic
     lambda: return id(htram_arbiter_hub)->get_active_context();
-    update_interval: 1s
+    update_interval: 100ms
+
+  - platform: template
+    id: alarm_state_sensor
+    name: "Alarm State"
+    icon: "mdi:alarm-check"
+    entity_category: diagnostic
+    lambda: |-
+      if (id(alarm_ringing)) return std::string("ringing");
+      if (id(alarm_snoozing)) return std::string("snoozing");
+      return std::string("idle");
+    update_interval: 100ms
+
+  - platform: template
+    id: alarm_bell_drawn_sensor
+    name: "Alarm Bell Drawn"
+    icon: "mdi:bell"
+    entity_category: diagnostic
+    lambda: |-
+      return id(alarm_bell_drawn) ? std::string("true") : std::string("false");
+    update_interval: 100ms
 
 button:
   - platform: template

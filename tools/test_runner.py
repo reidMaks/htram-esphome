@@ -45,6 +45,28 @@ def count_clock_digit_colors(png_path: Path) -> dict[str, int]:
     return {"reds": reds, "greens": greens, "whites": whites}
 
 
+def count_pocket_icon_pixels(png_path: Path) -> dict[str, int]:
+    """Counts non-black and colored pixels in pocket area (175..205, 71..101)."""
+    im = Image.open(png_path).convert("RGB")
+    pix = im.load()
+    reds, oranges, grays, total_lit = 0, 0, 0, 0
+    if pix is not None:
+        for y in range(71, 102):
+            for x in range(175, 206):
+                p = pix[x, y]
+                if isinstance(p, tuple) and len(p) >= 3:
+                    r, g, b = int(p[0]), int(p[1]), int(p[2])
+                    if r > 30 or g > 30 or b > 30:
+                        total_lit += 1
+                    if r > 180 and g < 100 and b < 100:
+                        reds += 1
+                    elif r > 200 and g > 120 and b < 80:
+                        oranges += 1
+                    elif 90 < r < 150 and 90 < g < 150 and 90 < b < 150:
+                        grays += 1
+    return {"reds": reds, "oranges": oranges, "grays": grays, "total_lit": total_lit}
+
+
 class SimulationHarness:
     """Manages the lifecycle and API communication with the host simulator."""
 
@@ -55,7 +77,16 @@ class SimulationHarness:
         self.client: APIClient | None = None
         self.services: dict[str, Any] = {}
         self.entities: dict[str, Any] = {}
+        self.key_to_name: dict[int, str] = {}
         self.states: dict[str, Any] = {}
+
+    def _on_state_change(self, state: Any) -> None:
+        key = getattr(state, "key", 0)
+        name = self.key_to_name.get(key)
+        if name:
+            val = getattr(state, "state", None)
+            if val is not None:
+                self.states[name] = val
 
     def ensure_binary(self) -> None:
         """Ensures the simulator binary is compiled."""
@@ -92,9 +123,34 @@ class SimulationHarness:
         entities_list, services_list = await self.client.list_entities_services()
         self.services = {s.name: s for s in services_list}
         self.entities = {getattr(e, "name", ""): e for e in entities_list}
+        self.key_to_name = {getattr(e, "key", 0): getattr(e, "name", "") for e in entities_list}
+        self.client.subscribe_states(self._on_state_change)
         print(
             f"[*] Connected! Discovered {len(self.services)} services, {len(self.entities)} entities."
         )
+
+    async def get_state(self, name: str) -> Any:
+        return self.states.get(name)
+
+    async def wait_for_state(self, name: str, target: Any, timeout: float = 3.0) -> bool:
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < timeout:
+            if self.states.get(name) == target:
+                return True
+            await asyncio.sleep(0.05)
+        return self.states.get(name) == target
+
+    async def get_alarm_state(self) -> str:
+        return str(self.states.get("Alarm State", "idle"))
+
+    async def wait_alarm_state(self, target: str, timeout: float = 3.0) -> bool:
+        return await self.wait_for_state("Alarm State", target, timeout)
+
+    async def get_arbiter_context(self) -> str:
+        return str(self.states.get("Arbiter Context", "clock"))
+
+    async def wait_arbiter_context(self, target: str, timeout: float = 3.0) -> bool:
+        return await self.wait_for_state("Arbiter Context", target, timeout)
 
     async def stop(self) -> None:
         """Disconnects API and terminates simulator process."""
@@ -681,6 +737,456 @@ async def run_test_suite() -> bool:
             )
         except Exception as e:
             results.append(("int_08_alert_clear_auto_expiry", False, str(e)))
+
+        # ==========================================
+        # ALARM GESTURE & LIFECYCLE TESTS (TDD)
+        # ==========================================
+
+        # Alarm Test 1: Ringing and Single Click Snooze
+        print("\n--- Alarm Test 1: Ringing and Single Click Snooze ---")
+        try:
+            # Clean base
+            await harness.dismiss_alarm()
+            await harness.call_service("cancel_timer")
+            await asyncio.sleep(0.3)
+
+            await harness.ring_alarm()
+            assert await harness.wait_alarm_state("ringing", timeout=2.0), (
+                f"Expected alarm to be ringing, got {await harness.get_alarm_state()}"
+            )
+            assert await harness.wait_arbiter_context("ringing_alarm", timeout=2.0), (
+                f"Expected context ringing_alarm, got {await harness.get_arbiter_context()}"
+            )
+            assert await harness.wait_for_state("Alarm Bell Drawn", "true", timeout=2.0), (
+                "Expected bell icon to be drawn in pocket during ringing"
+            )
+            png_ring = await harness.capture_screenshot("alarm_01_ringing")
+            assert png_ring.exists() and png_ring.stat().st_size > 1000
+
+            # Single click snoozes the alarm
+            await harness.inject_button("single")
+            assert await harness.wait_alarm_state("snoozing", timeout=2.0), (
+                f"Expected alarm to be snoozing after single click, got {await harness.get_alarm_state()}"
+            )
+            # Bell icon should STILL be drawn in pocket during snooze
+            assert await harness.wait_for_state("Alarm Bell Drawn", "true", timeout=2.0), (
+                "Expected bell icon to remain drawn in pocket during snooze"
+            )
+            png_snooze = await harness.capture_screenshot("alarm_01_snoozing")
+            assert png_snooze.exists() and png_snooze.stat().st_size > 1000
+
+            results.append(
+                (
+                    "alarm_01_ring_and_snooze",
+                    True,
+                    "Alarm rings, displays pocket bell icon, and transitions to snooze on single click",
+                )
+            )
+        except Exception as e:
+            results.append(("alarm_01_ring_and_snooze", False, str(e)))
+
+        # Alarm Test 2: Double Click During Snooze Dismisses Alarm (Bug Reproduction)
+        print("\n--- Alarm Test 2: Double Click During Snooze Dismisses Alarm ---")
+        try:
+            # Ensure alarm is currently snoozing
+            if await harness.get_alarm_state() != "snoozing":
+                await harness.ring_alarm()
+                await harness.wait_alarm_state("ringing")
+                await harness.inject_button("single")
+                await harness.wait_alarm_state("snoozing")
+
+            # User double clicks the physical button while alarm is snoozed
+            await harness.inject_button("double")
+
+            # EXPECTED BEHAVIOR:
+            # Snoozed alarm MUST be dismissed (Alarm State == "idle")
+            # Bell icon must be cleared (Alarm Bell Drawn == False)
+            dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
+            bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
+            current_state = await harness.get_alarm_state()
+            current_ctx = await harness.get_arbiter_context()
+
+            assert dismissed, (
+                f"Double click failed to dismiss snoozed alarm! State: '{current_state}', Context: '{current_ctx}'"
+            )
+            assert bell_cleared, "Alarm bell icon was not cleared after snooze dismissal!"
+
+            png_dismiss = await harness.capture_screenshot("alarm_02_snooze_dismissed_double")
+            assert png_dismiss.exists() and png_dismiss.stat().st_size > 1000
+            results.append(
+                (
+                    "alarm_02_snooze_double_click_dismiss",
+                    True,
+                    "Double click while alarm is snoozed cleanly dismisses the alarm",
+                )
+            )
+        except Exception as e:
+            results.append(("alarm_02_snooze_double_click_dismiss", False, str(e)))
+        finally:
+            await harness.dismiss_alarm()
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+
+        # Alarm Test 3: Long Click During Snooze Dismisses Alarm (Bug Reproduction)
+        print("\n--- Alarm Test 3: Long Click During Snooze Dismisses Alarm ---")
+        try:
+            # Ring and snooze
+            await harness.ring_alarm()
+            await harness.wait_alarm_state("ringing")
+            await harness.inject_button("single")
+            await harness.wait_alarm_state("snoozing")
+
+            # User long presses the physical button while alarm is snoozed
+            await harness.inject_button("long")
+
+            # EXPECTED BEHAVIOR:
+            # Snoozed alarm MUST be dismissed without arming kitchen timer!
+            dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
+            bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
+            current_state = await harness.get_alarm_state()
+            current_ctx = await harness.get_arbiter_context()
+
+            assert dismissed, (
+                f"Long click failed to dismiss snoozed alarm! State: '{current_state}', Context: '{current_ctx}'"
+            )
+            assert current_ctx != "modal_timer", "Long click during snooze erroneously armed timer modal!"
+            assert bell_cleared, "Alarm bell icon was not cleared after snooze dismissal!"
+
+            png_dismiss_long = await harness.capture_screenshot("alarm_03_snooze_dismissed_long")
+            assert png_dismiss_long.exists() and png_dismiss_long.stat().st_size > 1000
+            results.append(
+                (
+                    "alarm_03_snooze_long_click_dismiss",
+                    True,
+                    "Long click while alarm is snoozed cleanly dismisses alarm without arming timer",
+                )
+            )
+        except Exception as e:
+            results.append(("alarm_03_snooze_long_click_dismiss", False, str(e)))
+        finally:
+            await harness.dismiss_alarm()
+            await harness.call_service("cancel_timer")
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+
+        # Alarm Test 4: Single Click During Snooze Does NOT Dismiss Alarm
+        print("\n--- Alarm Test 4: Single Click During Snooze Does NOT Dismiss Alarm ---")
+        try:
+            await harness.ring_alarm()
+            await harness.wait_alarm_state("ringing")
+            await harness.inject_button("single")
+            await harness.wait_alarm_state("snoozing")
+
+            # Single click while already snoozing should cycle slot or keep snoozing, NOT dismiss!
+            await harness.inject_button("single")
+            await asyncio.sleep(0.5)
+
+            current_state = await harness.get_alarm_state()
+            assert current_state == "snoozing", (
+                f"Single click during snooze unexpectedly changed state to '{current_state}' (should stay snoozing)"
+            )
+            results.append(
+                (
+                    "alarm_04_snooze_single_click_preserves_snooze",
+                    True,
+                    "Single click during snooze does not dismiss alarm (preserves snooze)",
+                )
+            )
+        except Exception as e:
+            results.append(("alarm_04_snooze_single_click_preserves_snooze", False, str(e)))
+        finally:
+            await harness.dismiss_alarm()
+            await asyncio.sleep(0.3)
+
+        # Alarm Test 5: Double Click During Ringing Dismisses Immediately
+        print("\n--- Alarm Test 5: Double Click During Ringing Dismisses Immediately ---")
+        try:
+            await harness.ring_alarm()
+            await harness.wait_alarm_state("ringing")
+
+            await harness.inject_button("double")
+            dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
+            bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
+            assert dismissed, f"Double click failed to dismiss ringing alarm, state: {await harness.get_alarm_state()}"
+            assert bell_cleared, "Bell icon not cleared after ringing dismissal"
+            results.append(
+                (
+                    "alarm_05_ringing_double_click_dismiss",
+                    True,
+                    "Double click while alarm is ringing immediately dismisses alarm and clears bell",
+                )
+            )
+        except Exception as e:
+            results.append(("alarm_05_ringing_double_click_dismiss", False, str(e)))
+        finally:
+            await harness.dismiss_alarm()
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+
+        # Alarm Test 6: Long Click During Ringing Dismisses Immediately
+        print("\n--- Alarm Test 6: Long Click During Ringing Dismisses Immediately ---")
+        try:
+            await harness.ring_alarm()
+            await harness.wait_alarm_state("ringing")
+
+            await harness.inject_button("long")
+            dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
+            bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
+            assert dismissed, f"Long click failed to dismiss ringing alarm, state: {await harness.get_alarm_state()}"
+            assert bell_cleared, "Bell icon not cleared after ringing dismissal"
+            results.append(
+                (
+                    "alarm_06_ringing_long_click_dismiss",
+                    True,
+                    "Long click while alarm is ringing immediately dismisses alarm and clears bell",
+                )
+            )
+        except Exception as e:
+            results.append(("alarm_06_ringing_long_click_dismiss", False, str(e)))
+        finally:
+            await harness.dismiss_alarm()
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+
+        # ==========================================
+        # CROSS-FEATURE & GESTURE INTERACTION TESTS (TDD)
+        # ==========================================
+
+        # Cross Test 1: Alert Pocket Icon Preserved on Timer Start (Bug Reproduction)
+        print("\n--- Cross Test 1: Alert Pocket Icon Preserved on Timer Start ---")
+        try:
+            # Clean base
+            await harness.simulate_alert(flags=0)
+            await harness.call_service("cancel_timer")
+            await harness.dismiss_alarm()
+            await asyncio.sleep(0.3)
+
+            # Alert active with ballistic threat
+            await harness.simulate_alert(flags=257)
+            await asyncio.sleep(0.4)
+            png_alert_init = await harness.capture_screenshot("cross_01_alert_init")
+            colors_init = count_pocket_icon_pixels(png_alert_init)
+            assert colors_init["reds"] > 20, f"Expected red alert icon in pocket, got {colors_init}"
+
+            # Start kitchen timer: bezel arc ui_timer_tick must NOT erase alert icon!
+            await harness.call_service("start_timer", {"minutes": 15, "seconds": 0})
+            await asyncio.sleep(0.4)
+            png_alert_timer = await harness.capture_screenshot("cross_01_alert_with_timer")
+            colors_timer = count_pocket_icon_pixels(png_alert_timer)
+            assert colors_timer["reds"] > 20, (
+                f"Alert threat icon was erased by timer bezel tick! Pocket colors: {colors_timer}"
+            )
+            results.append(
+                (
+                    "cross_01_alert_preserved_on_timer",
+                    True,
+                    "Alert threat icon in pocket is preserved when kitchen timer starts and runs",
+                )
+            )
+        except Exception as e:
+            results.append(("cross_01_alert_preserved_on_timer", False, str(e)))
+        finally:
+            await harness.simulate_alert(flags=0)
+            await harness.call_service("cancel_timer")
+            await harness.reset_alert_marks()
+            await asyncio.sleep(0.3)
+
+        # Cross Test 2: Alarm Snooze Bell Restored After Alert Clears (Bug Reproduction)
+        print("\n--- Cross Test 2: Alarm Snooze Bell Restored After Alert Clears ---")
+        try:
+            # Start ringing alarm and snooze it
+            await harness.ring_alarm()
+            await harness.wait_alarm_state("ringing")
+            await harness.wait_arbiter_context("ringing_alarm")
+            await harness.inject_button("single")
+            await harness.wait_alarm_state("snoozing")
+            await asyncio.sleep(0.3)
+
+            png_snooze_init = await harness.capture_screenshot("cross_02_snooze_init")
+            colors_snooze = count_pocket_icon_pixels(png_snooze_init)
+            assert colors_snooze["grays"] > 20, f"Expected gray bell during snooze, got {colors_snooze}"
+
+            # Alert arrives while snooze is active: alert threat takes priority over bell
+            await harness.simulate_alert(flags=257)
+            await asyncio.sleep(0.4)
+            png_alert_snooze = await harness.capture_screenshot("cross_02_alert_over_snooze")
+            colors_alert = count_pocket_icon_pixels(png_alert_snooze)
+            assert colors_alert["reds"] > 20, f"Expected red alert to preempt snooze bell, got {colors_alert}"
+
+            # Alert clears: snooze bell MUST be restored in the pocket!
+            await harness.simulate_alert(flags=0)
+            await asyncio.sleep(0.5)
+            png_restored = await harness.capture_screenshot("cross_02_snooze_restored")
+            colors_restored = count_pocket_icon_pixels(png_restored)
+            assert colors_restored["grays"] > 20, (
+                f"Snooze bell icon was NOT restored after alert cleared! Pocket colors: {colors_restored}"
+            )
+            results.append(
+                (
+                    "cross_02_snooze_restored_after_alert",
+                    True,
+                    "Snooze bell icon is restored in pocket when active alert clears",
+                )
+            )
+        except Exception as e:
+            results.append(("cross_02_snooze_restored_after_alert", False, str(e)))
+        finally:
+            await harness.simulate_alert(flags=0)
+            await harness.reset_alert_marks()
+            await harness.dismiss_alarm()
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+
+        # Cross Test 3: All Threat Types Render Correctly in Pocket
+        print("\n--- Cross Test 3: All Threat Types Render Correctly in Pocket ---")
+        try:
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            assert (await harness.get_arbiter_context()) == "clock"
+
+            threats = [
+                ("air_raid", 1),
+                ("drone", 1 | 32),
+                ("missile", 1 | 64),
+                ("kab", 1 | 128),
+                ("ballistic", 1 | 256),
+            ]
+            for name, flags in threats:
+                await harness.simulate_alert(flags=flags)
+                await asyncio.sleep(0.3)
+                png = await harness.capture_screenshot(f"cross_03_threat_{name}")
+                colors = count_pocket_icon_pixels(png)
+                assert colors["reds"] > 15, f"Threat '{name}' failed to render red icon in pocket: {colors}"
+
+            # Clear alert
+            await harness.simulate_alert(flags=0)
+            await asyncio.sleep(0.3)
+            png_clear = await harness.capture_screenshot("cross_03_threat_cleared")
+            colors_clear = count_pocket_icon_pixels(png_clear)
+            assert colors_clear["total_lit"] == 0, f"Threat icon was not cleared on all-clear: {colors_clear}"
+
+            results.append(
+                (
+                    "cross_03_threat_types_rendering",
+                    True,
+                    "All threat types (air raid, drone, missile, KAB, ballistic) render red pocket icon",
+                )
+            )
+        except Exception as e:
+            results.append(("cross_03_threat_types_rendering", False, str(e)))
+        finally:
+            await harness.simulate_alert(flags=0)
+            await harness.reset_alert_marks()
+            await asyncio.sleep(0.3)
+
+        # Cross Test 4: Timer Arming Single Click Cycles Presets
+        print("\n--- Cross Test 4: Timer Arming Single Click Cycles Presets ---")
+        try:
+            # Clean base
+            await harness.call_service("cancel_timer")
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            assert (await harness.get_arbiter_context()) == "clock"
+            await asyncio.sleep(0.3)
+
+            # Long press arms timer (preset 0: 1 min)
+            await harness.inject_button("long")
+            await asyncio.sleep(0.3)
+            assert (await harness.get_arbiter_context()) == "modal_timer"
+
+            # Single click cycles to preset 1 (3 min)
+            await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+            png_p1 = await harness.capture_screenshot("cross_04_timer_preset_3m")
+            assert png_p1.exists()
+
+            # Single click cycles to preset 2 (5 min)
+            await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+            png_p2 = await harness.capture_screenshot("cross_04_timer_preset_5m")
+            assert png_p2.exists()
+
+            # Long click cancels arming back to clock
+            await harness.inject_button("long")
+            await asyncio.sleep(0.3)
+            assert (await harness.get_arbiter_context()) == "clock"
+
+            results.append(
+                (
+                    "cross_04_timer_preset_cycling",
+                    True,
+                    "Timer arming single click cycles presets (1m -> 3m -> 5m) and long press cancels",
+                )
+            )
+        except Exception as e:
+            results.append(("cross_04_timer_preset_cycling", False, str(e)))
+        finally:
+            await harness.call_service("cancel_timer")
+            await asyncio.sleep(0.3)
+
+        # Cross Test 5: Timer Buzzer Dismissed by Single Click
+        print("\n--- Cross Test 5: Timer Buzzer Dismissed by Single Click ---")
+        try:
+            await harness.ring_timer()
+            await asyncio.sleep(0.3)
+            assert (await harness.get_arbiter_context()) == "ringing_timer"
+
+            # Single click dismisses timer buzzer back to clock
+            await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+            assert (await harness.get_arbiter_context()) == "clock"
+
+            results.append(
+                (
+                    "cross_05_timer_buzzer_dismiss",
+                    True,
+                    "Timer ringing buzzer dismissed by single click back to clock",
+                )
+            )
+        except Exception as e:
+            results.append(("cross_05_timer_buzzer_dismiss", False, str(e)))
+        finally:
+            await harness.call_service("cancel_timer")
+            await asyncio.sleep(0.3)
+
+        # Cross Test 6: Morning Weather Auto-Opened on Alarm Dismiss
+        print("\n--- Cross Test 6: Morning Weather Auto-Opened on Alarm Dismiss ---")
+        try:
+            await harness.ring_alarm()
+            await harness.wait_alarm_state("ringing")
+
+            # Double click dismisses alarm -> on_alarm_dismissed opens weather
+            await harness.inject_button("double")
+            await asyncio.sleep(0.5)
+            assert await harness.wait_alarm_state("idle")
+            assert (await harness.get_arbiter_context()) == "modal_weather"
+            png_morn_weather = await harness.capture_screenshot("cross_06_morning_weather")
+            assert png_morn_weather.exists() and png_morn_weather.stat().st_size > 1000
+
+            # Single click in weather returns to clock
+            await harness.inject_button("single")
+            await asyncio.sleep(0.3)
+            assert (await harness.get_arbiter_context()) == "clock"
+
+            results.append(
+                (
+                    "cross_06_alarm_dismiss_opens_weather",
+                    True,
+                    "Dismissing alarm cleanly transitions to morning weather forecast and single click exits",
+                )
+            )
+        except Exception as e:
+            results.append(("cross_06_alarm_dismiss_opens_weather", False, str(e)))
+        finally:
+            await harness.dismiss_alarm()
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            await asyncio.sleep(0.3)
 
         # ==========================================
         # BOOT & REBOOT SEQUENCE TESTS

@@ -87,6 +87,10 @@ class HtramArbiter : public Component {
   void set_silence_test(bool active);
   bool is_silence_active() const { return silence_sacred_ || silence_test_; }
 
+  // Snooze State Controls
+  void set_snooze(bool active);
+  bool is_snooze_active() const { return this->snooze_active_; }
+
   // Audio Arbiter
   bool play_rtttl(int priority, const std::string &owner, const std::string &song);
   bool play_beep(int priority, const std::string &owner, uint16_t freq, uint16_t dur_ms);
@@ -120,6 +124,9 @@ class HtramArbiter : public Component {
   // Silence States
   bool silence_sacred_{false};
   bool silence_test_{false};
+
+  // Snooze State
+  bool snooze_active_{false};
 
   // Audio State
   int audio_priority_{SOUND_PRIO_NONE};

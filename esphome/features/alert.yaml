@@ -188,14 +188,11 @@ script:
   - id: !extend on_screen_drawn
     then:
       - lambda: |-
-          if (id(alert_icon_needed)) {
-            id(alert_icon_needed) = false;
-            const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
-            const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
-            if (can_show && id(alert_icon_drawn_asset) >= 0) {
-              id(htram_core)->send_draw_cached_asset_centered(
-                  (uint16_t) id(alert_icon_drawn_asset), 190, 86, Color(0xE5484D), Color(0x000000), 1);
-            }
+          const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
+          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          if (can_show && id(alert_icon_drawn_asset) >= 0) {
+            id(htram_core)->send_draw_cached_asset_centered(
+                (uint16_t) id(alert_icon_drawn_asset), 190, 86, Color(0xE5484D), Color(0x000000), 1);
           }
 
 interval:
