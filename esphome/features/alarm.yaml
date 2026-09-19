@@ -29,6 +29,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: alarm_bell_needed
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 lvgl:
   widgets:
@@ -115,6 +119,18 @@ htram_arbiter:
               lambda: return id(alarm_ringing) || id(alarm_snoozing);
             then:
               - script.execute: alarm_dismiss
+    - event: button_double
+      context: snooze
+      priority: 100
+      name: alarm_snooze_dismiss_btn
+      then:
+        - script.execute: alarm_dismiss
+    - event: button_long
+      context: snooze
+      priority: 100
+      name: alarm_snooze_dismiss_long_btn
+      then:
+        - script.execute: alarm_dismiss
 
 script:
   - id: refresh_alarm_ui
@@ -124,7 +140,14 @@ script:
           const bool armed = id(alarm_enabled).state;
           const bool ringing = id(alarm_ringing);
           const bool snoozing = id(alarm_snoozing);
-          const int sig = (armed ? 1 : 0) | (ringing ? 2 : 0) | (snoozing ? 4 : 0) |
+          if (ringing || snoozing) {
+            id(htram_arbiter_hub)->request_status_icon("alarm", 50);
+          } else {
+            id(htram_arbiter_hub)->clear_status_icon("alarm");
+          }
+
+          const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
+          const int sig = (armed ? 1 : 0) | (ringing ? 2 : 0) | (snoozing ? 4 : 0) | (is_top ? 8 : 0) |
                           ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 9);
           if (sig == id(alarm_ui_sig)) return;
           id(alarm_ui_sig) = sig;
@@ -145,22 +168,17 @@ script:
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
           }
 
-          if (ringing || snoozing) {
-            id(htram_arbiter_hub)->request_status_icon("alarm", 50);
-          } else {
-            id(htram_arbiter_hub)->clear_status_icon("alarm");
-          }
-
-          const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
           const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show) {
             const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
             id(htram_core)->send_draw_cached_asset_centered(
-                htram_gd32::ASSET_ID_BELL, 194, 94, Color(c), Color(0x000000), 1);
+                htram_gd32::ASSET_ID_BELL, 190, 86, Color(c), Color(0x000000), 1);
             id(alarm_bell_drawn) = true;
+            id(alarm_bell_needed) = true;
           } else if (id(alarm_bell_drawn)) {
-            id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+            id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
             id(alarm_bell_drawn) = false;
+            id(alarm_bell_needed) = false;
           }
 
   - id: alarm_ring
@@ -168,8 +186,13 @@ script:
     then:
       - lambda: |-
           id(alarm_ringing) = true;
-          id(face_state) = -1;
-      - script.execute: refresh_face
+          id(alarm_snoozing) = false;
+          id(htram_arbiter_hub)->set_snooze(false);
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0) {
+            id(face_state) = -1;
+            id(refresh_face).execute();
+          }
+      - script.execute: refresh_alarm_ui
       - script.execute: on_alarm_started
       # 100 × 3 с ≈ п'ять хвилин: будильник, що надривається в порожній
       # кімнаті годину, — це не наполегливість, а несправність.
@@ -196,6 +219,7 @@ script:
       - lambda: |-
           const bool was_active = id(alarm_ringing) || id(alarm_snoozing);
           id(alarm_snoozing) = false;
+          id(htram_arbiter_hub)->set_snooze(false);
           id(alarm_stop).execute();
           if (was_active) {
             id(on_alarm_dismissed).execute();
@@ -204,10 +228,14 @@ script:
   - id: alarm_snooze
     mode: restart
     then:
-      - lambda: id(alarm_snoozing) = true;
+      - lambda: |-
+          id(alarm_snoozing) = true;
+          id(htram_arbiter_hub)->set_snooze(true);
       - script.execute: alarm_stop
       - delay: ${alarm_snooze_minutes}min
-      - lambda: id(alarm_snoozing) = false;
+      - lambda: |-
+          id(alarm_snoozing) = false;
+          id(htram_arbiter_hub)->set_snooze(false);
       - if:
           condition:
             switch.is_on: alarm_enabled
@@ -224,7 +252,7 @@ script:
           if (face != 0) {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
             if (id(alarm_bell_drawn)) {
-              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 194, 94);
+              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
               id(alarm_bell_drawn) = false;
             }
           } else {
@@ -234,6 +262,20 @@ script:
   - id: !extend on_alert_changed
     then:
       - script.execute: refresh_alarm_ui
+
+  - id: !extend on_screen_drawn
+    then:
+      - lambda: |-
+          const bool ringing = id(alarm_ringing);
+          const bool snoozing = id(alarm_snoozing);
+          const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
+          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          if (can_show && (ringing || snoozing)) {
+            const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_BELL, 190, 86, Color(c), Color(0x000000), 1);
+            id(alarm_bell_drawn) = true;
+          }
 
 esphome:
   on_boot:

@@ -43,5 +43,6 @@ packages:
   face_clock: !include features/face_clock.yaml
   silence: !include features/silence.yaml
   alert: !include features/alert.yaml
+  alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
