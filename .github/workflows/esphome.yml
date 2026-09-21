@@ -1,0 +1,45 @@
+name: ESPHome & Codebase CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project dependencies
+        run: uv sync
+
+      - name: Setup mock secrets for YAML validation
+        run: cp esphome/secrets.yaml.example esphome/secrets.yaml
+
+      - name: Run Linters & Static Analysis
+        run: make lint
+
+      - name: Check Code Formatting
+        run: make format-check
+
+      - name: Run Test Suites (GD32 C99, ESPHome C++, Python tools & configs)
+        run: make test
+
+      - name: Validate Graphic Assets
+        run: make validate-assets

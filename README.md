@@ -55,9 +55,8 @@ the time, and the front LED bar showing CO2 at a glance](docs/device-clock.jpg)
 | --- | --- |
 | `esphome/` | the ESP32 configuration, modular features (`features/`), custom components (`htram_gd32`) |
 | `firmware/gd32/` | the GD32F150 firmware — sensors, panel, button, buzzer, SPI Flash driver, binary protocol |
-| `tools/` | device management CLI (`device.py`), asset pipeline (`pack_flash_assets.py`), uploader (`flash_assets.py`) |
+| `tools/` | device management CLI (`device.py`), simulator UI preview (`preview_ui.py`), asset pipeline |
 | `tools/swd/` | SWD flashing, rescue, SRAM probes, ROM bootloader |
-| `tools/uidesign/` | browser studio for the face, at true physical scale |
 | `tests/` | automated test suites: GD32 C99 (Unity), ESPHome C++ (Unity), Python tools & YAML configs |
 | `docs/` | conversion runbook, hardware map, firmware spec, bench procedures, test plan, release notes |
 
@@ -94,24 +93,26 @@ the power-on order for the debug probe and the recovery procedure, both of
 which were written after losing a day to not having them.
 
 
-## Firmware Compatibility & Upgrade Notes (v1.2.0)
+## Firmware Compatibility & Upgrade Notes (v1.3.0)
 
-With **v1.2.0**, the architecture incorporates the external SPI Flash (Winbond W25Q32, 4 MB)
-for **staged OTA with autonomous hardware rollback** and **cached asset blitting** (zero ESP32 DRAM overhead).
+Version **v1.3.0** introduces streaming hardware-accelerated **TGA 16-bit RGB565 Run-Length Encoding (RLE)** (`CMD_TYPE_DRAW_RECT_RLE` / `0x16`) across the inter-chip UART link (921,600 baud). The GD32 decompressor runs in-flight using only **4 bytes of SRAM**, eliminating screen transition latency (<15 ms wire time) and achieving up to **85× compression** for modal screen invalidations.
+
+This builds on the architecture introduced in **v1.2.0**, which incorporates the external SPI Flash (Winbond W25Q32, 4 MB) for **staged OTA with autonomous hardware rollback** and **cached asset blitting** (zero ESP32 DRAM overhead).
 
 ### Compatibility Matrix
 
 | GD32 Firmware | ESPHome Firmware | Status & Behavior |
 |---|---|---|
-| **v1.2.0+** | **v1.2.0+** | **Full feature set**: Staged OTA, autonomous Boot Guard rollback, fast cached assets (0 B DRAM, 14 B UART). |
-| **v1.0.x / v1.1.x** (pre-flash) | **v1.2.0+** | **Compatible with fallback**: Telemetry, sensors, LEDs, buzzer, clock face, and OTA update work. ESPHome detects missing SPI Flash and automatically falls back to legacy ROM bootloader OTA to allow upgrading GD32. *Note: Minute of silence emblem (Tryzub) is skipped on older GD32 since it was offloaded from ESP32 DRAM.* |
-| **v1.2.0+** | **v1.0.x / v1.1.x** (pre-flash) | **Compatible**: Telemetry and sensor polling work normally. Older ESP32 streams dirty rectangles without utilizing cached SPI Flash assets. |
+| **v1.3.0+** | **v1.3.0+** | **Full feature set**: Hardware RLE stream compression (<15 ms modal transitions), Staged OTA, autonomous Boot Guard rollback, fast cached assets (0 B DRAM, 14 B UART). |
+| **v1.2.0** | **v1.3.0+** | **Compatible with fallback**: ESPHome detects pre-RLE GD32 and automatically falls back to uncompressed `CMD_DRAW_RECT` (`0x10`). Staged SPI Flash OTA and cached assets continue working. |
+| **v1.3.0+** | **v1.2.0** | **Compatible**: GD32 accepts uncompressed rectangles from older ESPHome. |
+| **v1.0.x / v1.1.x** | **v1.3.0+** | **Compatible with fallback**: Telemetry, sensors, LEDs, buzzer, clock face, and OTA update work. ESPHome falls back to uncompressed drawing and legacy ROM bootloader OTA. |
 
-### Upgrade Procedure from v1.1.x to v1.2.0
+### Upgrade Procedure to v1.3.0
 To transition a device smoothly:
-1. **Flash GD32 v1.2.0**: `make ota-gd32 DEVICE=<device>` (ESPHome safely uses fallback bootloader to upgrade older GD32 firmware).
-2. **Flash Assets**: `make flash-assets DEVICE=<device>` (uploads `flash_assets.bin` into SPI Flash).
-3. **Flash ESPHome**: `uv run esphome run esphome/htram.yaml`.
+1. **Flash GD32 v1.3.0**: `make ota-gd32 DEVICE=<device>`
+2. **Flash Assets** (if not already flashed): `make flash-assets DEVICE=<device>`
+3. **Flash ESPHome**: `make ota-esp DEVICE=<device>` (or `make update-all` for the fleet)
 
 ## Legal, research and safety
 

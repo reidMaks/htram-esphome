@@ -4,7 +4,7 @@
 ESPHome renders fonts from the TTF at build time and LVGL has no shear, so a
 slanted clock needs a slanted font file. The shear is taken about the middle of
 the cap height rather than the baseline, so digits keep their optical centre
-instead of leaning off it — matching what tools/uidesign previews.
+instead of leaning off it.
 
 Glyphs are then nudged right until no ink sits left of its pen position: LVGL
 clips a label to the sum of its advance widths, and a negative bearing on the

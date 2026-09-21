@@ -19,10 +19,9 @@ dependencies = [
 dev = [
     # tools/fonts/make_oblique.py bakes the slanted clock face.
     "fonttools>=4.64.0",
-    # tools/images: SVG -> 1-bit mask, and tracing silhouettes out of screenshots.
+    # tools/images: SVG -> 1-bit mask, and weather icons generator.
     "cairosvg>=2.7",
     "pillow>=11",
-    "scikit-image>=0.26.0",
     # Testing frameworks and coverage
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",

@@ -144,15 +144,15 @@ make flash-assets DEVICE=office
 
 ## 6. Iterating UI Designs
 
-The sandbox renders layouts in a browser at true physical scale without flashing:
+UI screens and geometry are validated using the native ESPHome LVGL 9 host simulator:
 
 ```bash
-python3 tools/uidesign/serve.py    # then http://localhost:8099
+make preview-ui SCREEN=weather   # captures on-demand screen preview to docs/screenshots/
+make inspect-ui                  # analyzes bezel circle margins (228 px) and text clipping
+make test-sim                    # runs full 40-test visual regression suite
 ```
 
-Edit `tools/uidesign/layouts.json`; numbers transfer to YAML unchanged.
-**Calibrate 1:1 with a bank card first** (Calibrate panel).
-Device body is 80x80 mm, display ~27x27 mm, black circle ~65 mm.
+Device body is 80x80 mm, display ~27x27 mm (240x240 px), black circle ~65 mm (diameter 228 px active zone).
 
 ## 7. Fonts
 

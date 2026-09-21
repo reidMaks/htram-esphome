@@ -1,5 +1,0 @@
-# HTRAM Feature: Глибока діагностика (Застаріло: використовуйте features/debug.yaml)
-#
-# Рекомендовано підключати: packages: debug: !include features/debug.yaml
-
-<<: !include debug.yaml
