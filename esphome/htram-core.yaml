@@ -8,7 +8,7 @@ substitutions:
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  firmware_version: "1.0.0"
+  firmware_version: "2.0.0"
 
 packages:
   ui: !include core-ui.yaml
@@ -16,6 +16,9 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  project:
+    name: reidmaks.htram
+    version: ${firmware_version}
   # Several of these are going to live in the same house, and they are all
   # flashed from this one config. The MAC suffix keeps their hostnames and
   # entity ids apart without a per-device file. Drop this line to go back to a

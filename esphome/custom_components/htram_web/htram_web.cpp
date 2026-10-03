@@ -91,7 +91,8 @@ void HtramWebComponent::dump_config() {
 bool HtramWebHandler::canHandle(AsyncWebServerRequest *request) const {
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   auto url = request->url_to(url_buf);
-  if (request->method() == HTTP_GET && (url == "/" || url == "/index.html" || url == "/api/status")) {
+  if ((request->method() == HTTP_GET || request->method() == HTTP_HEAD) &&
+      (url == "/" || url == "/index.html" || url == "/api/status")) {
     return true;
   }
   if (request->method() == HTTP_POST && (url == "/api/settings" || url == "/api/check_update" ||
@@ -113,14 +114,20 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   auto url = request->url_to(url_buf);
 
-  // 1. GET / -> Serve HTML
-  if (request->method() == HTTP_GET && (url == "/" || url == "/index.html")) {
-    request->send(200, "text/html; charset=UTF-8", STANDALONE_INDEX_HTML);
+  // 1. GET/HEAD / -> Serve HTML
+  if ((request->method() == HTTP_GET || request->method() == HTTP_HEAD) && (url == "/" || url == "/index.html")) {
+    auto *response = request->beginResponse(200, "text/html; charset=UTF-8",
+                                            reinterpret_cast<const uint8_t *>(STANDALONE_INDEX_HTML),
+                                            sizeof(STANDALONE_INDEX_HTML) - 1);
+    response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    response->addHeader("Pragma", "no-cache");
+    response->addHeader("Expires", "0");
+    request->send(response);
     return;
   }
 
-  // 2. GET /api/status -> Return JSON state
-  if (request->method() == HTTP_GET && url == "/api/status") {
+  // 2. GET/HEAD /api/status -> Return JSON state
+  if ((request->method() == HTTP_GET || request->method() == HTTP_HEAD) && url == "/api/status") {
     json::JsonBuilder builder;
     JsonObject root = builder.root();
 
@@ -217,7 +224,11 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
     }
 
     std::string response = builder.serialize();
-    request->send(200, "application/json", response.c_str());
+    auto *res = request->beginResponse(200, "application/json", response.c_str());
+    res->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res->addHeader("Pragma", "no-cache");
+    res->addHeader("Expires", "0");
+    request->send(res);
     return;
   }
 

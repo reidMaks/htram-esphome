@@ -32,7 +32,7 @@ HtramOtaUpdateTrigger = htram_web_ns.class_(
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(HtramWebComponent),
-        cv.Optional(CONF_VERSION, default="1.0.0"): cv.string,
+        cv.Optional(CONF_VERSION, default="2.0.0"): cv.string,
         cv.Optional(CONF_ON_SAVE_SETTINGS): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(HtramSaveSettingsTrigger)}
         ),

@@ -50,7 +50,7 @@ class StandaloneWebBridge:
             "usb": True,
             "ip": "192.168.1.120",
             "gd32_version": "v1.4.0",
-            "version": "v1.0.0-standalone",
+            "version": "v2.0.0",
             "region": 25,
             "city": "Київ",
             "lat": 50.4501,
@@ -217,7 +217,7 @@ class StandaloneWebBridge:
                 resp_bytes = json.dumps(
                     {
                         "result": "ok",
-                        "current_version": self.entity_states.get("version", "1.0.0"),
+                        "current_version": self.entity_states.get("version", "2.0.0"),
                         "new_version": self.entity_states.get("new_version", ""),
                     }
                 ).encode("utf-8")

@@ -1,6 +1,6 @@
 [project]
 name = "htram-esphome"
-version = "0.1.0"
+version = "2.0.0"
 description = "Custom firmware for the Honeywell HTRAM: ESPHome on the ESP32, bare-metal on the GD32"
 readme = "README.md"
 requires-python = ">=3.12"

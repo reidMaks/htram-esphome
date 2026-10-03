@@ -76,7 +76,7 @@ class HtramWebComponent : public Component {
   void sync_to_system();
 
  protected:
-  std::string version_{"1.0.0"};
+  std::string version_{"2.0.0"};
   std::string new_version_{""};
   int region_{31};
   float lat_{50.45f};

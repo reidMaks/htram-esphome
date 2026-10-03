@@ -344,7 +344,7 @@ async def _run_live_simulator_test():
         with tempfile.TemporaryDirectory() as tmpdir:
             ppm_path = Path(tmpdir) / "challenger_ap_qr_page0.ppm"
             await client.execute_service(services["take_screenshot"], {"filename": str(ppm_path)})
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.8)
             assert ppm_path.exists(), "PPM screenshot of AP QR page must be generated"
             im = Image.open(ppm_path)
 
