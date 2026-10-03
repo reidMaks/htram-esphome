@@ -514,6 +514,16 @@ htram_arbiter:
             if (st == 1) id(timer_cycle_preset).execute();
             else if (st == 2) id(timer_pause).execute();
             else if (st == 3) id(timer_resume).execute();
+    - event: button_double
+      context: modal_timer
+      priority: 50
+      name: timer_modal_double_btn
+      then:
+        - lambda: |-
+            if (id(timer_state) == 1) { // ARMING
+              id(timer_cancel).execute();
+              id(htram_arbiter_hub)->dispatch_event_for_context("button_double", "clock");
+            }
     - event: button_long
       context: modal_timer
       priority: 50

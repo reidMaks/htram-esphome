@@ -6,6 +6,7 @@ import asyncio
 import os
 import socket
 import subprocess
+import tempfile
 import threading
 from collections.abc import Generator
 from pathlib import Path
@@ -54,6 +55,7 @@ class E2EContext:
         self.bridge_loop: asyncio.AbstractEventLoop | None = None
         self.bridge_thread: threading.Thread | None = None
         self.bridge_server: asyncio.Server | None = None
+        self._pref_dir: tempfile.TemporaryDirectory | None = None
 
     def start(self) -> None:
         """Launches simulator process and starts web bridge."""
@@ -64,8 +66,10 @@ class E2EContext:
                 check=True,
             )
 
+        self._pref_dir = tempfile.TemporaryDirectory()
         env = os.environ.copy()
         env["HTRAM_SIM_PORT"] = str(self.api_port)
+        env["ESPHOME_PREFDIR"] = self._pref_dir.name
 
         self.proc = subprocess.Popen(
             [str(SIM_BINARY)],
@@ -300,6 +304,13 @@ class E2EContext:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
             self.proc = None
+
+        if hasattr(self, "_pref_dir") and self._pref_dir:
+            try:
+                self._pref_dir.cleanup()
+            except Exception:
+                pass
+            self._pref_dir = None
 
 
 @pytest.fixture(scope="session")

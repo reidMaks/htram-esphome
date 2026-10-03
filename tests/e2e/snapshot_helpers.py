@@ -45,13 +45,23 @@ def count_differing_pixels(img_a: Path, img_b: Path) -> tuple[int, Image.Image |
     return diff_pixels, diff
 
 
-def assert_matches_snapshot(current_png: Path, snapshot_name: str) -> None:
+def assert_matches_snapshot(
+    current_png: Path,
+    snapshot_name: str,
+    snapshots_dir: Path | None = None,
+    diffs_dir: Path | None = None,
+) -> None:
     """Asserts that current_png matches the golden snapshot bit-for-bit.
 
     If golden snapshot does not exist, copies current_png as golden and passes.
     If UPDATE_SNAPSHOTS=1 environment variable is set, updates golden snapshot.
     """
-    golden_path = GOLDEN_SNAPSHOTS_DIR / f"{snapshot_name}.png"
+    target_dir = snapshots_dir or GOLDEN_SNAPSHOTS_DIR
+    target_diffs = diffs_dir or DIFFS_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_diffs.mkdir(parents=True, exist_ok=True)
+
+    golden_path = target_dir / f"{snapshot_name}.png"
     update_mode = os.environ.get("UPDATE_SNAPSHOTS", "0").lower() in ("1", "true", "yes")
 
     if not golden_path.exists() or update_mode:
@@ -70,7 +80,7 @@ def assert_matches_snapshot(current_png: Path, snapshot_name: str) -> None:
         return
 
     # If diff found, save visual diff artifact
-    diff_path = DIFFS_DIR / f"diff_{snapshot_name}.png"
+    diff_path = target_diffs / f"diff_{snapshot_name}.png"
     if diff_img:
         # Amplify difference for human inspection
         diff_amplified = diff_img.point(lambda p: p * 5 if p > 0 else 0)

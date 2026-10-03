@@ -132,6 +132,24 @@ htram_arbiter:
       name: alarm_snooze_dismiss_long_btn
       then:
         - script.execute: alarm_dismiss
+    - event: screen_hide
+      context: clock
+      priority: 20
+      name: alarm_clock_hide
+      then:
+        - lambda: |-
+            id(alarm_ui_sig) = -1;
+            lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
+            if (id(alarm_bell_drawn)) {
+              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
+              id(alarm_bell_drawn) = false;
+            }
+    - event: screen_idle
+      context: clock
+      priority: 20
+      name: alarm_clock_idle
+      then:
+        - script.execute: refresh_alarm_ui
 
 script:
   - id: refresh_alarm_ui

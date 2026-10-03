@@ -13,6 +13,7 @@ substitutions:
   jaam_host: "127.0.0.1"
   jaam_port: "1"
   slot_interval: "24h"
+  ap_flip_interval: "24h"
   weather_api_host: "127.0.0.1:1"
 
 packages:

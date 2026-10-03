@@ -20,10 +20,13 @@ from typing import Any
 import pytest
 from PIL import Image
 
+from tests.e2e.snapshot_helpers import assert_matches_snapshot
+
 from .conftest import REPO_ROOT
 
 SIM_CONFIG = REPO_ROOT / "esphome/htram-sim.yaml"
 SIM_BINARY = REPO_ROOT / "esphome/.esphome/build/htram-sim/.pioenvs/htram-sim/program"
+STANDALONE_SNAPSHOTS_DIR = REPO_ROOT / "tests/standalone/snapshots"
 
 
 # ============================================================================
@@ -296,12 +299,27 @@ async def _run_live_simulator_test():
     if not SIM_BINARY.exists():
         pytest.skip(f"Simulator binary not found at {SIM_BINARY}. Skipping live E2E test.")
 
+    import os
+    import socket
+
     import aioesphomeapi
 
-    log_path = REPO_ROOT / "sim_challenger_test.log"
+    def find_free_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            return s.getsockname()[1]
+
+    pref_dir = tempfile.TemporaryDirectory()
+    port = find_free_port()
+    env = os.environ.copy()
+    env["HTRAM_SIM_PORT"] = str(port)
+    env["ESPHOME_PREFDIR"] = pref_dir.name
+
+    log_path = REPO_ROOT / f"sim_challenger_test_{port}.log"
     log_file = open(log_path, "w")
     proc = subprocess.Popen(
         [str(SIM_BINARY)],
+        env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         cwd=REPO_ROOT,
@@ -310,7 +328,7 @@ async def _run_live_simulator_test():
     client: aioesphomeapi.APIClient | None = None
     try:
         await asyncio.sleep(2.0)
-        client = aioesphomeapi.APIClient("127.0.0.1", 6053, password="")
+        client = aioesphomeapi.APIClient("127.0.0.1", port, password="")
         await client.connect(login=True)
 
         entities_list, services_list = await client.list_entities_services()
@@ -326,6 +344,12 @@ async def _run_live_simulator_test():
         client.subscribe_states(on_state)
         await asyncio.sleep(0.5)
 
+        # Freeze time at baseline to fix orbit dot position deterministically
+        await client.execute_service(
+            services["set_sim_time"], {"epoch": 1789411500, "freeze": True}
+        )
+        await asyncio.sleep(0.3)
+
         # Baseline: Context should be "clock"
         assert states.get("Arbiter Context") == "clock", (
             f"Expected clock, got {states.get('Arbiter Context')}"
@@ -340,32 +364,34 @@ async def _run_live_simulator_test():
             f"Expected modal_ap after quadruple click, got {states.get('Arbiter Context')}"
         )
 
-        # 2. Capture screenshot of AP Page 0 (QR code)
+        # 2. Capture screenshot of AP Page 0 (QR code) and assert against golden snapshot
         with tempfile.TemporaryDirectory() as tmpdir:
-            ppm_path = Path(tmpdir) / "challenger_ap_qr_page0.ppm"
+            ppm_path = Path(tmpdir) / "ap_01_qr_card.ppm"
+            png_path = Path(tmpdir) / "ap_01_qr_card.png"
             await client.execute_service(services["take_screenshot"], {"filename": str(ppm_path)})
             await asyncio.sleep(0.8)
             assert ppm_path.exists(), "PPM screenshot of AP QR page must be generated"
-            im = Image.open(ppm_path)
+            Image.open(ppm_path).save(png_path)
+            assert_matches_snapshot(
+                png_path, "ap_01_qr_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
 
-            # In host simulator with fallback credentials, verify white QR card rendered
-            rgb_im = im.convert("RGB")
-            pix = rgb_im.load()
-            white_pixels = sum(
-                1
-                for y in range(rgb_im.height)
-                for x in range(rgb_im.width)
-                if pix[x, y][0] > 200 and pix[x, y][1] > 200 and pix[x, y][2] > 200
+            # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
+            await client.execute_service(services["inject_button"], {"action": "single"})
+            await asyncio.sleep(0.5)
+            assert states.get("Arbiter Context") == "modal_ap", (
+                "Context must remain modal_ap during single-click"
             )
-            assert white_pixels > 200, (
-                f"Expected white QR card in center, got {white_pixels} white pixels"
+
+            ppm1_path = Path(tmpdir) / "ap_02_info_card.ppm"
+            png1_path = Path(tmpdir) / "ap_02_info_card.png"
+            await client.execute_service(services["take_screenshot"], {"filename": str(ppm1_path)})
+            await asyncio.sleep(0.8)
+            assert ppm1_path.exists(), "PPM screenshot of AP info card must be generated"
+            Image.open(ppm1_path).save(png1_path)
+            assert_matches_snapshot(
+                png1_path, "ap_02_info_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
             )
-        # 3. Test Single Click in modal_ap
-        await client.execute_service(services["inject_button"], {"action": "single"})
-        await asyncio.sleep(0.4)
-        assert states.get("Arbiter Context") == "modal_ap", (
-            "Context must remain modal_ap during single-click"
-        )
 
         # 4. Reset back to Clock
         await client.execute_service(services["simulate_reboot_resync"], {})
@@ -388,3 +414,11 @@ async def _run_live_simulator_test():
         except subprocess.TimeoutExpired:
             proc.kill()
         log_file.close()
+        try:
+            log_path.unlink()
+        except OSError:
+            pass
+        try:
+            pref_dir.cleanup()
+        except Exception:
+            pass
