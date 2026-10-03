@@ -35,7 +35,21 @@ class HtramWebComponent : public Component {
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
   void set_version(const std::string &ver) { version_ = ver; }
-  const std::string &get_version() const { return version_; }
+  const std::string &get_version() const {
+    if (!version_.empty()) {
+      return version_;
+    }
+#ifdef ESPHOME_PROJECT_VERSION
+    static const std::string proj_ver = ESPHOME_PROJECT_VERSION;
+    return proj_ver;
+#elif defined(ESPHOME_VERSION)
+    static const std::string esp_ver = ESPHOME_VERSION;
+    return esp_ver;
+#else
+    static const std::string empty_ver = "";
+    return empty_ver;
+#endif
+  }
 
   void add_on_save_settings_callback(std::function<void(int, float, float, const std::string &)> &&cb) {
     this->save_settings_callbacks_.add(std::move(cb));
@@ -76,7 +90,7 @@ class HtramWebComponent : public Component {
   void sync_to_system();
 
  protected:
-  std::string version_{"2.0.0"};
+  std::string version_{""};
   std::string new_version_{""};
   int region_{31};
   float lat_{50.45f};

@@ -709,7 +709,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <div class="card" style="margin-top: 16px;">
       <h2>Система</h2>
       <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
-        Версія прошивки: <strong style="color: #fff;" id="lbl-version">v2.0.0</strong><br>
+        Версія прошивки: <strong style="color: #fff;" id="lbl-version">--</strong><br>
         GD32 версія: <strong style="color: #fff;" id="lbl-gd32-ver">--</strong><br>
         IP адреса: <strong style="color: #fff;" id="lbl-ip">--</strong>
       </div>

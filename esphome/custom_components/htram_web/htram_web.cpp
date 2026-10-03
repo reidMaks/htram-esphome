@@ -82,7 +82,7 @@ void HtramWebComponent::setup() {
 
 void HtramWebComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "HTRAM Standalone Web Interface:");
-  ESP_LOGCONFIG(TAG, "  Version: %s", this->version_.c_str());
+  ESP_LOGCONFIG(TAG, "  Version: %s", this->get_version().c_str());
   ESP_LOGCONFIG(TAG, "  Region: %d (%s)", this->region_, this->city_.c_str());
 }
 
@@ -179,6 +179,12 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
       auto oid = t->get_object_id_to(id_buf);
       if (name == "IP Address" || oid == "ip_address" || oid == "wifi_ip") root["ip"] = t->state;
       else if (name == "GD32 Firmware" || oid == "gd32_firmware" || oid == "firmware_version" || oid == "sensor_gd32_fw") root["gd32_version"] = t->state;
+      else if (name == "ESPHome Version" || oid == "esphome_version" || oid == "version" ||
+               name == "Firmware Version" || oid == "firmware_version_esp") {
+        if (!root["version"].is<std::string>() || root["version"].as<std::string>().empty()) {
+          root["version"] = t->state;
+        }
+      }
     }
 
     // Switches
@@ -348,7 +354,20 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
     json::JsonBuilder builder;
     JsonObject root = builder.root();
     root["result"] = "ok";
-    root["current_version"] = this->parent_->get_version();
+    std::string current_ver = this->parent_->get_version();
+    if (current_ver.empty()) {
+      char id_buf[OBJECT_ID_MAX_LEN];
+      for (auto *t : App.get_text_sensors()) {
+        auto name = t->get_name();
+        auto oid = t->get_object_id_to(id_buf);
+        if (name == "ESPHome Version" || oid == "esphome_version" || oid == "version" ||
+            name == "Firmware Version" || oid == "firmware_version_esp") {
+          current_ver = t->state;
+          break;
+        }
+      }
+    }
+    root["current_version"] = current_ver;
     root["new_version"] = this->parent_->get_new_version();
     std::string response = builder.serialize();
     request->send(200, "application/json", response.c_str());

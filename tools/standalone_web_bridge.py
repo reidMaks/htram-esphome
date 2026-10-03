@@ -217,7 +217,7 @@ class StandaloneWebBridge:
                 resp_bytes = json.dumps(
                     {
                         "result": "ok",
-                        "current_version": self.entity_states.get("version", "2.0.0"),
+                        "current_version": self.entity_states.get("version", ""),
                         "new_version": self.entity_states.get("new_version", ""),
                     }
                 ).encode("utf-8")

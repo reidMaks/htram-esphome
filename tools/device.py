@@ -95,19 +95,65 @@ class HtramClient:
     def get_status(self) -> dict[str, Any]:
         import json
 
-        events = self.get_events(max_lines=60)
-        status: dict[str, Any] = {}
-        for line in events:
-            if line.startswith("data: "):
-                try:
-                    payload = json.loads(line[6:])
-                    name = payload.get("name") or payload.get("id")
-                    if name:
-                        state_val = payload.get("state", payload.get("value"))
-                        status[name] = state_val
-                except json.JSONDecodeError:
-                    pass
-        return status
+        # 1. Try legacy Home Assistant web_server SSE /events
+        try:
+            events = self.get_events(max_lines=60)
+            status: dict[str, Any] = {}
+            for line in events:
+                if line.startswith("data: "):
+                    try:
+                        payload = json.loads(line[6:])
+                        name = payload.get("name") or payload.get("id")
+                        if name:
+                            state_val = payload.get("state", payload.get("value"))
+                            status[name] = state_val
+                    except json.JSONDecodeError:
+                        pass
+            if status:
+                return status
+        except Exception:
+            pass
+
+        # 2. Try standalone htram_web REST API /api/status
+        try:
+            url = f"{self.base_url}/api/status"
+            res = requests.get(url, auth=self.auth, timeout=self.timeout)
+            if res.status_code == 200:
+                data = res.json()
+                status = {}
+                if "version" in data:
+                    status["Firmware Version"] = data["version"]
+                if "gd32_version" in data:
+                    status["GD32 Firmware"] = data["gd32_version"]
+                if "ip" in data:
+                    status["IP Address"] = data["ip"]
+                if "co2" in data:
+                    status["CO2"] = f"{data['co2']} ppm" if data["co2"] is not None else "None"
+                if "temp" in data:
+                    status["Temperature"] = f"{data['temp']} °C" if data["temp"] is not None else "None"
+                if "hum" in data:
+                    status["Humidity"] = f"{data['hum']} %" if data["hum"] is not None else "None"
+                if "batt_pct" in data:
+                    status["Battery"] = f"{data['batt_pct']} %" if data["batt_pct"] is not None else "None"
+                if "usb" in data:
+                    status["USB Power"] = "ON" if data["usb"] else "OFF"
+                if "brightness" in data:
+                    status["Screen Brightness"] = data["brightness"]
+                if "alarm_enabled" in data:
+                    status["Будильник увімкнено"] = "ON" if data["alarm_enabled"] else "OFF"
+                if "silence_enabled" in data:
+                    status["Хвилина мовчання"] = "ON" if data["silence_enabled"] else "OFF"
+                if "led_auto" in data:
+                    status["LED Auto"] = "ON" if data["led_auto"] else "OFF"
+                if "city" in data:
+                    status["City"] = data["city"]
+                if "free_heap" in data:
+                    status["Free Heap"] = f"{data['free_heap']} B"
+                return status
+        except Exception:
+            pass
+
+        return {}
 
 
 def main() -> int:
