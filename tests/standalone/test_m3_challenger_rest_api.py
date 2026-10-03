@@ -209,6 +209,9 @@ class TestStandaloneWebBridgeCoreEndpoints:
             assert field in data, f"Missing string field: {field}"
             assert isinstance(data[field], str), f"Field {field} must be string"
 
+        assert "alarm_days" in data, "Missing alarm_days field"
+        assert isinstance(data["alarm_days"], list), "alarm_days must be a list"
+
     def test_post_api_settings_patch_updates(self, bridge_server: BridgeServerContext):
         """POST /api/settings accepts partial patches and mutates state synchronously."""
         # 1. Update brightness
@@ -224,11 +227,12 @@ class TestStandaloneWebBridgeCoreEndpoints:
             bridge_server.port,
             "POST",
             "/api/settings",
-            {"alarm_enabled": True, "alarm_time": "06:45"},
+            {"alarm_enabled": True, "alarm_time": "06:45", "alarm_days": [1, 2, 3, 4, 5]},
         )
         assert status == 200
         assert bridge_server.bridge.entity_states["alarm_enabled"] is True
         assert bridge_server.bridge.entity_states["alarm_time"] == "06:45"
+        assert bridge_server.bridge.entity_states["alarm_days"] == [1, 2, 3, 4, 5]
 
         # 3. Update silence and led_auto
         status, headers, body = make_request(
@@ -272,6 +276,7 @@ class TestStandaloneWebBridgeCoreEndpoints:
         assert status_data["brightness"] == 72
         assert status_data["alarm_enabled"] is True
         assert status_data["alarm_time"] == "06:45"
+        assert status_data["alarm_days"] == [1, 2, 3, 4, 5]
         assert status_data["silence_enabled"] is False
         assert status_data["led_auto"] is False
         assert status_data["co2_yellow"] == 1100
@@ -436,6 +441,8 @@ class TestWebPageHeaderInvariants:
         assert "silence" in html
         assert "co2" in html
         assert "temp" in html
+        assert "chk-day-1" in html
+        assert "chk-day-7" in html
 
 
 # ============================================================================
@@ -494,6 +501,7 @@ class TestCppSourceContractIntegrity:
         assert 'oid == "sensor_gd32_fw"' in cpp_text
         assert 'oid == "switch_led_auto"' in cpp_text
         assert 'oid == "alarm_enabled"' in cpp_text
+        assert 'oid == "alarm_days"' in cpp_text
         assert 'oid == "silence_enabled"' in cpp_text
 
     def test_ota_trigger_and_automation_bindings(self):

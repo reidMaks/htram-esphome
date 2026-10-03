@@ -229,6 +229,25 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
       }
     }
 
+    // Alarm days (1=Mon .. 7=Sun)
+    JsonArray days_arr = root["alarm_days"].to<JsonArray>();
+    uint8_t days_mask = 0x7F;
+    for (auto *num : App.get_numbers()) {
+      auto name = num->get_name();
+      auto oid = num->get_object_id_to(id_buf);
+      if (oid == "alarm_days" || name == "Дні будильника" || name == "Alarm Days") {
+        if (!std::isnan(num->state)) {
+          days_mask = (uint8_t) num->state;
+        }
+        break;
+      }
+    }
+    for (int d = 1; d <= 7; d++) {
+      if (days_mask & (1 << (d - 1))) {
+        days_arr.add(d);
+      }
+    }
+
     std::string response = builder.serialize();
     auto *res = request->beginResponse(200, "application/json", response.c_str());
     res->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -277,8 +296,25 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
       bool has_alarm_time = !root["alarm_time"].isNull();
       std::string alarm_time_str = has_alarm_time ? root["alarm_time"].as<std::string>() : "";
 
+      bool has_alarm_days = !root["alarm_days"].isNull();
+      uint8_t alarm_days_val = 0x7F;
+      if (has_alarm_days) {
+        if (root["alarm_days"].is<JsonArray>()) {
+          alarm_days_val = 0;
+          JsonArrayConst days_in = root["alarm_days"].as<JsonArrayConst>();
+          for (JsonVariantConst v : days_in) {
+            int d = v.as<int>();
+            if (d >= 1 && d <= 7) {
+              alarm_days_val |= (1 << (d - 1));
+            }
+          }
+        } else if (root["alarm_days"].is<int>()) {
+          alarm_days_val = (uint8_t) root["alarm_days"].as<int>();
+        }
+      }
+
       auto *parent = this->parent_;
-      parent->defer_action([parent, reg, lat, lon, city, geo_changed, has_alarm, alarm_val, has_silence, silence_val, has_led_auto, led_auto_val, has_bright, bright_val, has_trim, trim_val, has_co2_y, co2_y_val, has_co2_r, co2_r_val, has_alarm_time, alarm_time_str]() {
+      parent->defer_action([parent, reg, lat, lon, city, geo_changed, has_alarm, alarm_val, has_silence, silence_val, has_led_auto, led_auto_val, has_bright, bright_val, has_trim, trim_val, has_co2_y, co2_y_val, has_co2_r, co2_r_val, has_alarm_time, alarm_time_str, has_alarm_days, alarm_days_val]() {
         char id_buf[OBJECT_ID_MAX_LEN];
 
         if (geo_changed) {
@@ -315,6 +351,8 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
             num->make_call().set_value(co2_y_val).perform();
           } else if (has_co2_r && (name == "CO2 Red Threshold" || oid == "co2_thresh_red")) {
             num->make_call().set_value(co2_r_val).perform();
+          } else if (has_alarm_days && (oid == "alarm_days" || name == "Дні будильника" || name == "Alarm Days")) {
+            num->make_call().set_value((float) alarm_days_val).perform();
           }
         }
 

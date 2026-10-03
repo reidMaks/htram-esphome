@@ -231,6 +231,7 @@ class E2EContext:
                     "lon": 30.5234,
                     "alarm_enabled": False,
                     "alarm_time": "07:30",
+                    "alarm_days": [1, 2, 3, 4, 5, 6, 7],
                     "silence_enabled": True,
                     "brightness": 100,
                     "led_auto": True,
@@ -241,6 +242,11 @@ class E2EContext:
                     "new_version": "",
                 }
             )
+
+        if "Дні будильника" in self.entities and self.client:
+            self.client.number_command(self.entities["Дні будильника"].key, 127.0)
+        elif "Alarm Days" in self.entities and self.client:
+            self.client.number_command(self.entities["Alarm Days"].key, 127.0)
 
         import time
 
@@ -355,6 +361,28 @@ class WebUIHelper:
         ):
             self.page.fill("#inp-alarm-time", time_str)
             self.page.dispatch_event("#inp-alarm-time", "change")
+
+    def get_alarm_days(self) -> list[int]:
+        days = []
+        for d in range(1, 8):
+            if self.page.is_checked(f"#chk-day-{d}"):
+                days.append(d)
+        return days
+
+    def toggle_alarm_day(self, day: int, enable: bool) -> None:
+        current = self.page.is_checked(f"#chk-day-{day}")
+        if current != enable:
+            with self.page.expect_response(
+                lambda r: "/api/settings" in r.url and r.status == 200, timeout=4000
+            ):
+                if enable:
+                    self.page.check(f"#chk-day-{day}")
+                else:
+                    self.page.uncheck(f"#chk-day-{day}")
+
+    def set_alarm_days(self, days: list[int]) -> None:
+        for d in range(1, 8):
+            self.toggle_alarm_day(d, d in days)
 
     def toggle_silence(self, enable: bool) -> None:
         current = self.page.is_checked("#chk-silence")

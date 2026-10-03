@@ -5,9 +5,10 @@
 CC           ?= gcc
 CXX          ?= g++
 VENV         ?= .venv
-PYTHON       := $(VENV)/bin/python
-PYTEST       := $(VENV)/bin/pytest
-ESPHOME      := $(VENV)/bin/esphome
+PYTHON          := $(VENV)/bin/python
+PYTEST_PARALLEL ?= -n auto --dist loadfile
+PYTEST          := $(VENV)/bin/pytest $(PYTEST_PARALLEL)
+ESPHOME         := $(VENV)/bin/esphome
 GCOVR        := $(VENV)/bin/gcovr
 RUFF         := $(VENV)/bin/ruff
 MYPY         := $(VENV)/bin/mypy
@@ -34,7 +35,7 @@ TEST_BIN_PERIPH   := $(TEST_DIR)/test_periph_bin
 TEST_BIN_SPI_FLASH:= $(TEST_DIR)/test_spi_flash_bin
 TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
-.PHONY: all test test-gd32 test-esphome test-tools test-standalone test-configs test-sim \
+.PHONY: all test test-gd32 test-esphome test-tools test-standalone test-configs test-sim test-e2e \
         preview-ui inspect-ui \
         lint lint-c lint-py lint-yaml format format-check \
         coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
@@ -53,6 +54,8 @@ help:
 	@echo "  make test-esphome  - Run ESP32 / ESPHome C++ unit tests (Unity)"
 	@echo "  make test-tools    - Run Python tools tests via pytest (CRC, mask generator)"
 	@echo "  make test-configs  - Validate ESPHome YAML device configurations"
+	@echo "  make test-standalone - Run Standalone-First 4-Tier E2E tests"
+	@echo "  make test-e2e      - Run Full Playwright Web & Simulator E2E tests"
 	@echo "  make test-sim      - Run Host Simulation feature tests (Unity/Harness)"
 	@echo "  make preview-ui    - Capture on-demand UI preview (Usage: make preview-ui [SCREEN=weather|clock|timer|alert|silence])"
 	@echo "  make inspect-ui    - Inspect UI screen geometry & bezel margins (Usage: make inspect-ui [IMAGE=path.png])"
@@ -152,6 +155,11 @@ test-tools:
 test-standalone:
 	@echo "==> Running Standalone-First 4-Tier E2E Tests via pytest..."
 	$(PYTEST) tests/standalone -v
+
+# ── Playwright Web & Simulator E2E Tests ────────────────────────────────────
+test-e2e:
+	@echo "==> Running Full Playwright Web & Simulator E2E Tests via pytest..."
+	$(PYTEST) tests/e2e -v
 
 # ── ESPHome Config Validation ───────────────────────────────────────────────
 test-configs:

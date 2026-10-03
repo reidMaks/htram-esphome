@@ -378,7 +378,7 @@ async def _run_live_simulator_test():
 
             # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
             await client.execute_service(services["inject_button"], {"action": "single"})
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.8)
             assert states.get("Arbiter Context") == "modal_ap", (
                 "Context must remain modal_ap during single-click"
             )

@@ -57,6 +57,25 @@ lvgl:
         knob:
           bg_opa: TRANSP
 
+number:
+  - platform: template
+    id: alarm_days
+    name: "Дні будильника"
+    optimistic: true
+    restore_value: true
+    initial_value: 127
+    min_value: 0
+    max_value: 127
+    step: 1
+    mode: box
+    set_action:
+      - lambda: |-
+          id(alarm_days).publish_state(x);
+          id(alarm_ui_sig) = -1;
+          id(refresh_alarm_ui).execute();
+    on_value:
+      - script.execute: refresh_alarm_ui
+
 datetime:
   - platform: template
     id: alarm_time
@@ -69,7 +88,16 @@ datetime:
     on_time:
       - if:
           condition:
-            switch.is_on: alarm_enabled
+            lambda: |-
+              if (!id(alarm_enabled).state) return false;
+              const float st = id(alarm_days).state;
+              const int mask = std::isnan(st) ? 127 : (int) st;
+              if (mask == 0) return false;
+              auto now = id(ha_time).now();
+              if (!now.is_valid()) now = id(net_time).now();
+              if (!now.is_valid()) return true;
+              int iso_dow = (now.day_of_week == 1) ? 7 : (now.day_of_week - 1);
+              return (mask & (1 << (iso_dow - 1))) != 0;
           then:
             - script.execute: alarm_ring
     on_value:
@@ -167,9 +195,28 @@ script:
 
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
           const bool is_clock_face = (id(htram_arbiter_hub)->get_screen_mode() == 0);
+
+          const float st = id(alarm_days).state;
+          const int mask = std::isnan(st) ? 127 : (int) st;
+          bool will_ring_next = true;
+          if (mask == 0) {
+            will_ring_next = false;
+          } else {
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) now = id(net_time).now();
+            if (now.is_valid()) {
+              const int today_iso = (now.day_of_week == 1) ? 7 : (now.day_of_week - 1);
+              const int now_min = now.hour * 60 + now.minute;
+              const int alarm_min = id(alarm_time).hour * 60 + id(alarm_time).minute;
+              const int target_iso = (now_min < alarm_min) ? today_iso : ((today_iso % 7) + 1);
+              will_ring_next = (mask & (1 << (target_iso - 1))) != 0;
+            }
+          }
+
           const int sig = (armed ? 1 : 0) | (ringing ? 2 : 0) | (snoozing ? 4 : 0) | (is_top ? 8 : 0) |
-                          (is_clock_face ? 16 : 0) |
-                          ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 9);
+                          (is_clock_face ? 16 : 0) | (will_ring_next ? 32 : 0) |
+                          ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 6) |
+                          ((mask & 0x7F) << 17);
           if (sig == id(alarm_ui_sig)) return;
           id(alarm_ui_sig) = sig;
 
@@ -182,8 +229,9 @@ script:
               int32_t d = (int32_t) lroundf(deg) % 360;
               return d < 0 ? d + 360 : d;
             };
+            const uint32_t tick_color = will_ring_next ? 0xFF9E3D : 0x707880;
             lv_arc_set_bg_angles(id(ui_alarm_tick), norm(lv - 1.6f), norm(lv + 1.6f));
-            lv_obj_set_style_arc_color(id(ui_alarm_tick), lv_color_hex(0xFF9E3D), LV_PART_MAIN);
+            lv_obj_set_style_arc_color(id(ui_alarm_tick), lv_color_hex(tick_color), LV_PART_MAIN);
             lv_obj_remove_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
           } else {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
@@ -267,6 +315,10 @@ script:
             - script.execute: refresh_alarm_ui
 
   # Точки інтеграції з ядром
+  - id: !extend refresh_clock
+    then:
+      - script.execute: refresh_alarm_ui
+
   - id: !extend on_face_changed
     then:
       - lambda: |-

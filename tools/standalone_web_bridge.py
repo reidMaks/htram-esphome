@@ -58,6 +58,7 @@ class StandaloneWebBridge:
             "lon": 30.5234,
             "alarm_enabled": False,
             "alarm_time": "07:30",
+            "alarm_days": [1, 2, 3, 4, 5, 6, 7],
             "silence_enabled": True,
             "brightness": 100,
             "led_auto": True,
@@ -120,6 +121,11 @@ class StandaloneWebBridge:
                         self.entity_states["brightness"] = int(val)
                     elif name in ("Будильник увімкнено", "Alarm Enabled"):
                         self.entity_states["alarm_enabled"] = bool(val)
+                    elif name in ("Дні будильника", "Alarm Days"):
+                        mask = int(val)
+                        self.entity_states["alarm_days"] = [
+                            d for d in range(1, 8) if (mask & (1 << (d - 1)))
+                        ]
                     elif name == "Хвилина мовчання":
                         self.entity_states["silence_enabled"] = bool(val)
                     elif name == "Підстроювання температури":
@@ -228,6 +234,25 @@ class StandaloneWebBridge:
                                     )
                             except Exception:
                                 pass
+                        if "alarm_days" in data:
+                            val = data["alarm_days"]
+                            if isinstance(val, list):
+                                mask = sum(1 << (d - 1) for d in val if 1 <= d <= 7)
+                                self.entity_states["alarm_days"] = val
+                            elif isinstance(val, int):
+                                mask = val
+                                self.entity_states["alarm_days"] = [
+                                    d for d in range(1, 8) if (mask & (1 << (d - 1)))
+                                ]
+                            else:
+                                mask = 127
+                                self.entity_states["alarm_days"] = [1, 2, 3, 4, 5, 6, 7]
+                            for ent_name in ("Дні будильника", "Alarm Days"):
+                                if ent_name in self.entities:
+                                    self.client.number_command(
+                                        self.entities[ent_name].key, float(mask)
+                                    )
+                                    break
                         if "silence_enabled" in data and "Хвилина мовчання" in self.entities:
                             se_val = bool(data["silence_enabled"])
                             self.client.switch_command(

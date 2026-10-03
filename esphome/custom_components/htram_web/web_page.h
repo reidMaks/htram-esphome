@@ -134,6 +134,50 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
     .range-val { font-size: 0.85rem; color: var(--text-muted); text-align: right; }
 
+    .days-selector {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .day-check {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 2px;
+      background: #0b1120;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.2s;
+      text-align: center;
+      margin-bottom: 0;
+    }
+    .day-check:hover {
+      border-color: var(--primary);
+    }
+    .day-check input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: var(--primary);
+      width: 16px;
+      height: 16px;
+      margin-bottom: 4px;
+    }
+    .day-check .day-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .day-check:has(input:checked) {
+      border-color: rgba(56, 189, 248, 0.4);
+      background: rgba(56, 189, 248, 0.08);
+    }
+    .day-check:has(input:checked) .day-name {
+      color: var(--primary);
+    }
+
     .btn {
       width: 100%;
       background: var(--primary);
@@ -647,6 +691,39 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div class="form-group" style="margin-top: 10px;">
         <label for="inp-alarm-time">Час будильника:</label>
         <input type="time" id="inp-alarm-time" onchange="autoSave({ alarm_time: this.value })">
+      </div>
+      <div class="form-group" style="margin-top: 10px;">
+        <label>Дні тижня:</label>
+        <div class="days-selector" id="alarm-days-group">
+          <label class="day-check" for="chk-day-1">
+            <input type="checkbox" id="chk-day-1" onchange="onAlarmDaysChange()">
+            <span class="day-name">Пн</span>
+          </label>
+          <label class="day-check" for="chk-day-2">
+            <input type="checkbox" id="chk-day-2" onchange="onAlarmDaysChange()">
+            <span class="day-name">Вт</span>
+          </label>
+          <label class="day-check" for="chk-day-3">
+            <input type="checkbox" id="chk-day-3" onchange="onAlarmDaysChange()">
+            <span class="day-name">Ср</span>
+          </label>
+          <label class="day-check" for="chk-day-4">
+            <input type="checkbox" id="chk-day-4" onchange="onAlarmDaysChange()">
+            <span class="day-name">Чт</span>
+          </label>
+          <label class="day-check" for="chk-day-5">
+            <input type="checkbox" id="chk-day-5" onchange="onAlarmDaysChange()">
+            <span class="day-name">Пт</span>
+          </label>
+          <label class="day-check" for="chk-day-6">
+            <input type="checkbox" id="chk-day-6" onchange="onAlarmDaysChange()">
+            <span class="day-name">Сб</span>
+          </label>
+          <label class="day-check" for="chk-day-7">
+            <input type="checkbox" id="chk-day-7" onchange="onAlarmDaysChange()">
+            <span class="day-name">Нд</span>
+          </label>
+        </div>
       </div>
       <hr style="border: 0; border-top: 1px solid var(--card-border); margin: 14px 0;">
       <div class="switch-row">
@@ -1236,6 +1313,20 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }
     }
 
+    function getSelectedAlarmDays() {
+      const days = [];
+      for (let d = 1; d <= 7; d++) {
+        const el = document.getElementById('chk-day-' + d);
+        if (el && el.checked) days.push(d);
+      }
+      return days;
+    }
+
+    function onAlarmDaysChange() {
+      const days = getSelectedAlarmDays();
+      autoSave({ alarm_days: days });
+    }
+
     async function loadInitialSettings() {
       await fetchStatus();
       if (currentSettings.region != null) {
@@ -1246,6 +1337,24 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       updateLocationDisplay(currentSettings.city, currentSettings.region, currentSettings.lat, currentSettings.lon);
       if (currentSettings.alarm_enabled != null) document.getElementById('chk-alarm').checked = currentSettings.alarm_enabled;
       if (currentSettings.alarm_time) document.getElementById('inp-alarm-time').value = currentSettings.alarm_time;
+      if (currentSettings.alarm_days != null) {
+        const days = currentSettings.alarm_days;
+        for (let d = 1; d <= 7; d++) {
+          const el = document.getElementById('chk-day-' + d);
+          if (el) {
+            if (Array.isArray(days)) {
+              el.checked = days.includes(d);
+            } else if (typeof days === 'number') {
+              el.checked = Boolean(days & (1 << (d - 1)));
+            }
+          }
+        }
+      } else {
+        for (let d = 1; d <= 7; d++) {
+          const el = document.getElementById('chk-day-' + d);
+          if (el) el.checked = true;
+        }
+      }
       if (currentSettings.silence_enabled != null) document.getElementById('chk-silence').checked = currentSettings.silence_enabled;
       if (currentSettings.brightness != null) {
         document.getElementById('rng-brightness').value = currentSettings.brightness;

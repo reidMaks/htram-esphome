@@ -78,6 +78,7 @@ api:
         filename: string
       then:
         - lambda: |-
+            lv_refr_now(nullptr);
             id(htram_core)->dump_ppm(filename);
             ESP_LOGI("sim", "Screenshot dumped to %s", filename.c_str());
 

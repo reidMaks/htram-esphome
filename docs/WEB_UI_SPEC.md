@@ -102,7 +102,12 @@ Retrieves live sensor telemetry, device operational metrics, active air raid thr
     "temp_trim": { "type": "number", "description": "Manual temperature calibration offset (-10.0 to +10.0 °C)" },
     "co2_yellow": { "type": "number", "description": "CO2 Yellow threshold in ppm" },
     "co2_red": { "type": "number", "description": "CO2 Red threshold in ppm" },
-    "alarm_time": { "type": "string", "description": "Configured alarm time in HH:MM format" }
+    "alarm_time": { "type": "string", "description": "Configured alarm time in HH:MM format" },
+    "alarm_days": { 
+      "type": "array", 
+      "items": { "type": "integer", "minimum": 1, "maximum": 7 },
+      "description": "Active days of the week for alarm (1=Monday .. 7=Sunday)" 
+    }
   }
 }
 ```
@@ -134,7 +139,8 @@ Retrieves live sensor telemetry, device operational metrics, active air raid thr
   "temp_trim": 0.0,
   "co2_yellow": 1000,
   "co2_red": 1500,
-  "alarm_time": "07:30"
+  "alarm_time": "07:30",
+  "alarm_days": [1, 2, 3, 4, 5, 6, 7]
 }
 ```
 
@@ -172,6 +178,7 @@ Updates persistent device settings, calibration offsets, alert region, and user 
 | `city` | string | Display city name | UTF-8, max 63 chars | `"Київ"` |
 | `alarm_enabled`| boolean | Master enable for daily alarm | `true` / `false` | `false` |
 | `alarm_time` | string | Alarm trigger time | `"HH:MM"` (24-hour) | `"07:30"` |
+| `alarm_days` | array of int / bitmask | Active days of the week (1=Mon..7=Sun) | `[1..7]` or bitmask (0..127) | `[1, 2, 3, 4, 5, 6, 7]` |
 | `silence_enabled`| boolean | Enable 09:00 Minute of Silence tribute | `true` / `false` | `true` |
 | `led_auto` | boolean | Ambient CO2 LED auto indication | `true` / `false` | `true` |
 | `brightness` | number | Display backlight percentage | 5 .. 100 (%) | `100` |
