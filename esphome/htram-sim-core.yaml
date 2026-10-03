@@ -119,15 +119,26 @@ api:
         - script.execute: refresh_clock
         - script.execute: refresh_slot
 
+    - service: simulate_ap_state
+      variables:
+        ap_ok: int
+      then:
+        - lambda: |-
+            id(sim_override_ap) = ap_ok;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+
     - service: simulate_reboot_resync
       then:
         - lambda: |-
             id(sim_override_net) = -1;
             id(sim_override_time) = -1;
+            id(sim_override_ap) = -1;
             id(face_state) = -1;
             id(htram_arbiter_hub)->release_screen("overlay");
             id(htram_arbiter_hub)->release_screen("weather");
             id(htram_arbiter_hub)->release_screen("timer");
+            id(htram_arbiter_hub)->release_screen("ap");
             id(htram_arbiter_hub)->reset_audio();
         - script.execute: refresh_face
         - script.execute: refresh_clock
@@ -243,6 +254,18 @@ htram_arbiter:
             lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
             id(slot_hold) = false;
+    - event: button_many
+      context: any
+      priority: 10
+      name: core_setup_wifi_many
+      then:
+        - script.execute: start_wifi_setup
+    - event: button_quadruple
+      context: any
+      priority: 10
+      name: core_setup_wifi_quadruple
+      then:
+        - script.execute: start_wifi_setup
 
 time:
   - platform: host
@@ -271,6 +294,17 @@ globals:
 script:
   - id: refresh_leds
     then: []
+
+  - id: start_wifi_setup
+    mode: restart
+    then:
+      - lambda: |-
+          id(sim_override_ap) = 1;
+          id(htram_arbiter_hub)->request_screen(5, "ap");
+          id(ap_manual) = false;
+          id(ap_page) = 0;
+          id(face_state) = -1;
+          id(refresh_face).execute();
 
 sensor:
   - platform: template

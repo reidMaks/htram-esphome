@@ -255,7 +255,14 @@ void HtramGd32Component::process_packet_(const uint8_t *data, size_t len) {
     // while it was booting was lost -- its UART was not up yet -- so the face
     // and the LEDs have to be sent again. See consume_gd32_boot().
     if (flags & 0x02) {
-      ESP_LOGI(TAG, "GD32 announced a restart; display and LED state need resending");
+      std::string reasons;
+      if (flags & 0x10) reasons += "FWDGT(Watchdog) ";
+      if (flags & 0x20) reasons += "SWRST(Software) ";
+      if (flags & 0x40) reasons += "POR(Power/Brownout) ";
+      if (flags & 0x80) reasons += "PIN(NRST) ";
+      if (reasons.empty()) reasons = "Normal/Unknown ";
+      ESP_LOGW(TAG, "GD32 restarted [Cause: %s flags=0x%02X]: full repaint + LED/backlight resend",
+               reasons.c_str(), flags);
       this->gd32_booted_ = true;
     }
     if (flags & 0x04) {
@@ -1391,7 +1398,7 @@ void HtramGd32Component::send_draw_cached_asset(uint16_t asset_id, uint8_t x, ui
 void HtramGd32Component::send_draw_cached_asset_raw(uint16_t asset_id, uint8_t x, uint8_t y,
                                                     uint16_t fg_color, uint16_t bg_color,
                                                     uint8_t flags) {
-  if (ota_mode_) return;
+  if (ota_mode_ || this->flow_paused_) return;
   uint8_t pkt[14];
   pkt[0] = 0xAA;
   pkt[1] = 0x55;

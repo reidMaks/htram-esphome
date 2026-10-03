@@ -1,5 +1,6 @@
 #include "sensors.h"
 #include "gd32f150.h"
+#include "periph.h"
 
 /* ── SHT30 I2C Bitbang (PB6 = SCL, PB7 = SDA, PA8 = nRESET, PB2 = PWR) ── */
 
@@ -338,6 +339,7 @@ int sensors_poll_co2(uint16_t *co2_ppm, uint8_t *warmup_flag)
     /* Read 7-byte response: FE 04 02 <hi> <lo> <crc_lo> <crc_hi> */
     uint8_t resp[7] = {0};
     for (int i = 0; i < 7; i++) {
+        watchdog_kick();
         int b = usart0_getc_timeout(i == 0 ? 300 : 100);
         if (b < 0) return -(i + 1);
         resp[i] = (uint8_t)b;

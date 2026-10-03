@@ -1,16 +1,64 @@
-# HTRAM Feature: Прогноз погоди (Weather Forecast Face)
+# HTRAM Feature: Прогноз погоди (Standalone Open-Meteo HTTP)
 #
-# Надає окремий під'єднуваний екран прогнозу погоди на день:
-# - Отримує погодинний прогноз через нативну дію weather.get_forecasts;
-# - Відображає 3 пори доби (Ранок, День, Вечір) з піктограмами станів та температурами;
+# Автономний екран прогнозу погоди без Home Assistant:
+# - Отримує погодинний прогноз через безкоштовний публічний Open-Meteo HTTP API;
+# - 0 токенів / API ключів, працює по прямому HTTP (зберігає DRAM мікроконтролера);
+# - Відображає 3 пори доби з піктограмами станів та температурами;
 # - Відображає діапазон мін/макс температур на сьогодні;
 # - Вмикається подвійним кліком у звичайному режимі або після вимкнення будильника;
-# - Автоматично закривається через 60 с або при будь-якому одинарному кліку.
+# - Автоматично закривається через 60 с або при кліку.
 
 substitutions:
-  weather_entity: "weather.forecast_home"
   weather_update_interval: "30min"
   weather_screen_timeout: "60s"
+  response_template: >-
+    {%- set fc = (response.values() | list)[0].forecast if (response and (response.values() | list)[0].forecast is defined) else [] -%}
+    {%- set ns = namespace(min=999, max=-999) -%}
+    {%- for item in fc[:24] -%}
+      {%- set t = item.temperature | float -%}
+      {%- if t < ns.min %}{% set ns.min = t %}{% endif -%}
+      {%- if t > ns.max %}{% set ns.max = t %}{% endif -%}
+    {%- endfor -%}
+    {%- set flen = fc | length -%}
+    {%- set cur_h = (fc[0].datetime[11:13] | int) if flen > 0 else 12 -%}
+    {%- if cur_h < 12 -%}
+      {%- set o1 = [[cur_h + 1, 9] | max - cur_h, flen - 1] | min -%}
+      {%- set o2 = [14 - cur_h, flen - 1] | min -%}
+      {%- set o3 = [19 - cur_h, flen - 1] | min -%}
+    {%- elif cur_h < 17 -%}
+      {%- set o1 = [[cur_h + 1, 14] | max - cur_h, flen - 1] | min -%}
+      {%- set o2 = [19 - cur_h, flen - 1] | min -%}
+      {%- set o3 = [32 - cur_h, flen - 1] | min -%}
+    {%- else -%}
+      {%- set p1_target = 23 if cur_h >= 23 else ([cur_h + 1, 19] | max) -%}
+      {%- set o1 = [[[p1_target - cur_h, 1] | max, flen - 1] | min, 0] | max -%}
+      {%- set o2 = [[32 - cur_h, flen - 1] | min, 0] | max -%}
+      {%- set o3 = [[38 - cur_h, flen - 1] | min, 0] | max -%}
+    {%- endif -%}
+    {%- set o1 = [o1, 0] | max -%}
+    {%- set o2 = [o2, 0] | max -%}
+    {%- set o3 = [o3, 0] | max -%}
+    {%- set pt1 = fc[o1] if flen > o1 else none -%}
+    {%- set pt2 = fc[o2] if flen > o2 else none -%}
+    {%- set pt3 = fc[o3] if flen > o3 else none -%}
+    {%- if ns.min > 900 and flen > 0 %}{% set ns.min = fc[0].temperature | float %}{% endif -%}
+    {%- if ns.max < -900 and flen > 0 %}{% set ns.max = fc[0].temperature | float %}{% endif -%}
+    {{ {
+      'min': ns.min, 'max': ns.max,
+      'm_t': (pt1.temperature | float) if pt1 else none,
+      'm_c': pt1.condition if pt1 else '',
+      'm_h': (pt1.datetime[11:13] | int) if pt1 else 9,
+      'd_t': (pt2.temperature | float) if pt2 else none,
+      'd_c': pt2.condition if pt2 else '',
+      'd_h': (pt2.datetime[11:13] | int) if pt2 else 14,
+      'e_t': (pt3.temperature | float) if pt3 else none,
+      'e_c': pt3.condition if pt3 else '',
+      'e_h': (pt3.datetime[11:13] | int) if pt3 else 19
+    } | tojson }}
+  on_success: ""
+
+http_request:
+  timeout: 10s
 
 globals:
   - id: weather_shown
@@ -71,6 +119,19 @@ globals:
     restore_value: false
     initial_value: "19"
 
+  - id: weather_lat
+    type: float
+    restore_value: true
+    initial_value: "50.45" # Київ за замовчуванням
+  - id: weather_lon
+    type: float
+    restore_value: true
+    initial_value: "30.52"
+  - id: weather_city_name
+    type: std::string
+    restore_value: true
+    initial_value: '"Київ"'
+
 lvgl:
   widgets:
     - obj:
@@ -85,7 +146,6 @@ lvgl:
         clickable: false
         hidden: true
         widgets:
-          # Велика дата зверху без слова «сьогодні»
           - label:
               id: ui_weather_title
               align: top_mid
@@ -98,18 +158,17 @@ lvgl:
               align: top_mid
               y: 54
               text_font: font_slot
-              text_color: 0x707880
+              text_color: 0x9AA2AC
               text: "--° ... --°"
 
-          # Точки півкола в нижній половині:
-          # Точка 1: Ранок (ліворуч, x = -66, y = -12..50)
+          # Колонка 1: Ранок
           - label:
               id: ui_weather_col1_lbl
               align: center
               x: -66
-              y: -12
+              y: -8
               text_font: font_slot
-              text_color: 0x707880
+              text_color: 0x9AA2AC
               text: "9:00"
           - label:
               id: ui_weather_col1_temp
@@ -120,14 +179,14 @@ lvgl:
               text_color: 0xF0EAE0
               text: "--°"
 
-          # Точка 2: День (по центру нижче, x = 0, y = 16..78)
+          # Колонка 2: День (акцент)
           - label:
               id: ui_weather_col2_lbl
               align: center
               x: 0
-              y: 16
+              y: 20
               text_font: font_slot
-              text_color: 0x707880
+              text_color: 0x9AA2AC
               text: "14:00"
           - label:
               id: ui_weather_col2_temp
@@ -138,14 +197,14 @@ lvgl:
               text_color: 0xF0EAE0
               text: "--°"
 
-          # Точка 3: Вечір (праворуч, x = 66, y = -12..50)
+          # Колонка 3: Вечір
           - label:
               id: ui_weather_col3_lbl
               align: center
               x: 66
-              y: -12
+              y: -8
               text_font: font_slot
-              text_color: 0x707880
+              text_color: 0x9AA2AC
               text: "19:00"
           - label:
               id: ui_weather_col3_temp
@@ -186,7 +245,7 @@ script:
                      now.day_of_month,
                      MONTHS[now.month >= 1 && now.month <= 12 ? now.month : 0]);
           } else {
-            snprintf(buf, sizeof(buf), "прогноз");
+            snprintf(buf, sizeof(buf), "%s", id(weather_city_name).c_str());
           }
           lv_label_set_text(id(ui_weather_title), buf);
 
@@ -198,7 +257,7 @@ script:
           }
           lv_label_set_text(id(ui_weather_range), buf);
 
-          // Колонка 1 (Ранок)
+          // Колонка 1
           snprintf(buf, sizeof(buf), "%d:00", id(weather_morning_hour));
           lv_label_set_text(id(ui_weather_col1_lbl), buf);
           if (!isnan(id(weather_morning_temp))) {
@@ -208,7 +267,7 @@ script:
           }
           lv_label_set_text(id(ui_weather_col1_temp), buf);
 
-          // Колонка 2 (День)
+          // Колонка 2
           snprintf(buf, sizeof(buf), "%d:00", id(weather_day_hour));
           lv_label_set_text(id(ui_weather_col2_lbl), buf);
           if (!isnan(id(weather_day_temp))) {
@@ -218,7 +277,7 @@ script:
           }
           lv_label_set_text(id(ui_weather_col2_temp), buf);
 
-          // Колонка 3 (Вечір)
+          // Колонка 3
           snprintf(buf, sizeof(buf), "%d:00", id(weather_evening_hour));
           lv_label_set_text(id(ui_weather_col3_lbl), buf);
           if (!isnan(id(weather_evening_temp))) {
@@ -242,26 +301,26 @@ script:
           auto draw_weather_col = [](int cx, int cy, const std::string &cond, int hour) {
             const bool is_night = (cond == "clear-night") || (hour >= 21 || hour < 6);
             uint16_t asset1 = is_night ? htram_gd32::ASSET_ID_WEATHER_CLEARNIGHT : htram_gd32::ASSET_ID_WEATHER_SUNNY;
-            uint32_t color1 = is_night ? 0xDDE6EE : 0xFFB800; // холодне місячне сяйво або тепле золото
+            uint32_t color1 = is_night ? 0xDDE6EE : 0xFFB800;
             int asset2 = -1;
             uint32_t color2 = 0xF0EAE0;
 
             if (is_night && (cond == "sunny" || cond == "clear-night")) {
               asset1 = htram_gd32::ASSET_ID_WEATHER_CLEARNIGHT;
-              color1 = 0xDDE6EE; // місяць - холодне сріблясто-біле сяйво
+              color1 = 0xDDE6EE;
             } else if (is_night && cond == "partlycloudy") {
               asset1 = htram_gd32::ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_MOON;
-              color1 = 0xDDE6EE; // місяць - холодне сріблясто-біле сяйво
+              color1 = 0xDDE6EE;
               asset2 = htram_gd32::ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_CLOUD;
-              color2 = 0xF0EAE0; // хмара - м'який білий
+              color2 = 0xF0EAE0;
             } else if (cond == "sunny" || cond == "clear-night") {
               asset1 = htram_gd32::ASSET_ID_WEATHER_SUNNY;
               color1 = 0xFFB800;
             } else if (cond == "partlycloudy") {
               asset1 = htram_gd32::ASSET_ID_WEATHER_PARTLYCLOUDY_SUN;
-              color1 = 0xFFB800; // сонце - тепле золото
+              color1 = 0xFFB800;
               asset2 = htram_gd32::ASSET_ID_WEATHER_PARTLYCLOUDY_CLOUD;
-              color2 = 0xF0EAE0; // хмара - м'який білий
+              color2 = 0xF0EAE0;
             } else if (cond == "cloudy" || cond == "exceptional") {
               asset1 = htram_gd32::ASSET_ID_WEATHER_CLOUDY;
               color1 = 0xA0A8B0;
@@ -269,17 +328,17 @@ script:
               asset1 = htram_gd32::ASSET_ID_WEATHER_RAINY_CLOUD;
               color1 = 0xA0A8B0;
               asset2 = htram_gd32::ASSET_ID_WEATHER_RAINY_DROPS;
-              color2 = 0x38BDF8; // дощ - блакитний
+              color2 = 0x38BDF8;
             } else if (cond == "lightning" || cond == "lightning-rainy") {
               asset1 = htram_gd32::ASSET_ID_WEATHER_LIGHTNING_CLOUD;
               color1 = 0x8A929A;
               asset2 = htram_gd32::ASSET_ID_WEATHER_LIGHTNING_BOLT;
-              color2 = 0xFACC15; // блискавка - жовта
+              color2 = 0xFACC15;
             } else if (cond == "snowy" || cond == "snowy-rainy" || cond == "hail") {
               asset1 = htram_gd32::ASSET_ID_WEATHER_SNOWY_CLOUD;
               color1 = 0xA0A8B0;
               asset2 = htram_gd32::ASSET_ID_WEATHER_SNOWY_FLAKES;
-              color2 = 0xEEF2F6; // сніг - білий
+              color2 = 0xEEF2F6;
             } else if (cond == "fog") {
               asset1 = htram_gd32::ASSET_ID_WEATHER_FOG;
               color1 = 0x94A3B8;
@@ -288,10 +347,7 @@ script:
               color1 = 0x38BDF8;
             }
 
-            // Шар 1 (сонце/місяць/хмара): непрозорий режим (flags = 0, bg = 0x000000)
-            // повністю затирає залишки старих цифр годинника у прямокутнику 36x36
             id(htram_core)->send_draw_cached_asset_centered(asset1, cx, cy, Color(color1), Color(0x000000), 0);
-            // Шар 2 (хмарка над сонцем, краплі дощу, блискавка): прозорий режим (flags = 1) поверх шару 1
             if (asset2 >= 0) {
               id(htram_core)->send_draw_cached_asset_centered((uint16_t) asset2, cx, cy, Color(color2), Color(0x000000), 1);
             }
@@ -306,105 +362,106 @@ script:
     then:
       - if:
           condition:
-            api.connected:
+            lambda: |-
+              #if defined(USE_WIFI)
+              return wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected();
+              #else
+              return true;
+              #endif
           then:
-            - homeassistant.action:
-                action: weather.get_forecasts
-                data:
-                  entity_id: ${weather_entity}
-                  type: hourly
+            - http_request.get:
+                url: !lambda |-
+                  char url[160];
+                  snprintf(url, sizeof(url),
+                           "http://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&hourly=temperature_2m,weather_code&forecast_days=1&timezone=auto",
+                           id(weather_lat), id(weather_lon));
+                  return std::string(url);
                 capture_response: true
-                response_template: >-
-                  {%- set fc = (response.values() | list)[0].forecast if (response and (response.values() | list)[0].forecast is defined) else [] -%}
-                  {%- set ns = namespace(min=999, max=-999) -%}
-                  {%- for item in fc[:24] -%}
-                    {%- set t = item.temperature | float -%}
-                    {%- if t < ns.min %}{% set ns.min = t %}{% endif -%}
-                    {%- if t > ns.max %}{% set ns.max = t %}{% endif -%}
-                  {%- endfor -%}
-                  {%- set flen = fc | length -%}
-                  {%- set cur_h = (fc[0].datetime[11:13] | int) if flen > 0 else 12 -%}
-                  {%- if cur_h < 12 -%}
-                    {%- set o1 = [[cur_h + 1, 9] | max - cur_h, flen - 1] | min -%}
-                    {%- set o2 = [14 - cur_h, flen - 1] | min -%}
-                    {%- set o3 = [19 - cur_h, flen - 1] | min -%}
-                  {%- elif cur_h < 17 -%}
-                    {%- set o1 = [[cur_h + 1, 14] | max - cur_h, flen - 1] | min -%}
-                    {%- set o2 = [19 - cur_h, flen - 1] | min -%}
-                    {%- set o3 = [32 - cur_h, flen - 1] | min -%}
-                  {%- else -%}
-                    {%- set p1_target = 23 if cur_h >= 23 else ([cur_h + 1, 19] | max) -%}
-                    {%- set o1 = [[[p1_target - cur_h, 1] | max, flen - 1] | min, 0] | max -%}
-                    {%- set o2 = [[32 - cur_h, flen - 1] | min, 0] | max -%}
-                    {%- set o3 = [[38 - cur_h, flen - 1] | min, 0] | max -%}
-                  {%- endif -%}
-                  {%- set o1 = [o1, 0] | max -%}
-                  {%- set o2 = [o2, 0] | max -%}
-                  {%- set o3 = [o3, 0] | max -%}
-                  {%- set pt1 = fc[o1] if flen > o1 else none -%}
-                  {%- set pt2 = fc[o2] if flen > o2 else none -%}
-                  {%- set pt3 = fc[o3] if flen > o3 else none -%}
-                  {%- if ns.min > 900 and flen > 0 %}{% set ns.min = fc[0].temperature | float %}{% endif -%}
-                  {%- if ns.max < -900 and flen > 0 %}{% set ns.max = fc[0].temperature | float %}{% endif -%}
-                  {{ {
-                    'min': ns.min, 'max': ns.max,
-                    'm_t': (pt1.temperature | float) if pt1 else none,
-                    'm_c': pt1.condition if pt1 else '',
-                    'm_h': (pt1.datetime[11:13] | int) if pt1 else 9,
-                    'd_t': (pt2.temperature | float) if pt2 else none,
-                    'd_c': pt2.condition if pt2 else '',
-                    'd_h': (pt2.datetime[11:13] | int) if pt2 else 14,
-                    'e_t': (pt3.temperature | float) if pt3 else none,
-                    'e_c': pt3.condition if pt3 else '',
-                    'e_h': (pt3.datetime[11:13] | int) if pt3 else 19
-                  } | tojson }}
-                on_success:
-                  - lambda: |-
-                      JsonObjectConst data = response["response"];
-                      if (data.isNull()) {
-                        ESP_LOGW("weather", "Weather response is null or invalid");
-                        return;
-                      }
+                max_response_buffer_size: 2048
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code != 200) {
+                          ESP_LOGW("weather", "Open-Meteo returned HTTP %d", response->status_code);
+                          return;
+                        }
+                        bool ok = json::parse_json(body, [](JsonObject root) -> bool {
+                          if (root["hourly"].isNull()) return false;
+                          JsonObjectConst hourly = root["hourly"];
+                          JsonArrayConst temps = hourly["temperature_2m"];
+                          JsonArrayConst codes = hourly["weather_code"];
+                          if (temps.size() == 0 || codes.size() == 0) return false;
 
-                      if (data["min"].is<float>() && data["max"].is<float>()) {
-                        float min_t = data["min"].as<float>();
-                        float max_t = data["max"].as<float>();
-                        if (min_t < 900.0f) id(weather_min_temp) = min_t;
-                        if (max_t > -900.0f) id(weather_max_temp) = max_t;
-                      }
+                          float min_t = 999.0f;
+                          float max_t = -999.0f;
+                          for (size_t i = 0; i < temps.size() && i < 24; i++) {
+                            float t = temps[i].as<float>();
+                            if (t < min_t) min_t = t;
+                            if (t > max_t) max_t = t;
+                          }
+                          id(weather_min_temp) = min_t;
+                          id(weather_max_temp) = max_t;
 
-                      if (data["m_t"].is<float>()) {
-                        id(weather_morning_temp) = data["m_t"].as<float>();
-                        id(weather_morning_cond) = data["m_c"].as<std::string>();
-                        id(weather_morning_hour) = data["m_h"].as<int>();
-                      }
-                      if (data["d_t"].is<float>()) {
-                        id(weather_day_temp) = data["d_t"].as<float>();
-                        id(weather_day_cond) = data["d_c"].as<std::string>();
-                        id(weather_day_hour) = data["d_h"].as<int>();
-                      }
-                      if (data["e_t"].is<float>()) {
-                        id(weather_evening_temp) = data["e_t"].as<float>();
-                        id(weather_evening_cond) = data["e_c"].as<std::string>();
-                        id(weather_evening_hour) = data["e_h"].as<int>();
-                      }
+                          auto wmo_to_cond = [](int code) -> std::string {
+                            if (code == 0) return "sunny";
+                            if (code == 1 || code == 2) return "partlycloudy";
+                            if (code == 3) return "cloudy";
+                            if (code == 45 || code == 48) return "fog";
+                            if (code >= 51 && code <= 63) return "rainy";
+                            if (code == 65 || code == 82) return "pouring";
+                            if (code >= 71 && code <= 86) return "snowy";
+                            if (code >= 95) return "lightning";
+                            return "cloudy";
+                          };
 
-                      id(weather_valid) = true;
+                          auto now = id(ha_time).now();
+                          if (!now.is_valid()) now = id(net_time).now();
+                          int cur_h = now.is_valid() ? now.hour : 12;
 
-                      ESP_LOGI("weather", "Forecast updated: min=%.0f max=%.0f M=%d:00:%.0f(%s) D=%d:00:%.0f(%s) E=%d:00:%.0f(%s)",
-                               id(weather_min_temp), id(weather_max_temp),
-                               id(weather_morning_hour), id(weather_morning_temp), id(weather_morning_cond).c_str(),
-                               id(weather_day_hour), id(weather_day_temp), id(weather_day_cond).c_str(),
-                               id(weather_evening_hour), id(weather_evening_temp), id(weather_evening_cond).c_str());
+                          int h1, h2, h3;
+                          if (cur_h < 12) {
+                            h1 = 9; h2 = 14; h3 = 19;
+                          } else if (cur_h < 17) {
+                            h1 = (cur_h < 14) ? 14 : cur_h;
+                            h2 = 19;
+                            h3 = 23;
+                          } else {
+                            h1 = (cur_h < 19) ? 19 : cur_h;
+                            h2 = 23;
+                            h3 = 6;
+                          }
 
-                      if (id(weather_shown)) {
-                        id(weather_icons_needed) = true;
-                        id(refresh_weather_ui).execute();
-                        lv_obj_invalidate(id(ui_weather_face));
-                      }
-                on_error:
-                  - lambda: |-
-                      ESP_LOGW("weather", "Failed to fetch weather forecast: %s", error.c_str());
+                          id(weather_morning_hour) = h1;
+                          id(weather_day_hour) = h2;
+                          id(weather_evening_hour) = h3;
+
+                          if (h1 < (int) temps.size()) {
+                            id(weather_morning_temp) = temps[h1].as<float>();
+                            id(weather_morning_cond) = wmo_to_cond(codes[h1].as<int>());
+                          }
+                          if (h2 < (int) temps.size()) {
+                            id(weather_day_temp) = temps[h2].as<float>();
+                            id(weather_day_cond) = wmo_to_cond(codes[h2].as<int>());
+                          }
+                          if (h3 < (int) temps.size()) {
+                            id(weather_evening_temp) = temps[h3].as<float>();
+                            id(weather_evening_cond) = wmo_to_cond(codes[h3].as<int>());
+                          }
+
+                          id(weather_valid) = true;
+                          return true;
+                        });
+
+                        if (ok) {
+                          ESP_LOGI("weather", "Open-Meteo forecast updated: min=%.0f max=%.0f", id(weather_min_temp), id(weather_max_temp));
+                          if (id(weather_shown)) {
+                            id(weather_icons_needed) = true;
+                            id(refresh_weather_ui).execute();
+                            lv_obj_invalidate(id(ui_weather_face));
+                          }
+                        } else {
+                          ESP_LOGW("weather", "Failed to parse Open-Meteo JSON");
+                        }
 
   - id: hide_weather_timeout
     mode: restart

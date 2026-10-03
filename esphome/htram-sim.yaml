@@ -122,3 +122,31 @@ api:
             id(timer_remaining_seconds) = seconds;
             id(refresh_timer_ui).execute();
             id(refresh_slot).execute();
+
+    - service: start_timer
+      variables:
+        minutes: int
+        seconds: int
+      then:
+        - lambda: |-
+            int tot = minutes * 60 + seconds;
+            if (tot > 0) {
+              id(timer_total_seconds) = tot;
+              id(timer_remaining_seconds) = tot;
+              auto now = id(ha_time).now();
+              if (now.is_valid()) {
+                int cur = now.hour * 3600 + now.minute * 60 + now.second;
+                int fin = (cur + tot) % 86400;
+                id(timer_finish_hour) = (fin / 3600) % 24;
+                id(timer_finish_minute) = (fin % 3600) / 60.0f;
+              }
+            }
+        - script.execute: timer_start_running
+
+    - service: cancel_timer
+      then:
+        - script.execute: timer_cancel
+
+    - service: pause_timer
+      then:
+        - script.execute: timer_pause

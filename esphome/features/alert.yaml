@@ -1,11 +1,13 @@
-# HTRAM Feature: Повітряна тривога (Air Raid Alert via JAAM WS)
+# HTRAM Feature: Повітряна тривога (Standalone Air Raid Alert via JAAM Cloud WS)
 #
-# Надає інтеграцію з локальною мапою тривог JAAM (jaam-one.local:81):
-# - Отримання прапорців типів загроз (повітряна, дрони, ракети, КАБи, балістика, розвідники);
+# Надає інтеграцію з відкритим публічним хмарним сервером JAAM (ws.jaam.net.ua:80/data_v4):
+# - 0 токенів / API ключів, відкритий WebSocket;
+# - Отримання прапорців типів загроз (повітряна, дрони, ракети, КАБи, балістика);
 # - Звукове сповіщення через диспетчер звуку з найвищим пріоритетом (SOUND_PRIO_ALERT = 40);
 # - Відображення піктограми загрози у верхньому статусному слоті;
 # - Тимчасове перефарбовування цифр годинника (червоний під час початку, зелений при відбої);
-# - Індикатор втрати зв'язку з сервером тривог (ui_nolink).
+# - Індикатор втрати зв'язку з сервером тривог (ui_nolink);
+# - Збереження обраного регіону в NVS з можливістю зміни через веб-інтерфейс.
 
 substitutions:
   alert_start_rtttl: "AlertOn:d=8,o=6,b=180:a,b,c7,16p,a,b,c7"
@@ -20,19 +22,25 @@ external_components:
 
 jaam_ws:
   id: jaam
-  host: jaam-one.local
-  port: 81
+  host: ws.jaam.net.ua
+  port: 80
+  path: "/data_fusion_v1"
+  region_id: 31
   on_flags:
     then:
       - lambda: |-
-          // Біти з ALERT_TYPES інтеграції jaam_ha: 0 повітряна, 5 дрони,
-          // 6 ракети, 7 КАБи, 8 балістика, 10 розвідники.
-          const bool air = flags & (1u << 0);
+          // Біти з ALERT_TYPES інтеграції jaam_ha: 0 повітряна (legacy),
+          // 5 дрони, 6 ракети, 7 КАБи, 8 балістика, 10 розвідники,
+          // 11 жовтий рівень (дрон-загроза), 12 червоний рівень (ракети).
+          const bool yellow = flags & (1u << 11);
+          const bool red    = flags & (1u << 12);
+          const bool air    = (flags & (1u << 0)) || yellow || red;
           id(alert_ballistic) = flags & (1u << 8);
           id(alert_kab)       = flags & (1u << 7);
           id(alert_missile)   = flags & (1u << 6);
           id(alert_drone)     = flags & (1u << 5);
           id(alert_recon)     = flags & (1u << 10);
+          id(alert_yellow)    = yellow && !red;
 
           if (air != id(alert_active)) {
             id(alert_active) = air;
@@ -42,19 +50,29 @@ jaam_ws:
             const uint32_t ts = now.is_valid() ? now.timestamp : (uint32_t) epoch;
             if (air) {
               id(alert_mark_until) = 0;
-              id(alert_mark_color) = 0xE5484D;
+              id(alert_mark_color) = id(alert_yellow) ? 0xFFC53D : 0xE5484D;
             } else {
               id(alert_mark_until) = ts + ${alert_mark_minutes} * 60;
               id(alert_mark_color) = 0x3DD68C;
             }
             id(play_alert_sound).execute(air);
+          } else if (air) {
+            id(alert_mark_color) = id(alert_yellow) ? 0xFFC53D : 0xE5484D;
           }
       - script.execute: refresh_alert_marks
       - script.execute: refresh_alert_icon
       - script.execute: on_alert_changed
 
 globals:
+  - id: alert_region
+    type: int
+    restore_value: true
+    initial_value: "31" # За замовчуванням м. Київ (region_id 31 у JAAM)
   - id: alert_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alert_yellow
     type: bool
     restore_value: false
     initial_value: "false"
@@ -132,15 +150,15 @@ script:
             id(htram_arbiter_hub)->clear_status_icon("alert");
           }
 
-          // Show only if this is the top status icon and screen is normal
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
           const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show) {
             if (id(alert_icon_drawn_asset) >= 0 && id(alert_icon_drawn_asset) != (int) asset_id) {
               id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
             }
+            const Color icon_color = id(alert_yellow) ? Color(0xFFC53D) : Color(0xE5484D);
             id(htram_core)->send_draw_cached_asset_centered(
-                asset_id, 190, 86, Color(0xE5484D), Color(0x000000), 1);
+                asset_id, 190, 86, icon_color, Color(0x000000), 1);
             id(alert_icon_drawn_asset) = (int) asset_id;
             id(alert_icon_needed) = true;
           } else if (id(alert_icon_drawn_asset) >= 0) {
@@ -159,9 +177,9 @@ script:
 
           uint32_t want = 0xF0EAE0;
           if (id(alert_active)) {
-            want = 0xE5484D; // Red while alert is in progress
+            want = id(alert_yellow) ? 0xFFC53D : 0xE5484D; // Yellow or Red while alert is in progress
           } else if (t < (uint32_t) id(alert_mark_until)) {
-            want = (uint32_t) id(alert_mark_color); // Green for 5m after all-clear
+            want = (uint32_t) id(alert_mark_color);
           }
 
           static uint32_t shown = 0xF0EAE0;
@@ -185,14 +203,24 @@ script:
             id(refresh_alert_icon).execute();
           }
 
+  - id: !extend refresh_slot
+    then:
+      - lambda: |-
+          if (id(alert_active)) {
+            id(alert_icon_needed) = true;
+          }
+
   - id: !extend on_screen_drawn
     then:
       - lambda: |-
+          if (!id(alert_icon_needed)) return;
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
           const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show && id(alert_icon_drawn_asset) >= 0) {
+            id(alert_icon_needed) = false;
+            const Color icon_color = id(alert_yellow) ? Color(0xFFC53D) : Color(0xE5484D);
             id(htram_core)->send_draw_cached_asset_centered(
-                (uint16_t) id(alert_icon_drawn_asset), 190, 86, Color(0xE5484D), Color(0x000000), 1);
+                (uint16_t) id(alert_icon_drawn_asset), 190, 86, icon_color, Color(0x000000), 1);
           }
 
 interval:
@@ -221,6 +249,10 @@ interval:
 
 esphome:
   on_boot:
+    - priority: 100
+      then:
+        - lambda: |-
+            id(jaam)->set_region_id(id(alert_region));
     - priority: -100
       then:
         - script.execute: refresh_alert_icon

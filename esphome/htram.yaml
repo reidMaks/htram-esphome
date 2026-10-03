@@ -30,6 +30,7 @@ substitutions:
   friendly_name: HTRAM
   name_add_mac_suffix: "false"
   repo_url: "."
+  firmware_version: "1.0.0"
 
 packages:
   core: !include htram-core.yaml
@@ -39,3 +40,24 @@ packages:
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
+
+htram_web:
+  id: htram_standalone_web
+  on_save_settings:
+    then:
+      - lambda: |-
+          id(alert_region) = region;
+          id(jaam)->set_region_id(region);
+          id(weather_lat) = lat;
+          id(weather_lon) = lon;
+          id(weather_city_name) = city;
+          id(fetch_weather_forecast).execute();
+          id(refresh_face).execute();
+
+interval:
+  - interval: 5s
+    then:
+      - lambda: |-
+          if (id(alert_active) != id(htram_standalone_web).is_alert_active()) {
+            id(htram_standalone_web).set_alert_active(id(alert_active));
+          }

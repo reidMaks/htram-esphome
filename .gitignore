@@ -78,3 +78,7 @@ tests/*.so
 coverage_html/
 .pytest_cache/
 
+# Agent execution artifacts
+.agents/*
+!.agents/skills
+

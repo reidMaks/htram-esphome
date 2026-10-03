@@ -96,6 +96,10 @@ globals:
     type: int
     restore_value: false
     initial_value: "-1"
+  - id: sim_override_ap
+    type: int
+    restore_value: false
+    initial_value: "-1"
 
 script:
   # Extension point: updated by active face (e.g. face_clock)
@@ -159,17 +163,20 @@ script:
     then:
       - lambda: |-
           if (id(slot_hold)) return;  // the ID / IP overlay owns the face
-          if (id(htram_arbiter_hub)->get_screen_mode() != 0 && !id(htram_arbiter_hub)->is_silence_active()) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0 &&
+              !id(htram_arbiter_hub)->is_silence_active() &&
+              id(htram_arbiter_hub)->get_screen_mode() != 5) return;
 
           // The fallback AP is the only state where the device is actively
           // asking for help and can do nothing else useful -- no HA, no
           // weather, nothing. So it outranks even a valid clock.
           #ifdef USE_CAPTIVE_PORTAL
-          const bool ap = captive_portal::global_captive_portal != nullptr &&
-                          captive_portal::global_captive_portal->is_active();
+          const bool real_ap = captive_portal::global_captive_portal != nullptr &&
+                               captive_portal::global_captive_portal->is_active();
           #else
-          const bool ap = false;
+          const bool real_ap = false;
           #endif
+          const bool ap = (id(sim_override_ap) != -1) ? (id(sim_override_ap) == 1) : real_ap;
           #ifdef USE_WIFI
           bool real_net = (wifi::global_wifi_component != nullptr) ? wifi::global_wifi_component->is_connected() : true;
           #else
@@ -187,7 +194,16 @@ script:
           // the minute of silence, then the ordinary faces.
           const bool silence = id(htram_arbiter_hub)->is_silence_active();
           const int want = ap ? 3 : (silence ? 4 : (have_time ? 0 : (net ? 1 : 2)));
-          if (want != 3) id(ap_manual) = false;
+          if (want != 3) {
+            id(ap_manual) = false;
+            if (id(htram_arbiter_hub)->get_screen_owner() == "ap") {
+              id(htram_arbiter_hub)->release_screen("ap");
+            }
+          } else {
+            if (id(htram_arbiter_hub)->get_screen_mode() != 5) {
+              id(htram_arbiter_hub)->request_screen(5, "ap");
+            }
+          }
           const int prev_face = id(face_state);
           if (want == prev_face) return;
           id(face_state) = want;
@@ -225,13 +241,15 @@ script:
           }
 
           if (want == 3) {
+            std::string ssid = "HTRAM Setup";
+            std::string pass = "";
             #ifdef USE_WIFI
-            if (wifi::global_wifi_component == nullptr) return;
-            // Both strings come from the running config rather than being
-            // repeated here, so they cannot drift from what the radio answers.
-            auto cfg = wifi::global_wifi_component->get_ap();
-            const std::string ssid = cfg.get_ssid().c_str();
-            const std::string pass = cfg.get_password().c_str();
+            if (wifi::global_wifi_component != nullptr) {
+              auto cfg = wifi::global_wifi_component->get_ap();
+              ssid = cfg.get_ssid().c_str();
+              pass = cfg.get_password().c_str();
+            }
+            #endif
 
             lv_label_set_text(id(ui_msg_cap), "точка доступу");
             lv_obj_align(id(ui_msg_cap), LV_ALIGN_CENTER, 0,
@@ -242,7 +260,9 @@ script:
               // The whole join, in one scan. The modules land at ~0.55 mm on a
               // 27 mm panel, which is close to what a phone camera resolves --
               // hence page 1, which is the same credentials typed out.
-              const std::string qr = "WIFI:T:WPA;S:" + ssid + ";P:" + pass + ";;";
+              const std::string qr = pass.empty()
+                  ? ("WIFI:T:nopass;S:" + ssid + ";;")
+                  : ("WIFI:T:WPA;S:" + ssid + ";P:" + pass + ";;");
               lv_qrcode_update(id(ui_ap_qr), qr.c_str(), qr.size());
               lv_obj_remove_flag(id(ui_ap_card), LV_OBJ_FLAG_HIDDEN);
               lv_obj_remove_flag(id(ui_ap_qr), LV_OBJ_FLAG_HIDDEN);
@@ -253,12 +273,11 @@ script:
             lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -30);
             lv_label_set_text(id(ui_msg_sub), "пароль");
             lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 4);
-            lv_label_set_text(id(ui_msg2), pass.c_str());
+            lv_label_set_text(id(ui_msg2), pass.empty() ? "без пароля" : pass.c_str());
             lv_obj_align(id(ui_msg2), LV_ALIGN_CENTER, 0, 34);
             lv_obj_remove_flag(id(ui_msg), LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(id(ui_msg2), LV_OBJ_FLAG_HIDDEN);
-            #endif
             return;
           }
 
@@ -359,15 +378,26 @@ script:
     then:
       - lambda: |-
           if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
-          // Charge level and API link are independent facts, so they no longer
-          // gate each other: coupling them meant every gap between API clients
-          // (an `esphome logs` session ending counts) hid the battery.
-          const bool warn = !id(ha_link);
+
+          #ifdef USE_WIFI
+          const bool real_net = (wifi::global_wifi_component != nullptr) && wifi::global_wifi_component->is_connected();
+          #else
+          const bool real_net = true;
+          #endif
+          const bool net = (id(sim_override_net) != -1) ? (id(sim_override_net) == 1) : real_net;
+
+          const bool real_have_time = id(ha_time).now().is_valid() ||
+                                      id(net_time).now().is_valid() ||
+                                      (::time(nullptr) > 1700000000);
+          const bool have_time = (id(sim_override_time) != -1) ? (id(sim_override_time) == 1) : real_have_time;
+
+          // The pocket warning ! signals strictly Wi-Fi disconnection or invalid NTP time, never HA status.
+          const bool warn = !net || !have_time;
           const bool on_batt = !id(sensor_usb).state &&
                                !isnan(id(sensor_batt_level).state);
 
-          ESP_LOGD("pocket", "link=%d usb=%d batt=%.0f -> warn=%d batt_icon=%d",
-                   (int) id(ha_link), (int) id(sensor_usb).state,
+          ESP_LOGD("pocket", "net=%d time=%d usb=%d batt=%.0f -> warn=%d batt_icon=%d",
+                   (int) net, (int) have_time, (int) id(sensor_usb).state,
                    id(sensor_batt_level).state, (int) warn, (int) on_batt);
 
           lv_label_set_text(id(ui_pocket), warn ? "!" : "");

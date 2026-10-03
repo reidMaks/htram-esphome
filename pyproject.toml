@@ -37,7 +37,7 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests/tools", "tests/esphome_config"]
+testpaths = ["tests/tools", "tests/esphome_config", "tests/standalone"]
 
 [tool.ruff]
 line-length = 100

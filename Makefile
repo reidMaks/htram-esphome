@@ -34,7 +34,7 @@ TEST_BIN_PERIPH   := $(TEST_DIR)/test_periph_bin
 TEST_BIN_SPI_FLASH:= $(TEST_DIR)/test_spi_flash_bin
 TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
 
-.PHONY: all test test-gd32 test-esphome test-tools test-configs test-sim \
+.PHONY: all test test-gd32 test-esphome test-tools test-standalone test-configs test-sim \
         preview-ui inspect-ui \
         lint lint-c lint-py lint-yaml format format-check \
         coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
@@ -89,7 +89,7 @@ help:
 	@echo "  make clean         - Remove test binaries, coverage counters, and build artifacts"
 
 # ── Test Suite ───────────────────────────────────────────────────────────────
-test: test-gd32 test-esphome test-tools test-configs
+test: test-gd32 test-esphome test-tools test-configs test-standalone
 	@echo "========================================================"
 	@echo "  ALL TEST SUITES PASSED SUCCESSFULLY!"
 	@echo "========================================================"
@@ -114,6 +114,7 @@ $(TEST_BIN_PROTOCOL): $(TEST_DIR)/firmware_gd32/test_protocol_engine.c \
 
 $(TEST_BIN_SENSORS): $(TEST_DIR)/firmware_gd32/test_sensors.c \
                     $(MOCKS_DIR)/mock_gd32.c \
+                    $(MOCKS_DIR)/mock_periph_display.c \
                     $(UNITY_DIR)/unity.c
 	$(CC) $(CFLAGS) $^ -o $@
 
@@ -146,6 +147,11 @@ $(TEST_BIN_ESPHOME): $(TEST_DIR)/esphome_component/test_htram_gd32.cpp \
 test-tools:
 	@echo "==> Running Python Tools Tests via pytest..."
 	$(PYTEST) tests/tools -v
+
+# ── Standalone-First 4-Tier Tests ───────────────────────────────────────────
+test-standalone:
+	@echo "==> Running Standalone-First 4-Tier E2E Tests via pytest..."
+	$(PYTEST) tests/standalone -v
 
 # ── ESPHome Config Validation ───────────────────────────────────────────────
 test-configs:
