@@ -82,10 +82,11 @@ switch:
     icon: "mdi:alarm-check"
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
-    turn_on_action:
+    on_turn_on:
       - script.execute: refresh_alarm_ui
-    turn_off_action:
+    on_turn_off:
       - script.execute: alarm_dismiss
+      - script.execute: refresh_alarm_ui
 
 htram_arbiter:
   events:
@@ -147,12 +148,14 @@ script:
           }
 
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
+          const bool is_clock_face = (id(htram_arbiter_hub)->get_screen_mode() == 0);
           const int sig = (armed ? 1 : 0) | (ringing ? 2 : 0) | (snoozing ? 4 : 0) | (is_top ? 8 : 0) |
+                          (is_clock_face ? 16 : 0) |
                           ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 9);
           if (sig == id(alarm_ui_sig)) return;
           id(alarm_ui_sig) = sig;
 
-          if (armed) {
+          if (armed && is_clock_face) {
             // 12-годинне коло; LVGL рахує кути від 3-ї години, тож −90.
             const float dial = ((id(alarm_time).hour % 12) +
                                 id(alarm_time).minute / 60.0f) * 30.0f;
@@ -168,7 +171,7 @@ script:
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
           }
 
-          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          const bool can_show = is_top && is_clock_face && !id(slot_hold);
           if (can_show) {
             const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
             id(htram_core)->send_draw_cached_asset_centered(
