@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -51,7 +52,7 @@ class StandaloneWebBridge:
             "ip": "192.168.1.120",
             "gd32_version": "v1.4.0",
             "version": "v2.0.0",
-            "region": 25,
+            "region": 31,
             "city": "Київ",
             "lat": 50.4501,
             "lon": 30.5234,
@@ -96,15 +97,15 @@ class StandaloneWebBridge:
             entities_list, services_list = await self.client.list_entities_services()
             self.services = {s.name: s for s in services_list}
             self.entities = {getattr(e, "name", ""): e for e in entities_list}
-            self.key_to_name = {
-                getattr(e, "key", 0): getattr(e, "name", "") for e in entities_list
-            }
+            self.key_to_name = {getattr(e, "key", 0): getattr(e, "name", "") for e in entities_list}
 
             def on_state(state: Any) -> None:
                 key = getattr(state, "key", None)
                 name = self.key_to_name.get(key)
                 val = getattr(state, "state", None)
                 if name and val is not None:
+                    if isinstance(val, (int, float)) and math.isnan(val):
+                        return
                     if name == "CO2":
                         self.entity_states["co2"] = float(val)
                     elif name == "Temperature":
@@ -117,14 +118,16 @@ class StandaloneWebBridge:
                         self.entity_states["usb"] = bool(val)
                     elif name == "Screen Brightness":
                         self.entity_states["brightness"] = int(val)
-                    elif name == "Alarm Enabled":
+                    elif name in ("Будильник увімкнено", "Alarm Enabled"):
                         self.entity_states["alarm_enabled"] = bool(val)
                     elif name == "Хвилина мовчання":
                         self.entity_states["silence_enabled"] = bool(val)
                     elif name == "Підстроювання температури":
                         self.entity_states["temp_trim"] = float(val)
+                    elif name == "Alert Active":
+                        self.entity_states["alert_active"] = bool(val)
 
-            await self.client.subscribe_states(on_state)
+            self.client.subscribe_states(on_state)
             return True
         except Exception as e:
             print(
@@ -185,7 +188,11 @@ class StandaloneWebBridge:
                 await writer.drain()
 
             elif method in ("GET", "HEAD") and url == "/api/status":
-                resp_str = json.dumps(self.entity_states)
+                clean_states = {
+                    k: (None if isinstance(v, float) and math.isnan(v) else v)
+                    for k, v in self.entity_states.items()
+                }
+                resp_str = json.dumps(clean_states)
                 resp_bytes = resp_str.encode("utf-8")
                 header = (
                     f"HTTP/1.1 200 OK\r\n"
@@ -206,7 +213,8 @@ class StandaloneWebBridge:
                     if self.client:
                         if "brightness" in data and "set_backlight" in self.services:
                             await self.client.execute_service(
-                                "set_backlight", {"brightness": int(data["brightness"])}
+                                self.services["set_backlight"],
+                                {"brightness": int(data["brightness"])},
                             )
                         if "alarm_enabled" in data or "alarm_time" in data:
                             enabled = self.entity_states.get("alarm_enabled", False)
@@ -215,7 +223,7 @@ class StandaloneWebBridge:
                                 h, m = map(int, t_str.split(":"))
                                 if "simulate_alarm" in self.services:
                                     await self.client.execute_service(
-                                        "simulate_alarm",
+                                        self.services["simulate_alarm"],
                                         {"enabled": bool(enabled), "hour": h, "minute": m},
                                     )
                             except Exception:
@@ -237,7 +245,7 @@ class StandaloneWebBridge:
                             city = str(self.entity_states.get("city", "Київ"))
                             if "set_geo_settings" in self.services:
                                 await self.client.execute_service(
-                                    "set_geo_settings",
+                                    self.services["set_geo_settings"],
                                     {"region": reg, "lat": lat, "lon": lon, "city": city},
                                 )
 
@@ -293,10 +301,12 @@ class StandaloneWebBridge:
                 if self.client:
                     try:
                         if "simulate_reboot_resync" in self.services:
-                            await self.client.execute_service("simulate_reboot_resync", {})
+                            await self.client.execute_service(
+                                self.services["simulate_reboot_resync"], {}
+                            )
                         elif "simulate_boot_state" in self.services:
                             await self.client.execute_service(
-                                "simulate_boot_state", {"net_ok": 0, "time_ok": 0}
+                                self.services["simulate_boot_state"], {"net_ok": 0, "time_ok": 0}
                             )
                     except Exception:
                         pass

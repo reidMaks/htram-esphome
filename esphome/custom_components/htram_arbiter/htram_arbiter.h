@@ -102,6 +102,7 @@ class HtramArbiter : public Component {
   // Screen Arbiter
   bool request_screen(int mode, const std::string &owner);
   bool release_screen(const std::string &owner);
+  void preempt_to_clock(const std::string &preemptor);
   int get_screen_mode() const { return screen_mode_; }
   const std::string &get_screen_owner() const { return screen_owner_; }
 

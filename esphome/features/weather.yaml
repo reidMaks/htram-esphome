@@ -11,6 +11,7 @@
 substitutions:
   weather_update_interval: "30min"
   weather_screen_timeout: "60s"
+  weather_api_host: "api.open-meteo.com"
   response_template: >-
     {%- set fc = (response.values() | list)[0].forecast if (response and (response.values() | list)[0].forecast is defined) else [] -%}
     {%- set ns = namespace(min=999, max=-999) -%}
@@ -382,7 +383,7 @@ script:
                 url: !lambda |-
                   char url[160];
                   snprintf(url, sizeof(url),
-                           "http://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&hourly=temperature_2m,weather_code&forecast_days=1&timezone=auto",
+                           "http://${weather_api_host}/v1/forecast?latitude=%.4f&longitude=%.4f&hourly=temperature_2m,weather_code&forecast_days=1&timezone=auto",
                            id(weather_lat), id(weather_lon));
                   return std::string(url);
                 capture_response: true

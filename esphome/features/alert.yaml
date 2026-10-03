@@ -13,6 +13,8 @@ substitutions:
   alert_start_rtttl: "AlertOn:d=8,o=6,b=180:a,b,c7,16p,a,b,c7"
   alert_clear_rtttl: "AlertOff:d=8,o=6,b=180:c7,b,a"
   alert_mark_minutes: "5"
+  jaam_host: "ws.jaam.net.ua"
+  jaam_port: "80"
 
 external_components:
   - source:
@@ -22,8 +24,8 @@ external_components:
 
 jaam_ws:
   id: jaam
-  host: ws.jaam.net.ua
-  port: 80
+  host: ${jaam_host}
+  port: ${jaam_port}
   path: "/data_fusion_v1"
   region_id: 31
   on_flags:

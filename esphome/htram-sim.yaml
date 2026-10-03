@@ -10,6 +10,10 @@ substitutions:
   name: htram-sim
   friendly_name: "HTRAM Full Simulator"
   repo_url: "."
+  jaam_host: "127.0.0.1"
+  jaam_port: "1"
+  slot_interval: "24h"
+  weather_api_host: "127.0.0.1:1"
 
 packages:
   core: !include htram-sim-core.yaml
@@ -62,8 +66,10 @@ api:
         - lambda: |-
             if (enabled) {
               id(alarm_enabled).turn_on();
+              id(alarm_enabled).publish_state(true);
             } else {
               id(alarm_enabled).turn_off();
+              id(alarm_enabled).publish_state(false);
             }
             auto call = id(alarm_time).make_call();
             call.set_hour((uint8_t) hour);
@@ -87,7 +93,8 @@ api:
       then:
         - lambda: |-
             id(alert_mark_until) = 0;
-            id(refresh_alert_marks).execute();
+            id(apply_face_alert_color).execute(0xF0EAE0);
+            id(refresh_alert_icon).execute();
 
     - service: expire_alert_mark
       then:
@@ -146,6 +153,10 @@ api:
     - service: cancel_timer
       then:
         - script.execute: timer_cancel
+
+    - service: hide_weather
+      then:
+        - script.execute: hide_weather
 
     - service: pause_timer
       then:

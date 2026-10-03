@@ -192,6 +192,7 @@ script:
           id(alarm_snoozing) = false;
           id(htram_arbiter_hub)->set_snooze(false);
           if (id(htram_arbiter_hub)->get_screen_mode() != 0) {
+            id(htram_arbiter_hub)->preempt_to_clock("alarm");
             id(face_state) = -1;
             id(refresh_face).execute();
           }

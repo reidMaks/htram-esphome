@@ -135,9 +135,9 @@ api:
     - service: simulate_reboot_resync
       then:
         - lambda: |-
-            id(sim_override_net) = -1;
-            id(sim_override_time) = -1;
-            id(sim_override_ap) = -1;
+            id(sim_override_net) = 1;
+            id(sim_override_time) = 1;
+            id(sim_override_ap) = 0;
             id(face_state) = -1;
             id(htram_arbiter_hub)->release_screen("overlay");
             id(htram_arbiter_hub)->release_screen("weather");
@@ -299,6 +299,11 @@ script:
   - id: refresh_leds
     then: []
 
+  - id: !extend set_system_alert_active
+    then:
+      - lambda: |-
+          id(alert_status_sensor).publish_state(active);
+
   - id: start_wifi_setup
     mode: restart
     then:
@@ -353,6 +358,10 @@ binary_sensor:
   - platform: template
     id: htram_button
     name: "Button"
+
+  - platform: template
+    id: alert_status_sensor
+    name: "Alert Active"
 
 text_sensor:
   - platform: template
