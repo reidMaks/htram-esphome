@@ -269,3 +269,203 @@ def test_t3_04_modal_screen_symmetrical_gestures():
     # Back on clock, clock refresh resumes
     fsm.refresh_clock_slot()
     assert fsm.clock_refresh_count == 2
+
+
+# ============================================================================
+# T3-05: Location Change Cross-Feature Sync (Geo -> Alert & Weather)
+# ============================================================================
+def test_t3_05_location_change_syncs_alert_and_weather_state():
+    """Verify that updating location via web interface triggers on_geo_settings_changed,
+    synchronizing alert_region, JAAM parent state hierarchy, weather coords, and web alert_active."""
+    from .conftest import ALERT_BIT_RED, get_parent_state_id
+
+    class SystemHub:
+        def __init__(self):
+            # Simulated fusion state table: region_id -> flags
+            # Sumska oblast (20) has active Red Alert
+            self.fusion_table = {
+                20: (1 << ALERT_BIT_RED),
+                31: 0,  # Kyiv has no alert
+                114: 0,
+                1187: 0,
+            }
+            self.alert_region = 31
+            self.weather_lat = 50.4501
+            self.weather_lon = 30.5234
+            self.weather_city_name = "Київ"
+            self.weather_fetch_triggered = False
+            self.web_alert_active = False
+
+        def on_geo_settings_changed(self, region: int, lat: float, lon: float, city: str):
+            # 1. Alert feature handler
+            self.alert_region = region
+            parent_state = get_parent_state_id(region)
+            fused_flags = self.fusion_table.get(region, 0) | self.fusion_table.get(parent_state, 0)
+            is_air = bool(fused_flags & (1 << ALERT_BIT_RED))
+            # Updates both device alert state and web alert active state
+            self.set_system_alert_active(is_air)
+
+            # 2. Weather feature handler
+            self.weather_lat = lat
+            self.weather_lon = lon
+            self.weather_city_name = city
+            self.weather_fetch_triggered = True
+
+        def set_system_alert_active(self, active: bool):
+            self.web_alert_active = active
+
+        def get_web_status(self) -> dict:
+            return {
+                "region": self.alert_region,
+                "city": self.weather_city_name,
+                "lat": self.weather_lat,
+                "lon": self.weather_lon,
+                "alert_active": self.web_alert_active,
+            }
+
+    hub = SystemHub()
+
+    # Initial state (Kyiv, no alert)
+    status_init = hub.get_web_status()
+    assert status_init["region"] == 31
+    assert status_init["alert_active"] is False
+
+    # Simulate location selection for Sumy (hromada region 1187)
+    hub.on_geo_settings_changed(1187, 50.912, 34.8028, "Суми")
+
+    # Both alert and weather features updated
+    assert hub.alert_region == 1187
+    assert hub.weather_city_name == "Суми"
+    assert hub.weather_fetch_triggered is True
+
+    # Alert state updated immediately from inherited Sumska oblast (20) Red alert!
+    assert hub.web_alert_active is True
+    status_updated = hub.get_web_status()
+    assert status_updated["region"] == 1187
+    assert status_updated["city"] == "Суми"
+    assert status_updated["alert_active"] is True
+
+
+# ============================================================================
+# T3-06: Place Search Deduplication & POI Filtering
+# ============================================================================
+def test_t3_06_search_places_deduplication_and_poi_filtering():
+    """Verify that POI items (railway stations, tourism steles, etc.) are excluded
+    and identical settlement results are deduplicated."""
+    raw_features = [
+        # 1. City: place=city -> KEEP
+        {
+            "properties": {
+                "name": "Суми",
+                "county": "Сумський район",
+                "state": "Сумська область",
+                "countrycode": "UA",
+                "osm_key": "place",
+                "type": "city",
+            }
+        },
+        # 2. Railway station: osm_key=railway -> EXCLUDE
+        {
+            "properties": {
+                "name": "Суми",
+                "county": "Сумський район",
+                "state": "Сумська область",
+                "countrycode": "UA",
+                "osm_key": "railway",
+                "type": "house",
+            }
+        },
+        # 3. Tourism stele: osm_key=tourism -> EXCLUDE
+        {
+            "properties": {
+                "name": "Суми",
+                "county": "Сумський район",
+                "state": "Сумська область",
+                "countrycode": "UA",
+                "osm_key": "tourism",
+                "type": "house",
+            }
+        },
+        # 4. Freight station: osm_key=railway -> EXCLUDE
+        {
+            "properties": {
+                "name": "Суми-Товарна",
+                "county": "Сумський район",
+                "state": "Сумська область",
+                "countrycode": "UA",
+                "osm_key": "railway",
+                "type": "house",
+            }
+        },
+        # 5. Duplicate city entry (e.g. from Nominatim/Open-Meteo) -> DEDUPLICATE
+        {
+            "properties": {
+                "name": "Суми",
+                "county": "Сумський район",
+                "state": "Сумська область",
+                "countrycode": "UA",
+                "osm_key": "place",
+                "type": "city",
+            }
+        },
+        # 6. City hromada: place=municipality -> KEEP
+        {
+            "properties": {
+                "name": "Сумська міська громада",
+                "county": "Сумський район",
+                "state": "Сумська область",
+                "countrycode": "UA",
+                "osm_key": "place",
+                "type": "municipality",
+            }
+        },
+    ]
+
+    def filter_and_deduplicate(features: list[dict]) -> list[dict]:
+        filtered = []
+        for f in features:
+            p = f.get("properties", {})
+            cc = p.get("countrycode", "").upper()
+            if cc != "UA" and p.get("country") != "Україна":
+                continue
+            if p.get("osm_key") not in ("place", "boundary"):
+                continue
+            if p.get("osm_key") in (
+                "railway",
+                "tourism",
+                "amenity",
+                "highway",
+                "shop",
+                "leisure",
+                "building",
+            ):
+                continue
+            if p.get("type") == "house" or p.get("osm_value") == "historic":
+                continue
+            filtered.append(
+                {
+                    "name": p.get("name", ""),
+                    "admin2": p.get("county", ""),
+                    "admin1": p.get("state", ""),
+                }
+            )
+
+        seen = set()
+        deduped = []
+        for item in filtered:
+            key = (
+                item["name"].lower().strip(),
+                item["admin2"].lower().strip(),
+                item["admin1"].lower().strip(),
+            )
+            if key not in seen:
+                seen.add(key)
+                deduped.push(item) if hasattr(deduped, "push") else deduped.append(item)
+        return deduped
+
+    results = filter_and_deduplicate(raw_features)
+
+    # Exactly 2 distinct items remain: "Суми" and "Сумська міська громада"
+    assert len(results) == 2
+    assert results[0]["name"] == "Суми"
+    assert results[1]["name"] == "Сумська міська громада"

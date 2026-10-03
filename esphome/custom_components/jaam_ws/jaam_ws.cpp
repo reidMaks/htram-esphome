@@ -220,7 +220,7 @@ void JaamWsComponent::update_flags_from_fusion() {
     }
   }
 
-  if (f != this->flags_) {
+  if (f != this->flags_ || f != this->reported_) {
     this->flags_ = f;
     this->pending_ = true;
     ESP_LOGI(TAG, "Fusion alert flags updated: 0x%04X (region %u [0x%04X], parent state %u [0x%04X])",
@@ -255,6 +255,7 @@ void JaamWsComponent::set_region_id(uint16_t rid) {
   this->notif_flags_region_ = 0;
   this->notif_flags_state_ = 0;
   this->reported_ = 0xFFFFFFFF;
+  this->flags_ = 0xFFFFFFFF;
   ESP_LOGI(TAG, "Alert region configured: region_id=%u, parent_state_id=%u", this->region_id_, this->state_id_);
 
   if (this->is_fusion_mode()) {

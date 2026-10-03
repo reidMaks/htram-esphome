@@ -59,6 +59,7 @@ jaam_ws:
           } else if (air) {
             id(alert_mark_color) = id(alert_yellow) ? 0xFFC53D : 0xE5484D;
           }
+          id(set_system_alert_active).execute(air);
       - script.execute: refresh_alert_marks
       - script.execute: refresh_alert_icon
       - script.execute: on_alert_changed
@@ -122,6 +123,12 @@ globals:
     initial_value: "false"
 
 script:
+  - id: !extend on_geo_settings_changed
+    then:
+      - lambda: |-
+          id(alert_region) = region;
+          id(jaam)->set_region_id(region);
+
   - id: play_alert_sound
     parameters:
       air: bool
@@ -228,6 +235,12 @@ interval:
     then:
       - script.execute: refresh_alert_marks
 
+  - interval: 2s
+    then:
+      - script.execute:
+          id: set_system_alert_active
+          active: !lambda "return id(alert_active);"
+
   - interval: 5s
     then:
       - lambda: |-
@@ -255,5 +268,8 @@ esphome:
             id(jaam)->set_region_id(id(alert_region));
     - priority: -100
       then:
+        - script.execute:
+            id: set_system_alert_active
+            active: !lambda "return id(alert_active);"
         - script.execute: refresh_alert_icon
         - script.execute: refresh_alert_marks

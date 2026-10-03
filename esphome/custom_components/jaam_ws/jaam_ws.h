@@ -103,7 +103,7 @@ class JaamWsComponent : public Component {
   bool connected_{false};
 
   // Fusion state (static flat table indexed by region_id, 0 heap allocations)
-  static constexpr size_t MAX_ALERT_REGIONS = 1400;
+  static constexpr size_t MAX_ALERT_REGIONS = 2000;
   uint16_t active_alerts_table_[MAX_ALERT_REGIONS] = {0};
   uint16_t notif_flags_region_{0};
   uint16_t notif_flags_state_{0};

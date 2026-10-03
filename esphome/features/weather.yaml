@@ -225,6 +225,15 @@ lvgl:
               text: ""
 
 script:
+  - id: !extend on_geo_settings_changed
+    then:
+      - lambda: |-
+          id(weather_lat) = lat;
+          id(weather_lon) = lon;
+          id(weather_city_name) = city;
+          id(fetch_weather_forecast).execute();
+          id(refresh_face).execute();
+
   - id: refresh_weather_ui
     then:
       - lambda: |-

@@ -109,6 +109,14 @@ htram_web:
   on_ota_update:
     then:
       - script.execute: trigger_ota_update
+  on_save_settings:
+    then:
+      - script.execute:
+          id: on_geo_settings_changed
+          region: !lambda "return region;"
+          lat: !lambda "return lat;"
+          lon: !lambda "return lon;"
+          city: !lambda "return city;"
 
 uart:
   id: uart_bus
@@ -205,6 +213,11 @@ globals:
     initial_value: "0"
 
 script:
+  - id: !extend set_system_alert_active
+    then:
+      - lambda: |-
+          id(htram_standalone_web).set_alert_active(active);
+
   # Сигнал після першого завантаження свіжої прошивки:
   - id: check_flash_chime
     then:

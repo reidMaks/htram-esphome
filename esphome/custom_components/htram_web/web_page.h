@@ -812,12 +812,25 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       subEl.textContent = parts.join(' • ') || 'Україна';
     }
 
-    function onRegionChange(regionIdx) {
-      autoSave({ region: regionIdx });
-      const lat = parseFloat(document.getElementById('inp-lat').value);
-      const lon = parseFloat(document.getElementById('inp-lon').value);
-      const city = document.getElementById('loc-display-name').textContent;
+    async function onRegionChange(regionIdx) {
+      const sel = document.getElementById('sel-region');
+      const opt = sel ? sel.options[sel.selectedIndex] : null;
+      let city = document.getElementById('loc-display-name').textContent;
+      let lat = parseFloat(document.getElementById('inp-lat').value);
+      let lon = parseFloat(document.getElementById('inp-lon').value);
+      if (opt) {
+        const optLat = parseFloat(opt.getAttribute('data-lat'));
+        const optLon = parseFloat(opt.getAttribute('data-lon'));
+        if (!isNaN(optLat) && !isNaN(optLon)) {
+          lat = optLat;
+          lon = optLon;
+          document.getElementById('inp-lat').value = lat.toFixed(4);
+          document.getElementById('inp-lon').value = lon.toFixed(4);
+        }
+      }
       updateLocationDisplay(city, regionIdx, lat, lon);
+      await autoSave({ region: regionIdx, lat, lon, city });
+      setTimeout(fetchStatus, 300);
     }
 
     let searchDebounce = null;
@@ -846,21 +859,42 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       }, 300);
     }
 
+    function deduplicateResults(items) {
+      if (!items || !items.length) return [];
+      const seen = new Set();
+      const deduped = [];
+      for (const item of items) {
+        const name = (item.name || '').toLowerCase().trim();
+        const admin2 = (item.admin2 || '').toLowerCase().trim();
+        const admin1 = (item.admin1 || '').toLowerCase().trim();
+        const key = `${name}|${admin2}|${admin1}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          deduped.push(item);
+        }
+      }
+      return deduped;
+    }
+
     async function searchPlaces(query) {
       query = query.trim().replace(/['`ʼ]/g, '’');
       // 1. Пріоритет: Photon (OpenStreetMap геокодер від Komoot) - швидкий, знає всі села, хутори та райони України
       try {
-        const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=10`;
+        const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=12&osm_tag=place&osm_tag=boundary:administrative`;
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           const uaFeatures = (data.features || []).filter(f => {
             const p = f.properties || {};
             const cc = (p.countrycode || '').toUpperCase();
-            return cc === 'UA' || p.country === 'Україна';
+            if (cc !== 'UA' && p.country !== 'Україна') return false;
+            if (p.osm_key !== 'place' && p.osm_key !== 'boundary') return false;
+            if (['railway', 'tourism', 'amenity', 'highway', 'shop', 'leisure', 'building'].includes(p.osm_key)) return false;
+            if (p.type === 'house' || p.osm_value === 'historic') return false;
+            return true;
           });
           if (uaFeatures.length > 0) {
-            return uaFeatures.map(f => {
+            const mapped = uaFeatures.map(f => {
               const p = f.properties || {};
               const coords = (f.geometry && f.geometry.coordinates) || [0, 0];
               return {
@@ -872,6 +906,8 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                 longitude: coords[0]
               };
             });
+            const deduped = deduplicateResults(mapped);
+            if (deduped.length > 0) return deduped;
           }
         }
       } catch (e1) {}
@@ -883,7 +919,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0) {
-            return data.map(r => {
+            const mapped = data.map(r => {
               const addr = r.address || {};
               const name = r.name || addr.village || addr.town || addr.city || (r.display_name ? r.display_name.split(',')[0].trim() : query);
               return {
@@ -895,6 +931,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                 longitude: parseFloat(r.lon)
               };
             });
+            return deduplicateResults(mapped);
           }
         }
       } catch (e2) {}
@@ -906,14 +943,14 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (res.ok) {
           const data = await res.json();
           const items = (data.results || []).filter(r => r.country_code === 'UA' || r.country === 'Україна');
-          return items.map(r => ({
+          return deduplicateResults(items.map(r => ({
             name: r.name,
             admin1: r.admin1 || '',
             admin2: r.admin2 || '',
             municipality: '',
             latitude: parseFloat(r.latitude),
             longitude: parseFloat(r.longitude)
-          }));
+          })));
         }
       } catch (e3) {}
 
@@ -965,6 +1002,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       const patch = { lat, lon, city, region: regionIdx };
       await autoSave(patch);
+      setTimeout(fetchStatus, 300);
       showToast(`Встановлено: ${city} (${item.admin2 || item.admin1 || ''})`);
     }
 
@@ -974,6 +1012,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('sel-region').value = regionIdx;
       updateLocationDisplay(city, regionIdx, lat, lon, regionName);
       await autoSave({ lat, lon, city, region: regionIdx });
+      setTimeout(fetchStatus, 300);
       showToast(`Встановлено: ${city}`);
     }
 
@@ -993,7 +1032,19 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         return 31;
       }
 
-      // 1. Пріоритет: точний пошук за назвою району (admin2 або cityName)
+      // 1. Пріоритет: точний збіг назви міста з міською громадою ("м. <City> + ТГ")
+      for (let i = 0; i < opts.length; i++) {
+        const opt = opts[i];
+        if (!opt.text.includes('+ ТГ') && !opt.text.includes('+ тг')) continue;
+        const clean = opt.text.toLowerCase().replace('м. ', '').replace(' + тг', '').trim();
+        const stem = clean.length > 5 ? clean.slice(0, -2) : (clean.length > 4 ? clean.slice(0, -1) : clean);
+        if (cLower === clean || cLower === 'м. ' + clean || cLower.startsWith(clean + ' ') ||
+            (cLower.includes('міська громада') && cLower.includes(stem))) {
+          return parseInt(opt.value);
+        }
+      }
+
+      // 2. Пошук за назвою району (admin2 або cityName)
       const target = ((admin2 || '') + ' ' + (cityName || '')).toLowerCase();
       for (let i = 0; i < opts.length; i++) {
         const opt = opts[i];
@@ -1007,7 +1058,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         }
       }
 
-      // 2. Пошук найближчого районного центру за GPS-відстанню
+      // 3. Пошук найближчого районного центру за GPS-відстанню
       if (!isNaN(lat) && !isNaN(lon) && lat > 0 && lon > 0) {
         let bestDist = 1e9, bestId = -1;
         for (let i = 0; i < opts.length; i++) {
@@ -1028,7 +1079,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (bestId > 0) return bestId;
       }
 
-      // 3. Fallback до обласного рівня, якщо район не знайдено
+      // 4. Fallback до обласного рівня, якщо район не знайдено
       if (admin1) {
         const a1 = admin1.toLowerCase();
         for (let i = 0; i < opts.length; i++) {
@@ -1103,6 +1154,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
         const patch = { lat, lon, city: finalCity, region: regionIdx };
         await autoSave(patch);
+        setTimeout(fetchStatus, 300);
         showToast(`Встановлено: ${finalCity} (${fullAdmin || 'Україна'})`);
       } catch (err) {
         setSaveStatus('error', '⚠ Помилка локації');
@@ -1118,6 +1170,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       document.getElementById('sel-region').value = regionIdx;
       updateLocationDisplay(city, regionIdx, lat, lon, 'Ручні координати');
       autoSave({ lat, lon, city, region: regionIdx });
+      setTimeout(fetchStatus, 300);
     }
 
     function showToast(msg) {

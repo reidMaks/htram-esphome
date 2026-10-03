@@ -331,6 +331,19 @@ script:
   - id: on_alert_changed
     then: []
 
+  - id: on_geo_settings_changed
+    parameters:
+      region: int
+      lat: float
+      lon: float
+      city: std::string
+    then: []
+
+  - id: set_system_alert_active
+    parameters:
+      active: bool
+    then: []
+
   - id: apply_face_alert_color
     parameters:
       color: int
