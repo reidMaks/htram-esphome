@@ -66,6 +66,9 @@ class StandaloneWebBridge:
             "alert_active": False,
             "new_version": "",
         }
+        self.services: dict[str, Any] = {}
+        self.entities: dict[str, Any] = {}
+        self.key_to_name: dict[int, str] = {}
         self.html_cache = extract_html_from_header()
 
     async def simulate_live_metrics(self) -> None:
@@ -90,11 +93,36 @@ class StandaloneWebBridge:
             await self.client.connect(login=True)
             print(f"[*] Connected to htram-sim at {self.sim_host}:{self.sim_port}")
 
+            entities_list, services_list = await self.client.list_entities_services()
+            self.services = {s.name: s for s in services_list}
+            self.entities = {getattr(e, "name", ""): e for e in entities_list}
+            self.key_to_name = {
+                getattr(e, "key", 0): getattr(e, "name", "") for e in entities_list
+            }
+
             def on_state(state: Any) -> None:
                 key = getattr(state, "key", None)
+                name = self.key_to_name.get(key)
                 val = getattr(state, "state", None)
-                if key is not None and val is not None:
-                    pass
+                if name and val is not None:
+                    if name == "CO2":
+                        self.entity_states["co2"] = float(val)
+                    elif name == "Temperature":
+                        self.entity_states["temp"] = float(val)
+                    elif name == "Humidity":
+                        self.entity_states["hum"] = float(val)
+                    elif name == "Battery":
+                        self.entity_states["batt_pct"] = float(val)
+                    elif name == "USB Power":
+                        self.entity_states["usb"] = bool(val)
+                    elif name == "Screen Brightness":
+                        self.entity_states["brightness"] = int(val)
+                    elif name == "Alarm Enabled":
+                        self.entity_states["alarm_enabled"] = bool(val)
+                    elif name == "Хвилина мовчання":
+                        self.entity_states["silence_enabled"] = bool(val)
+                    elif name == "Підстроювання температури":
+                        self.entity_states["temp_trim"] = float(val)
 
             await self.client.subscribe_states(on_state)
             return True
@@ -176,7 +204,7 @@ class StandaloneWebBridge:
 
                     # Forward to simulator if connected
                     if self.client:
-                        if "brightness" in data:
+                        if "brightness" in data and "set_backlight" in self.services:
                             await self.client.execute_service(
                                 "set_backlight", {"brightness": int(data["brightness"])}
                             )
@@ -185,13 +213,33 @@ class StandaloneWebBridge:
                             t_str = self.entity_states.get("alarm_time", "07:30")
                             try:
                                 h, m = map(int, t_str.split(":"))
-                                await self.client.execute_service(
-                                    "simulate_alarm", {"enabled": enabled, "hour": h, "minute": m}
-                                )
+                                if "simulate_alarm" in self.services:
+                                    await self.client.execute_service(
+                                        "simulate_alarm",
+                                        {"enabled": bool(enabled), "hour": h, "minute": m},
+                                    )
                             except Exception:
                                 pass
-                        if "silence_enabled" in data:
-                            pass
+                        if "silence_enabled" in data and "Хвилина мовчання" in self.entities:
+                            se_val = bool(data["silence_enabled"])
+                            self.client.switch_command(
+                                self.entities["Хвилина мовчання"].key, se_val
+                            )
+                        if "temp_trim" in data and "Підстроювання температури" in self.entities:
+                            trim_val = float(data["temp_trim"])
+                            self.client.number_command(
+                                self.entities["Підстроювання температури"].key, trim_val
+                            )
+                        if any(k in data for k in ("region", "lat", "lon", "city")):
+                            reg = int(self.entity_states.get("region", 31))
+                            lat = float(self.entity_states.get("lat", 50.45))
+                            lon = float(self.entity_states.get("lon", 30.52))
+                            city = str(self.entity_states.get("city", "Київ"))
+                            if "set_geo_settings" in self.services:
+                                await self.client.execute_service(
+                                    "set_geo_settings",
+                                    {"region": reg, "lat": lat, "lon": lon, "city": city},
+                                )
 
                     resp_bytes = b'{"result":"ok"}'
                     header = (
@@ -242,6 +290,16 @@ class StandaloneWebBridge:
                 await writer.drain()
 
             elif method == "POST" and url == "/api/reboot":
+                if self.client:
+                    try:
+                        if "simulate_reboot_resync" in self.services:
+                            await self.client.execute_service("simulate_reboot_resync", {})
+                        elif "simulate_boot_state" in self.services:
+                            await self.client.execute_service(
+                                "simulate_boot_state", {"net_ok": 0, "time_ok": 0}
+                            )
+                    except Exception:
+                        pass
                 resp_bytes = b'{"result":"rebooting"}'
                 header = (
                     f"HTTP/1.1 200 OK\r\n"

@@ -150,3 +150,25 @@ api:
     - service: pause_timer
       then:
         - script.execute: timer_pause
+
+    - service: set_backlight
+      variables:
+        brightness: int
+      then:
+        - lambda: |-
+            id(screen_brightness).publish_state(brightness);
+            id(htram_core)->send_backlight(brightness);
+
+    - service: set_geo_settings
+      variables:
+        region: int
+        lat: float
+        lon: float
+        city: string
+      then:
+        - script.execute:
+            id: on_geo_settings_changed
+            region: !lambda return region;
+            lat: !lambda return lat;
+            lon: !lambda return lon;
+            city: !lambda return city;

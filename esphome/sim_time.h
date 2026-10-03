@@ -10,6 +10,11 @@
 
 #include <ctime>
 #include <sys/time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
 #include <cstdint>
 
@@ -22,10 +27,12 @@ static uint64_t s_base_mono_ms = 0;   // Monotonic reference timestamp in ms
 typedef time_t (*real_time_fn)(time_t *);
 typedef int (*real_gettimeofday_fn)(struct timeval *, void *);
 typedef int (*real_clock_gettime_fn)(clockid_t, struct timespec *);
+typedef int (*real_bind_fn)(int, const struct sockaddr *, socklen_t);
 
 static real_time_fn real_time = nullptr;
 static real_gettimeofday_fn real_gettimeofday = nullptr;
 static real_clock_gettime_fn real_clock_gettime = nullptr;
+static real_bind_fn real_bind = nullptr;
 
 inline uint64_t get_monotonic_ms() {
   struct timespec ts;
@@ -120,6 +127,28 @@ int clock_gettime(clockid_t clk_id, struct timespec *tp) {
         (htram_sim::real_clock_gettime_fn) dlsym(RTLD_NEXT, "clock_gettime");
   }
   return htram_sim::real_clock_gettime ? htram_sim::real_clock_gettime(clk_id, tp) : 0;
+}
+
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+  if (!htram_sim::real_bind) {
+    htram_sim::real_bind = (htram_sim::real_bind_fn) dlsym(RTLD_NEXT, "bind");
+  }
+  if (addr && addr->sa_family == AF_INET) {
+    const struct sockaddr_in *in = (const struct sockaddr_in *) addr;
+    if (ntohs(in->sin_port) == 6053) {
+      const char *port_env = getenv("HTRAM_SIM_PORT");
+      if (port_env) {
+        int custom_port = atoi(port_env);
+        if (custom_port > 0 && custom_port < 65536) {
+          struct sockaddr_in modified_addr;
+          memcpy(&modified_addr, in, sizeof(modified_addr));
+          modified_addr.sin_port = htons(custom_port);
+          return htram_sim::real_bind(sockfd, (const struct sockaddr *) &modified_addr, addrlen);
+        }
+      }
+    }
+  }
+  return htram_sim::real_bind ? htram_sim::real_bind(sockfd, addr, addrlen) : -1;
 }
 
 }

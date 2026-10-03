@@ -90,7 +90,11 @@ api:
         usb: bool
       then:
         - lambda: |-
-            if (!isnan(temp)) id(sensor_temp).publish_state(temp);
+            if (!isnan(temp)) {
+              id(t_from_gd32) = temp;
+              float trim = id(temp_trim).state;
+              id(sensor_temp).publish_state(isnan(trim) ? temp : temp + trim);
+            }
             if (!isnan(hum)) id(sensor_hum).publish_state(hum);
             if (!isnan(co2)) id(sensor_co2).publish_state(co2);
             if (!isnan(batt_pct)) id(sensor_batt_level).publish_state(batt_pct);
@@ -378,3 +382,9 @@ number:
     step: 0.1
     initial_value: 0
     optimistic: true
+    set_action:
+      - lambda: |-
+          if (!isnan(id(t_from_gd32))) {
+            id(sensor_temp).publish_state(id(t_from_gd32) + x);
+            id(refresh_slot).execute();
+          }
