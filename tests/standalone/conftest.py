@@ -44,6 +44,18 @@ COLOR_YELLOW = 0xFFC53D
 COLOR_GREEN = 0x3DD68C
 COLOR_WHITE = 0xFFFFFF
 
+# Flash Asset IDs
+ASSET_ID_TRYZUB = 0
+ASSET_ID_BELL = 1
+ASSET_ID_ALERT = 2
+ASSET_ID_ALERT_SMALL = 3
+ASSET_ID_THREAT_BALLISTIC = 4
+ASSET_ID_THREAT_KAB = 5
+ASSET_ID_THREAT_MISSILE = 6
+ASSET_ID_THREAT_DRONE = 7
+ASSET_ID_THREAT_RECON = 8
+
+
 # Legacy Region Index (0..26) to modern JAAM region_id mapping
 LEGACY_TO_REGION_ID: dict[int, int] = {
     0: 7266,  # Севастополь
@@ -101,14 +113,56 @@ DISTRICT_TO_STATE: dict[int, int] = {
     79: 14,  # Фастівський -> Київська
     80: 14,  # Обухівський -> Київська
     81: 14,  # Вишгородський -> Київська
+    104: 18,  # Одеський -> Одеська
+    109: 19,  # Полтавський -> Полтавська
+    112: 5,  # Рівненський -> Рівненська
     114: 20,  # Сумський -> Сумська
+    119: 21,  # Тернопільський -> Тернопільська
+    124: 22,  # Харківський -> Харківська
+    132: 23,  # Херсонський -> Херсонська
+    134: 3,  # Хмельницький -> Хмельницька
+    137: 26,  # Чернівецький -> Чернівецька
+    140: 25,  # Чернігівський -> Чернігівська
+    149: 12,  # Запорізький -> Запорізька
+    152: 24,  # Черкаський -> Черкаська
     1187: 20,  # м. Суми + ТГ -> Сумська
 }
+
+# Hromada (city + TG) to parent district mapping
+HROMADA_TO_DISTRICT: dict[int, int] = {
+    155: 36,  # м. Вінниця + ТГ -> Вінницький район
+    225: 39,  # м. Луцьк + ТГ -> Луцький район
+    332: 44,  # м. Дніпро + ТГ -> Дніпровський район
+    442: 59,  # м. Житомир + ТГ -> Житомирський район
+    500: 66,  # м. Ужгород + ТГ -> Ужгородський район
+    564: 149,  # м. Запоріжжя + ТГ -> Запорізький район
+    632: 68,  # м. Івано-Франківськ + ТГ -> Івано-Франківський район
+    761: 81,  # м. Кропивницький + ТГ -> Кропивницький район
+    845: 90,  # м. Львів + ТГ -> Львівський район
+    926: 98,  # м. Миколаїв + ТГ -> Миколаївський район
+    964: 104,  # м. Одеса + ТГ -> Одеський район
+    1060: 109,  # м. Полтава + ТГ -> Полтавський район
+    1133: 112,  # м. Рівне + ТГ -> Рівненський район
+    1187: 114,  # м. Суми + ТГ -> Сумський район
+    1241: 119,  # м. Тернопіль + ТГ -> Тернопільський район
+    1293: 124,  # м. Харків + ТГ -> Харківський район
+    1370: 132,  # м. Херсон + ТГ -> Херсонський район
+    1400: 134,  # м. Хмельницький + ТГ -> Хмельницький район
+    1473: 152,  # м. Черкаси + ТГ -> Черкаський район
+    1542: 137,  # м. Чернівці + ТГ -> Чернівецький район
+    1591: 140,  # м. Чернігів + ТГ -> Чернігівський район
+}
+
+
+def get_parent_district_id(region_id: int) -> int:
+    """Returns the parent district region_id for a given hromada, or region_id itself if district/oblast."""
+    return HROMADA_TO_DISTRICT.get(region_id, region_id)
 
 
 def get_parent_state_id(region_id: int) -> int:
     """Returns the parent oblast region_id for a given district or returns region_id itself if oblast/city."""
-    return DISTRICT_TO_STATE.get(region_id, region_id)
+    district_id = get_parent_district_id(region_id)
+    return DISTRICT_TO_STATE.get(district_id, DISTRICT_TO_STATE.get(region_id, region_id))
 
 
 def serialize_nvs_settings(magic: int, region: int, lat: float, lon: float, city: str) -> bytes:

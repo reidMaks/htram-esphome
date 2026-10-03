@@ -48,6 +48,7 @@ class JaamWsComponent : public Component {
   // Modern region_id API (e.g. 31 = Kyiv, 75 = Buchanskyi, 14 = Kyiv oblast)
   void set_region_id(uint16_t rid);
   uint16_t get_region_id() const { return region_id_; }
+  uint16_t get_district_id() const { return district_id_; }
   uint16_t get_state_id() const { return state_id_; }
 
   // Backwards compatibility with legacy 0..26 indices
@@ -98,6 +99,7 @@ class JaamWsComponent : public Component {
   uint16_t port_{80};
   std::string path_{"/data_fusion_v1"};
   uint16_t region_id_{31}; // default Kyiv
+  uint16_t district_id_{31};
   uint16_t state_id_{31};
   int region_index_{25};
   bool connected_{false};
@@ -106,6 +108,7 @@ class JaamWsComponent : public Component {
   static constexpr size_t MAX_ALERT_REGIONS = 2000;
   uint16_t active_alerts_table_[MAX_ALERT_REGIONS] = {0};
   uint16_t notif_flags_region_{0};
+  uint16_t notif_flags_district_{0};
   uint16_t notif_flags_state_{0};
 
   // Legacy data_v4 state

@@ -39,9 +39,38 @@ static const uint16_t LEGACY_TO_REGION_ID[27] = {
   31    // 26: м. Київ (резерв)
 };
 
+// Returns the parent district regionId for a given hromada/city, or rid itself if it's already a district/oblast
+static inline uint16_t get_parent_district_id(uint16_t rid) {
+  switch (rid) {
+    case  155: return   36; // м. Вінниця + ТГ -> Вінницький район
+    case  225: return   39; // м. Луцьк + ТГ -> Луцький район
+    case  332: return   44; // м. Дніпро + ТГ -> Дніпровський район
+    case  442: return   59; // м. Житомир + ТГ -> Житомирський район
+    case  500: return   66; // м. Ужгород + ТГ -> Ужгородський район
+    case  564: return  149; // м. Запоріжжя + ТГ -> Запорізький район
+    case  632: return   68; // м. Івано-Франківськ + ТГ -> Івано-Франківський район
+    case  761: return   81; // м. Кропивницький + ТГ -> Кропивницький район
+    case  845: return   90; // м. Львів + ТГ -> Львівський район
+    case  926: return   98; // м. Миколаїв + ТГ -> Миколаївський район
+    case  964: return  104; // м. Одеса + ТГ -> Одеський район
+    case 1060: return  109; // м. Полтава + ТГ -> Полтавський район
+    case 1133: return  112; // м. Рівне + ТГ -> Рівненський район
+    case 1187: return  114; // м. Суми + ТГ -> Сумський район
+    case 1241: return  119; // м. Тернопіль + ТГ -> Тернопільський район
+    case 1293: return  124; // м. Харків + ТГ -> Харківський район
+    case 1370: return  132; // м. Херсон + ТГ -> Херсонський район
+    case 1400: return  134; // м. Хмельницький + ТГ -> Хмельницький район
+    case 1473: return  152; // м. Черкаси + ТГ -> Черкаський район
+    case 1542: return  137; // м. Чернівці + ТГ -> Чернівецький район
+    case 1591: return  140; // м. Чернігів + ТГ -> Чернігівський район
+    default: return rid;
+  }
+}
+
 // Returns the parent oblast/state regionId for a given district or city regionId
 static inline uint16_t get_parent_state_id(uint16_t rid) {
-  switch (rid) {
+  uint16_t did = get_parent_district_id(rid);
+  switch (did) {
     case   32: return    4; // Тульчинський район
     case   33: return    4; // Могилів-Подільський район
     case   34: return    4; // Хмільницький район
@@ -201,10 +230,11 @@ void JaamWsComponent::send_text(const char *msg) {
 
 void JaamWsComponent::update_flags_from_fusion() {
   uint16_t flags_region = (this->region_id_ < MAX_ALERT_REGIONS) ? this->active_alerts_table_[this->region_id_] : 0;
+  uint16_t flags_district = (this->district_id_ < MAX_ALERT_REGIONS) ? this->active_alerts_table_[this->district_id_] : 0;
   uint16_t flags_state = (this->state_id_ < MAX_ALERT_REGIONS) ? this->active_alerts_table_[this->state_id_] : 0;
 
-  uint32_t raw = (uint32_t)flags_region | (uint32_t)flags_state |
-                 (uint32_t)this->notif_flags_region_ | (uint32_t)this->notif_flags_state_;
+  uint32_t raw = (uint32_t)flags_region | (uint32_t)flags_district | (uint32_t)flags_state |
+                 (uint32_t)this->notif_flags_region_ | (uint32_t)this->notif_flags_district_ | (uint32_t)this->notif_flags_state_;
 
   uint32_t f = raw;
   // If yellow (bit 11) or red (bit 12) is set, ensure legacy AIR bit 0 is set
@@ -223,8 +253,8 @@ void JaamWsComponent::update_flags_from_fusion() {
   if (f != this->flags_ || f != this->reported_) {
     this->flags_ = f;
     this->pending_ = true;
-    ESP_LOGI(TAG, "Fusion alert flags updated: 0x%04X (region %u [0x%04X], parent state %u [0x%04X])",
-             (unsigned)f, this->region_id_, flags_region, this->state_id_, flags_state);
+    ESP_LOGI(TAG, "Fusion alert flags updated: 0x%04X (region %u [0x%04X], district %u [0x%04X], parent state %u [0x%04X])",
+             (unsigned)f, this->region_id_, flags_region, this->district_id_, flags_district, this->state_id_, flags_state);
   }
 }
 
@@ -251,12 +281,15 @@ void JaamWsComponent::update_flags_from_upstream() {
 
 void JaamWsComponent::set_region_id(uint16_t rid) {
   this->region_id_ = rid;
-  this->state_id_ = get_parent_state_id(rid);
+  this->district_id_ = get_parent_district_id(rid);
+  this->state_id_ = get_parent_state_id(this->district_id_);
   this->notif_flags_region_ = 0;
+  this->notif_flags_district_ = 0;
   this->notif_flags_state_ = 0;
   this->reported_ = 0xFFFFFFFF;
   this->flags_ = 0xFFFFFFFF;
-  ESP_LOGI(TAG, "Alert region configured: region_id=%u, parent_state_id=%u", this->region_id_, this->state_id_);
+  ESP_LOGI(TAG, "Alert region configured: region_id=%u, district_id=%u, parent_state_id=%u",
+           this->region_id_, this->district_id_, this->state_id_);
 
   if (this->is_fusion_mode()) {
     this->update_flags_from_fusion();
@@ -356,8 +389,8 @@ void JaamWsComponent::setup() {
   }
   esp_websocket_register_events(this->client_, WEBSOCKET_EVENT_ANY, ws_event_handler, this);
   esp_websocket_client_start(this->client_);
-  ESP_LOGI(TAG, "Connecting to %s (region_id=%u, parent_state_id=%u)",
-           uri.c_str(), this->region_id_, this->state_id_);
+  ESP_LOGI(TAG, "Connecting to %s (region_id=%u, district_id=%u, parent_state_id=%u)",
+           uri.c_str(), this->region_id_, this->district_id_, this->state_id_);
 }
 
 void JaamWsComponent::on_ws_binary(const uint8_t *data, size_t len, int offset, int total_len, bool fin) {
@@ -409,18 +442,29 @@ void JaamWsComponent::parse_binary_packet(const uint8_t *data, size_t len) {
     const size_t count = body_len / 4;
     const uint8_t *ptr = data + 1;
 
+    uint16_t new_notif_region = 0;
+    uint16_t new_notif_district = 0;
+    uint16_t new_notif_state = 0;
+
     for (size_t i = 0; i < count; i++) {
       uint16_t rid = (uint16_t)ptr[0] | ((uint16_t)ptr[1] << 8);
       uint16_t flags16 = (uint16_t)ptr[2] | ((uint16_t)ptr[3] << 8);
       ptr += 4;
 
       if (rid == this->region_id_) {
-        this->notif_flags_region_ = flags16;
+        new_notif_region |= flags16;
+      }
+      if (rid == this->district_id_) {
+        new_notif_district |= flags16;
       }
       if (rid == this->state_id_) {
-        this->notif_flags_state_ = flags16;
+        new_notif_state |= flags16;
       }
     }
+
+    this->notif_flags_region_ = new_notif_region;
+    this->notif_flags_district_ = new_notif_district;
+    this->notif_flags_state_ = new_notif_state;
 
     this->update_flags_from_fusion();
   }
@@ -574,7 +618,8 @@ void JaamWsComponent::loop() {
 void JaamWsComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "JAAM alert server:");
   ESP_LOGCONFIG(TAG, "  Host: %s:%u%s", this->host_.c_str(), this->port_, this->path_.c_str());
-  ESP_LOGCONFIG(TAG, "  Region ID: %u (parent state: %u)", this->region_id_, this->state_id_);
+  ESP_LOGCONFIG(TAG, "  Region ID: %u (district: %u, parent state: %u)",
+                this->region_id_, this->district_id_, this->state_id_);
   ESP_LOGCONFIG(TAG, "  Connected: %s", YESNO(this->connected_));
 }
 

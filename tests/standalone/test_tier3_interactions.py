@@ -276,18 +276,19 @@ def test_t3_04_modal_screen_symmetrical_gestures():
 # ============================================================================
 def test_t3_05_location_change_syncs_alert_and_weather_state():
     """Verify that updating location via web interface triggers on_geo_settings_changed,
-    synchronizing alert_region, JAAM parent state hierarchy, weather coords, and web alert_active."""
-    from .conftest import ALERT_BIT_RED, get_parent_state_id
+    synchronizing alert_region, JAAM 3-tier parent hierarchy, weather coords, and web alert_active."""
+    from .conftest import ALERT_BIT_RED, get_parent_district_id, get_parent_state_id
 
     class SystemHub:
         def __init__(self):
             # Simulated fusion state table: region_id -> flags
-            # Sumska oblast (20) has active Red Alert
+            # Real-world scenario: Sumskyi district (114) has active Red Alert,
+            # while neither Sumska oblast (20) nor Sumy hromada (1187) have flags set.
             self.fusion_table = {
-                20: (1 << ALERT_BIT_RED),
+                20: 0,
                 31: 0,  # Kyiv has no alert
-                114: 0,
-                1187: 0,
+                114: (1 << ALERT_BIT_RED),  # Sumskyi district has alert!
+                1187: 0,  # Sumy hromada has no direct alert
             }
             self.alert_region = 31
             self.weather_lat = 50.4501
@@ -297,10 +298,15 @@ def test_t3_05_location_change_syncs_alert_and_weather_state():
             self.web_alert_active = False
 
         def on_geo_settings_changed(self, region: int, lat: float, lon: float, city: str):
-            # 1. Alert feature handler
+            # 1. Alert feature handler (3-tier hierarchy fusion)
             self.alert_region = region
+            parent_district = get_parent_district_id(region)
             parent_state = get_parent_state_id(region)
-            fused_flags = self.fusion_table.get(region, 0) | self.fusion_table.get(parent_state, 0)
+            fused_flags = (
+                self.fusion_table.get(region, 0)
+                | self.fusion_table.get(parent_district, 0)
+                | self.fusion_table.get(parent_state, 0)
+            )
             is_air = bool(fused_flags & (1 << ALERT_BIT_RED))
             # Updates both device alert state and web alert active state
             self.set_system_alert_active(is_air)
@@ -338,7 +344,7 @@ def test_t3_05_location_change_syncs_alert_and_weather_state():
     assert hub.weather_city_name == "Суми"
     assert hub.weather_fetch_triggered is True
 
-    # Alert state updated immediately from inherited Sumska oblast (20) Red alert!
+    # Alert state updated immediately from inherited Sumskyi district (114) Red alert!
     assert hub.web_alert_active is True
     status_updated = hub.get_web_status()
     assert status_updated["region"] == 1187
@@ -469,3 +475,157 @@ def test_t3_06_search_places_deduplication_and_poi_filtering():
     assert len(results) == 2
     assert results[0]["name"] == "Суми"
     assert results[1]["name"] == "Сумська міська громада"
+
+
+# ============================================================================
+# T3-07: Threat Type Transition and Asset Clearing (Bug 2 Regression Test)
+# ============================================================================
+def test_t3_07_threat_type_transition_clearing():
+    """Verify that when a specific threat (e.g. KAB) ends and returns to generic
+    air raid alert ("невизначений тип загрози"), the status slot correctly clears
+    the KAB asset (32x40) and redraws the base alert icon (44x40) without sticking."""
+    from .conftest import (
+        ALERT_BIT_KABS,
+        ALERT_BIT_RED,
+        ASSET_ID_ALERT,
+        ASSET_ID_THREAT_KAB,
+        COLOR_RED,
+    )
+
+    class MockGD32ScreenArbiter:
+        def __init__(self):
+            self.top_owner = ""
+            self.screen_mode = 0  # 0: clock
+            self.slot_hold = False
+            self.ops_log: list[tuple[str, int, int, int]] = []
+
+        def request_status_icon(self, owner: str, prio: int = 100):
+            self.top_owner = owner
+
+        def clear_status_icon(self, owner: str):
+            if self.top_owner == owner:
+                self.top_owner = ""
+
+        def get_top_status_icon_owner(self) -> str:
+            return self.top_owner
+
+        def get_screen_mode(self) -> int:
+            return self.screen_mode
+
+        def send_clear_cached_asset_centered(self, asset_id: int, cx: int, cy: int):
+            self.ops_log.append(("CLEAR", asset_id, cx, cy))
+
+        def send_draw_cached_asset_centered(
+            self, asset_id: int, cx: int, cy: int, fg: int, bg: int, scale: int
+        ):
+            self.ops_log.append(("DRAW", asset_id, cx, cy))
+
+    class MockAlertFeature:
+        def __init__(self, arbiter: MockGD32ScreenArbiter):
+            self.arbiter = arbiter
+            self.alert_active = False
+            self.alert_yellow = False
+            self.alert_kab = False
+            self.alert_icon_drawn_asset = -1
+
+        def refresh_alert_icon(self):
+            # Mirrors alert.yaml refresh_alert_icon lambda logic exactly
+            alert = self.alert_active
+            asset_id = ASSET_ID_ALERT
+            if alert:
+                self.arbiter.request_status_icon("alert", 100)
+                if self.alert_kab:
+                    asset_id = ASSET_ID_THREAT_KAB
+            else:
+                self.arbiter.clear_status_icon("alert")
+
+            is_top = self.arbiter.get_top_status_icon_owner() == "alert"
+            can_show = (
+                is_top and (self.arbiter.get_screen_mode() == 0) and not self.arbiter.slot_hold
+            )
+            if can_show:
+                if self.alert_icon_drawn_asset >= 0 and self.alert_icon_drawn_asset != asset_id:
+                    self.arbiter.send_clear_cached_asset_centered(
+                        self.alert_icon_drawn_asset, 190, 86
+                    )
+                color = COLOR_RED
+                self.arbiter.send_draw_cached_asset_centered(asset_id, 190, 86, color, 0, 1)
+                self.alert_icon_drawn_asset = asset_id
+            elif self.alert_icon_drawn_asset >= 0:
+                self.arbiter.send_clear_cached_asset_centered(self.alert_icon_drawn_asset, 190, 86)
+                self.alert_icon_drawn_asset = -1
+
+        def on_screen_drawn(self):
+            # Mirrors alert.yaml on_screen_drawn lambda logic:
+            # Persistent redraw on every LVGL flush ensures no widget invalidation (e.g. alarm toggle)
+            # wipes the threat icon from display GRAM.
+            is_top = self.arbiter.get_top_status_icon_owner() == "alert"
+            can_show = (
+                is_top and (self.arbiter.get_screen_mode() == 0) and not self.arbiter.slot_hold
+            )
+            if can_show and self.alert_icon_drawn_asset >= 0:
+                color = COLOR_RED
+                self.arbiter.send_draw_cached_asset_centered(
+                    self.alert_icon_drawn_asset, 190, 86, color, 0, 1
+                )
+
+        def handle_flags_update(self, flags: int):
+            # Mirrors alert.yaml on_flags lambda
+            yellow = bool(flags & (1 << 11))
+            red = bool(flags & (1 << 12))
+            air = bool(flags & (1 << 0)) or yellow or red
+            self.alert_kab = bool(flags & (1 << ALERT_BIT_KABS))
+            self.alert_yellow = yellow and not red
+            self.alert_active = air
+            self.refresh_alert_icon()
+
+    arbiter = MockGD32ScreenArbiter()
+    feature = MockAlertFeature(arbiter)
+
+    # 1. Base Air Raid Alert begins (no specific threat)
+    feature.handle_flags_update(1 << ALERT_BIT_RED)
+    assert feature.alert_active is True
+    assert feature.alert_kab is False
+    assert feature.alert_icon_drawn_asset == ASSET_ID_ALERT
+    assert arbiter.ops_log[-1] == ("DRAW", ASSET_ID_ALERT, 190, 86)
+
+    # 2. Tactical threat escalates: KAB detected in region/district (bit 7 set)
+    feature.handle_flags_update((1 << ALERT_BIT_RED) | (1 << ALERT_BIT_KABS))
+    assert feature.alert_kab is True
+    assert feature.alert_icon_drawn_asset == ASSET_ID_THREAT_KAB
+    # Must clear previous alert icon and draw KAB icon
+    assert ("CLEAR", ASSET_ID_ALERT, 190, 86) in arbiter.ops_log
+    assert arbiter.ops_log[-1] == ("DRAW", ASSET_ID_THREAT_KAB, 190, 86)
+
+    # 3. User toggles alarm on/off while KAB threat is active:
+    # LVGL renders ui_alarm_tick (invalidating 236x236) and finishes draw cycle (on_screen_drawn).
+    # Threat icon MUST immediately redraw and not disappear!
+    feature.on_screen_drawn()
+    assert arbiter.ops_log[-1] == ("DRAW", ASSET_ID_THREAT_KAB, 190, 86), (
+        "on_screen_drawn must persistently redraw active threat icon when screen redraws"
+    )
+
+    # 4. Tactical threat subsides: 0xA2 batch clears KAB flag, only base Red alert remains
+    feature.handle_flags_update(1 << ALERT_BIT_RED)
+    assert feature.alert_kab is False, "KAB flag must be false after threat subsides"
+    assert feature.alert_icon_drawn_asset == ASSET_ID_ALERT, (
+        "Drawn asset must revert to ASSET_ID_ALERT (44x40) when threat subsides"
+    )
+    # Must explicitly clear KAB asset (32x40) before drawing ASSET_ID_ALERT (44x40)
+    assert arbiter.ops_log[-2] == ("CLEAR", ASSET_ID_THREAT_KAB, 190, 86)
+    assert arbiter.ops_log[-1] == ("DRAW", ASSET_ID_ALERT, 190, 86)
+
+    # 5. Another background redraw (e.g. seconds dot or clock flip) occurs:
+    feature.on_screen_drawn()
+    assert arbiter.ops_log[-1] == ("DRAW", ASSET_ID_ALERT, 190, 86)
+
+    # 6. Air Raid Alert all-clear: flags return to 0
+    feature.handle_flags_update(0)
+    assert feature.alert_active is False
+    assert feature.alert_icon_drawn_asset == -1
+    assert arbiter.ops_log[-1] == ("CLEAR", ASSET_ID_ALERT, 190, 86)
+
+    # 7. Post-all-clear screen redraw does NOT draw any alert icon
+    arbiter.ops_log.clear()
+    feature.on_screen_drawn()
+    assert len(arbiter.ops_log) == 0, "No icon should be drawn after all-clear"

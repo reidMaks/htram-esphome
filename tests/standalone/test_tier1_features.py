@@ -18,6 +18,7 @@ import pytest
 from .conftest import (
     ALERT_BIT_BALLISTIC,
     ALERT_BIT_DRONES,
+    ALERT_BIT_KABS,
     ALERT_BIT_RED,
     ALERT_BIT_YELLOW,
     COLOR_GREEN,
@@ -30,6 +31,7 @@ from .conftest import (
     deserialize_nvs_settings,
     encode_jaam_binary_packet_a1,
     encode_jaam_binary_packet_a2,
+    get_parent_district_id,
     get_parent_state_id,
     map_wmo_code_to_condition,
     segment_dayparts,
@@ -197,11 +199,18 @@ def test_t1_06_jaam_ws_fusion_v1_binary_protocol():
     assert pkt_type == 0xA1
     assert len(decoded_records) == 3
 
-    # 2. District hierarchy resolution
+    # 2. District & Hromada hierarchy resolution
     # Bucha district (75) parent state is Kyiv oblast (14)
     bucha_district_id = 75
     parent_state_id = get_parent_state_id(bucha_district_id)
     assert parent_state_id == 14, "Bucha district must map to Kyiv Oblast (state_id=14)"
+
+    # Sumy hromada (1187) parent district is Sumy district (114), parent state is Sumy oblast (20)
+    sumy_hromada_id = 1187
+    sumy_district_id = get_parent_district_id(sumy_hromada_id)
+    sumy_state_id = get_parent_state_id(sumy_hromada_id)
+    assert sumy_district_id == 114, "Sumy hromada (1187) must map to Sumy district (114)"
+    assert sumy_state_id == 20, "Sumy hromada (1187) must map to Sumy oblast (20)"
 
     table_dict = dict(decoded_records)
     # Fused alert for Bucha district: district flags OR parent state flags
@@ -213,12 +222,51 @@ def test_t1_06_jaam_ws_fusion_v1_binary_protocol():
         "Bucha district must inherit Ballistic threat flag"
     )
 
-    # 3. Packet 0xA2: Push notification batch
-    records_a2 = [(75, (1 << ALERT_BIT_YELLOW) | (1 << ALERT_BIT_DRONES))]
-    raw_packet_a2 = encode_jaam_binary_packet_a2(records_a2)
+    # 3-tier fused alert for Sumy hromada: hromada (1187) = 0, oblast (20) = 0, but district (114) = Red alert
+    table_dict[114] = 1 << ALERT_BIT_RED
+    fused_sumy_flags = (
+        table_dict.get(sumy_hromada_id, 0)
+        | table_dict.get(sumy_district_id, 0)
+        | table_dict.get(sumy_state_id, 0)
+    )
+    assert fused_sumy_flags & (1 << ALERT_BIT_RED), (
+        "Sumy hromada (1187) must inherit Red alert from Sumy district (114)"
+    )
+
+    # 3. Packet 0xA2: Push notification batch with threat clearing
+    # Phase A: Push notification arrives with KAB threat for Sumy district (114)
+    records_a2_kab = [(114, (1 << ALERT_BIT_KABS))]
+    raw_packet_a2 = encode_jaam_binary_packet_a2(records_a2_kab)
     pkt_type_2, decoded_a2 = decode_jaam_binary_packet(raw_packet_a2)
     assert pkt_type_2 == 0xA2
-    assert decoded_a2[0] == (75, (1 << ALERT_BIT_YELLOW) | (1 << ALERT_BIT_DRONES))
+    assert decoded_a2[0] == (114, (1 << ALERT_BIT_KABS))
+
+    # Simulate JAAM WS parsing: accumulate new_notif
+    notif_dict = dict(decoded_a2)
+    notif_sumy = (
+        notif_dict.get(sumy_hromada_id, 0)
+        | notif_dict.get(sumy_district_id, 0)
+        | notif_dict.get(sumy_state_id, 0)
+    )
+    fused_with_notif = fused_sumy_flags | notif_sumy
+    assert fused_with_notif & (1 << ALERT_BIT_KABS), "KAB threat must be active"
+
+    # Phase B: Subsequent notification batch arrives with no notifications for Sumy (or empty batch)
+    records_a2_clear = []  # KAB threat has ended
+    raw_packet_clear = encode_jaam_binary_packet_a2(records_a2_clear)
+    _, decoded_clear = decode_jaam_binary_packet(raw_packet_clear)
+    notif_dict_cleared = dict(decoded_clear)
+    notif_sumy_cleared = (
+        notif_dict_cleared.get(sumy_hromada_id, 0)
+        | notif_dict_cleared.get(sumy_district_id, 0)
+        | notif_dict_cleared.get(sumy_state_id, 0)
+    )
+    assert notif_sumy_cleared == 0, (
+        "Notification flags must reset to 0 when omitted from 0xA2 batch"
+    )
+    fused_cleared = fused_sumy_flags | notif_sumy_cleared
+    assert not (fused_cleared & (1 << ALERT_BIT_KABS)), "KAB threat must be cleared"
+    assert fused_cleared & (1 << ALERT_BIT_RED), "Underlying Red alert must remain active"
 
     # 4. All-Clear logic: when flags become 0, 5-minute green indicator activates
     def compute_alert_clock_color(current_flags: int, all_clear_remaining_seconds: int) -> int:
