@@ -10,15 +10,10 @@ Verifies:
 
 from __future__ import annotations
 
-import asyncio
 import re
-import subprocess
-import tempfile
-from pathlib import Path
-from typing import Any
+import time
 
 import pytest
-from PIL import Image
 
 from tests.e2e.snapshot_helpers import assert_matches_snapshot
 
@@ -306,142 +301,60 @@ class TestPhysicalResetGesturesRouting:
 # ============================================================================
 def test_live_simulator_ap_mode_and_gestures_e2e():
     """Live execution test: launches htram-sim, tests quadruple click, single click toggle, and screenshots."""
-    asyncio.run(_run_live_simulator_test())
-
-
-async def _run_live_simulator_test():
     if not SIM_BINARY.exists():
         pytest.skip(f"Simulator binary not found at {SIM_BINARY}. Skipping live E2E test.")
 
-    import os
-    import socket
+    from tests.standalone.test_gestures_and_boot import StandaloneSimHarness
 
-    import aioesphomeapi
-
-    def find_free_port() -> int:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            return s.getsockname()[1]
-
-    pref_dir = tempfile.TemporaryDirectory()
-    port = find_free_port()
-    env = os.environ.copy()
-    env["HTRAM_SIM_PORT"] = str(port)
-    env["ESPHOME_PREFDIR"] = pref_dir.name
-
-    log_path = REPO_ROOT / f"sim_challenger_test_{port}.log"
-    log_file = open(log_path, "w")
-    proc = subprocess.Popen(
-        [str(SIM_BINARY)],
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        cwd=REPO_ROOT,
-    )
-
-    client: aioesphomeapi.APIClient | None = None
+    sim = StandaloneSimHarness()
+    sim.start()
     try:
-        await asyncio.sleep(2.0)
-        client = aioesphomeapi.APIClient("127.0.0.1", port, password="")
-        await client.connect(login=True)
-
-        entities_list, services_list = await client.list_entities_services()
-        services = {s.name: s for s in services_list}
-        states: dict[str, Any] = {}
-        key_to_name = {getattr(e, "key", 0): getattr(e, "name", "") for e in entities_list}
-
-        def on_state(state: Any):
-            name = key_to_name.get(getattr(state, "key", 0))
-            if name:
-                states[name] = getattr(state, "state", None)
-
-        client.subscribe_states(on_state)
-        await asyncio.sleep(0.5)
-
-        # Freeze time at baseline to fix orbit dot position deterministically
-        await client.execute_service(
-            services["set_sim_time"], {"epoch": 1789411500, "freeze": True}
-        )
-        await asyncio.sleep(0.3)
+        sim.simulate_reboot_resync()
+        time.sleep(0.4)
 
         # Baseline: Context should be "clock"
-        assert states.get("Arbiter Context") == "clock", (
-            f"Expected clock, got {states.get('Arbiter Context')}"
+        assert sim.wait_arbiter_context("clock", timeout=3.0), (
+            f"Expected clock, got {sim.states.get('Arbiter Context')}"
         )
 
         # 1. Trigger Wi-Fi setup via quadruple click (4-click gesture)
-        await client.execute_service(services["inject_button"], {"action": "quadruple"})
-        await asyncio.sleep(1.0)
-
-        # Context MUST transition to modal_ap
-        assert states.get("Arbiter Context") == "modal_ap", (
-            f"Expected modal_ap after quadruple click, got {states.get('Arbiter Context')}"
+        sim.inject_button("quadruple")
+        assert sim.wait_arbiter_context("modal_ap", timeout=3.0), (
+            f"Expected modal_ap after quadruple click, got {sim.states.get('Arbiter Context')}"
         )
+        time.sleep(0.5)
 
         # 2. Capture screenshot of AP Page 0 (QR code) and assert against golden snapshot
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ppm_path = Path(tmpdir) / "ap_01_qr_card.ppm"
-            png_path = Path(tmpdir) / "ap_01_qr_card.png"
-            await client.execute_service(services["take_screenshot"], {"filename": str(ppm_path)})
-            await asyncio.sleep(0.8)
-            assert ppm_path.exists(), "PPM screenshot of AP QR page must be generated"
-            Image.open(ppm_path).save(png_path)
-            assert_matches_snapshot(
-                png_path, "ap_01_qr_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
-            )
+        png1 = sim.capture_screenshot("live_sim_ap_01_qr_card")
+        assert_matches_snapshot(png1, "ap_01_qr_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
 
-            # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
-            await client.execute_service(services["inject_button"], {"action": "single"})
-            await asyncio.sleep(0.8)
-            assert states.get("Arbiter Context") == "modal_ap", (
-                "Context must remain modal_ap during single-click"
-            )
+        # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
+        sim.inject_button("single")
+        time.sleep(0.5)
+        assert sim.states.get("Arbiter Context") == "modal_ap", (
+            "Context must remain modal_ap during single-click"
+        )
 
-            ppm1_path = Path(tmpdir) / "ap_02_info_card.ppm"
-            png1_path = Path(tmpdir) / "ap_02_info_card.png"
-            await client.execute_service(services["take_screenshot"], {"filename": str(ppm1_path)})
-            await asyncio.sleep(0.8)
-            assert ppm1_path.exists(), "PPM screenshot of AP info card must be generated"
-            Image.open(ppm1_path).save(png1_path)
-            assert_matches_snapshot(
-                png1_path, "ap_02_info_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
-            )
+        png2 = sim.capture_screenshot("live_sim_ap_02_info_card")
+        assert_matches_snapshot(png2, "ap_02_info_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
 
         # 4. Dismiss modal_ap back to Clock via quadruple click (symmetrical exit)
-        await client.execute_service(services["inject_button"], {"action": "quadruple"})
-        await asyncio.sleep(0.6)
-        assert states.get("Arbiter Context") == "clock", (
+        sim.inject_button("quadruple")
+        assert sim.wait_arbiter_context("clock", timeout=3.0), (
             "Context must return to clock after quadruple click dismiss"
         )
 
         # 5. Trigger Wi-Fi setup via many click (5-click gesture)
-        await client.execute_service(services["inject_button"], {"action": "many"})
-        await asyncio.sleep(0.6)
-        assert states.get("Arbiter Context") == "modal_ap", (
-            f"Expected modal_ap after 5-click 'many' gesture, got {states.get('Arbiter Context')}"
+        sim.inject_button("many")
+        assert sim.wait_arbiter_context("modal_ap", timeout=3.0), (
+            f"Expected modal_ap after 5-click 'many' gesture, got {sim.states.get('Arbiter Context')}"
         )
 
         # 6. Dismiss modal_ap via double click
-        await client.execute_service(services["inject_button"], {"action": "double"})
-        await asyncio.sleep(0.6)
-        assert states.get("Arbiter Context") == "clock", (
+        sim.inject_button("double")
+        assert sim.wait_arbiter_context("clock", timeout=3.0), (
             "Context must return to clock after double click dismiss"
         )
 
     finally:
-        if client:
-            await client.disconnect()
-        proc.terminate()
-        try:
-            proc.wait(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        log_file.close()
-        try:
-            log_path.unlink()
-        except OSError:
-            pass
-        try:
-            pref_dir.cleanup()
-        except Exception:
-            pass
+        sim.stop()

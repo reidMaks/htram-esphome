@@ -113,7 +113,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             tag="${GITHUB_REF_NAME}"
           else
-            ver=$(python3 -c "import yaml; print(yaml.safe_load(open('esphome/htram-core.yaml'))['substitutions']['firmware_version'])")
+            ver=$(python3 -c "import re; print(re.search(r'firmware_version:\s*[\"\'\']?([^\"\'\'\s]+)', open('esphome/htram-core.yaml', encoding='utf-8').read()).group(1))")
             tag="v${ver}"
           fi
 
@@ -126,7 +126,7 @@ jobs:
           # Create release if it does not exist yet
           if ! gh release view "$tag" >/dev/null 2>&1; then
             echo "Creating GitHub Release $tag..."
-            gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+            gh release create "$tag" --title "$tag" --notes-file "$notes_file" --target "$GITHUB_SHA"
           else
             echo "Release $tag already exists on GitHub; uploading/updating assets."
           fi
