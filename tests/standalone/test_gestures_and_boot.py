@@ -34,6 +34,15 @@ BASELINE_SIM_TIME = 1789411500  # 2026-09-14 21:45:00 EEST
 
 
 def find_free_port() -> int:
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "")
+    worker_offset = (int(worker[2:]) + 1) * 100 if worker.startswith("gw") else 0
+    for p in range(20000 + worker_offset, 20090 + worker_offset):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", p))
+                return p
+        except OSError:
+            continue
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
