@@ -144,6 +144,7 @@ api:
             id(htram_arbiter_hub)->release_screen("weather");
             id(htram_arbiter_hub)->release_screen("timer");
             id(htram_arbiter_hub)->release_screen("ap");
+            id(htram_arbiter_hub)->release_screen("climate");
             id(htram_arbiter_hub)->reset_audio();
         - script.execute: refresh_face
         - script.execute: refresh_clock

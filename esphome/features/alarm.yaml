@@ -257,6 +257,7 @@ script:
           id(alarm_ringing) = true;
           id(alarm_snoozing) = false;
           id(htram_arbiter_hub)->set_snooze(false);
+          id(htram_arbiter_hub)->play_rtttl(30, "alarm", "${alarm_rtttl}");
           if (id(htram_arbiter_hub)->get_screen_mode() != 0) {
             id(htram_arbiter_hub)->preempt_to_clock("alarm");
             id(face_state) = -1;
@@ -269,8 +270,8 @@ script:
       - repeat:
           count: 100
           then:
-            - lambda: id(htram_arbiter_hub)->play_rtttl(30, "alarm", "${alarm_rtttl}");
             - delay: ${alarm_repeat_seconds}s
+            - lambda: id(htram_arbiter_hub)->play_rtttl(30, "alarm", "${alarm_rtttl}");
       - script.execute: alarm_dismiss
 
   - id: alarm_stop

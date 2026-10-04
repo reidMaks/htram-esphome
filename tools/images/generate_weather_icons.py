@@ -380,7 +380,9 @@ def make_snowy_layers():
     }
 
 
-def process_and_save(big_im, target_h, filename, bbox=None):
+def process_and_save(big_im, target_h, filename, bbox=None, out_dir=None):
+    if out_dir is None:
+        out_dir = OUTPUT_DIR
     if bbox is None:
         bbox = big_im.getbbox()
     if bbox:
@@ -399,13 +401,23 @@ def process_and_save(big_im, target_h, filename, bbox=None):
 
     small = cropped.resize((new_w, new_h), Image.LANCZOS)
     binary = small.point(lambda v: 255 if v > 120 else 0, mode="L")
-    path = os.path.join(OUTPUT_DIR, filename)
+    path = os.path.join(out_dir, filename)
     binary.save(path)
     print(f"Saved {filename}: {new_w}x{new_h}, {len(binary.tobytes())} bytes")
 
 
 def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate 1-bit weather icon masks")
+    parser.add_argument(
+        "--out-dir",
+        default=OUTPUT_DIR,
+        help="Destination directory for generated masks",
+    )
+    args = parser.parse_args()
+    out_dir = args.out_dir
+    os.makedirs(out_dir, exist_ok=True)
     # Single-layer icons
     singles = {
         "weather_sunny_mask.png": make_sunny(),
@@ -415,7 +427,7 @@ def main():
         "weather_windy_mask.png": make_windy(),
     }
     for filename, big_im in singles.items():
-        process_and_save(big_im, target_h=36, filename=filename)
+        process_and_save(big_im, target_h=36, filename=filename, out_dir=out_dir)
 
     # Multi-layer icons
     layered_generators = [
@@ -427,7 +439,7 @@ def main():
     ]
     for layer_dict in layered_generators:
         for filename, (im, bbox) in layer_dict.items():
-            process_and_save(im, target_h=36, filename=filename, bbox=bbox)
+            process_and_save(im, target_h=36, filename=filename, bbox=bbox, out_dir=out_dir)
 
 
 if __name__ == "__main__":

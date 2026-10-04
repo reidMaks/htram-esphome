@@ -35,7 +35,7 @@ font:
     id: font_slot
     size: 15
     bpp: 4
-    glyphs: "0123456789.,:%-+ °"
+    glyphs: "0123456789.,:%-+ °!"
     glyphsets:
       - GF_Cyrillic_Core
 

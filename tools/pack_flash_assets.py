@@ -30,6 +30,7 @@ import sys
 import zlib
 from pathlib import Path
 from typing import Any
+
 from PIL import Image
 
 REPO = Path(__file__).resolve().parents[1]
@@ -85,6 +86,22 @@ CANONICAL_ASSETS = [
     (26, "weather_partlycloudy_night_moon", "weather_partlycloudy_night_moon_mask.png"),
     (27, "weather_partlycloudy_night_cld", "weather_partlycloudy_night_cloud_mask.png"),
     (28, "weather_partlycloudy_night", "weather_partlycloudy_night_mask.png"),
+    (29, "comfort_disc", "comfort_disc_mask.png"),
+    (30, "comfort_happy_face", "comfort_happy_face_mask.png"),
+    (31, "comfort_neutral_face", "comfort_neutral_face_mask.png"),
+    (32, "comfort_stuffy_face", "comfort_stuffy_face_mask.png"),
+    (33, "comfort_stuffy_drop", "comfort_stuffy_drop_mask.png"),
+    (34, "comfort_hot_face", "comfort_hot_face_mask.png"),
+    (35, "comfort_hot_drops", "comfort_hot_drops_mask.png"),
+    (36, "comfort_cold_body", "comfort_cold_body_mask.png"),
+    (37, "comfort_cold_face", "comfort_cold_face_mask.png"),
+    (38, "comfort_cold_ice", "comfort_cold_ice_mask.png"),
+    (39, "comfort_dry_body", "comfort_dry_body_mask.png"),
+    (40, "comfort_dry_accents", "comfort_dry_accents_mask.png"),
+    (41, "comfort_dizzy_face", "comfort_dizzy_face_mask.png"),
+    (42, "comfort_mold_stem", "comfort_mold_stem_mask.png"),
+    (43, "comfort_mold_cap", "comfort_mold_cap_mask.png"),
+    (44, "comfort_mold_spots", "comfort_mold_spots_mask.png"),
 ]
 
 
@@ -389,7 +406,9 @@ def print_asset_table(entries: list[dict[str, Any]], total_size: int) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Pack and validate graphic mask assets for GD32 SPI Flash")
+    ap = argparse.ArgumentParser(
+        description="Pack and validate graphic mask assets for GD32 SPI Flash"
+    )
     ap.add_argument(
         "-i",
         "--images-dir",

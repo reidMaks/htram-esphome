@@ -470,8 +470,9 @@ class TestPhysicalGesturesSnapshots:
         # Dismiss overlay back to weather, then weather back to clock
         sim.inject_button("single")
         time.sleep(0.3)
-        sim.inject_button("single")
-        time.sleep(0.3)
+        if sim.states.get("Arbiter Context") == "modal_weather":
+            sim.inject_button("single")
+            time.sleep(0.3)
 
     def test_int_07_weather_persists(self, sim: StandaloneSimHarness) -> None:
         """Modal: Weather forecast persists cleanly without digit collision."""

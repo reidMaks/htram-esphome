@@ -24,10 +24,23 @@ packages:
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
+  climate: !include features/climate.yaml
   debug: !include features/debug.yaml
 
 api:
   services:
+    - service: simulate_climate
+      variables:
+        co2: float
+        temperature: float
+        humidity: float
+      then:
+        - lambda: |-
+            if (!isnan(co2)) id(sensor_co2).publish_state(co2);
+            if (!isnan(temperature)) id(sensor_temp).publish_state(temperature);
+            if (!isnan(humidity)) id(sensor_hum).publish_state(humidity);
+            if (id(climate_shown)) id(refresh_climate_ui).execute();
+
     - service: simulate_weather
       variables:
         min_temp: float
