@@ -314,6 +314,26 @@ class TestStandaloneWebBridgeCoreEndpoints:
         data = json.loads(body.decode("utf-8"))
         assert data == {"result": "rebooting"}
 
+    def test_post_api_wifi_endpoint(self, bridge_server: BridgeServerContext):
+        """POST /api/wifi returns 200 OK, saves SSID and signals reboot."""
+        payload = {"ssid": "Guest_Network", "password": "guestpassword123"}
+        status, headers, body = make_request(bridge_server.port, "POST", "/api/wifi", payload)
+        assert status == 200
+        assert "application/json" in headers.get("content-type", "")
+        data = json.loads(body.decode("utf-8"))
+        assert data == {"result": "rebooting"}
+        assert bridge_server.bridge.entity_states["wifi_ssid"] == "Guest_Network"
+
+    def test_post_api_wifi_empty_ssid_rejected(self, bridge_server: BridgeServerContext):
+        """POST /api/wifi with empty SSID returns 400 Bad Request."""
+        status, headers, body = make_request(
+            bridge_server.port, "POST", "/api/wifi", {"ssid": "", "password": "123"}
+        )
+        assert status == 400
+        assert "application/json" in headers.get("content-type", "")
+        data = json.loads(body.decode("utf-8"))
+        assert data.get("result") == "error"
+
 
 # ============================================================================
 # 2. ADVERSARIAL & BOUNDARY STRESS TESTS
@@ -434,6 +454,7 @@ class TestWebPageHeaderInvariants:
         assert "/api/settings" in html
         assert "/api/ota_update" in html
         assert "/api/check_update" in html
+        assert "/api/wifi" in html
 
         # Key control IDs or attributes
         assert "brightness" in html
@@ -441,6 +462,8 @@ class TestWebPageHeaderInvariants:
         assert "silence" in html
         assert "co2" in html
         assert "temp" in html
+        assert "inp-wifi-ssid" in html
+        assert "inp-wifi-pass" in html
         assert "chk-day-1" in html
         assert "chk-day-7" in html
 

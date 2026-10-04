@@ -364,3 +364,117 @@ def test_t1_08_modular_ha_decoupling():
         assert "reboot_timeout: 0s" in ha_text, (
             "ha.yaml must specify reboot_timeout: 0s to prevent offline bootloop"
         )
+
+
+# ============================================================================
+# T1-09: Captive Portal Instructions & Styled Saved Confirmation
+# ============================================================================
+def test_t1_09_captive_portal_instructions_and_saved_page():
+    """Verifies that Captive Portal provides clear Ukrainian instructions and 4-click hint."""
+    import gzip
+    import re
+
+    core_yaml = (REPO_ROOT / "esphome/htram-core.yaml").read_text(encoding="utf-8")
+    assert "captive_portal" in core_yaml, "captive_portal must be registered in external_components"
+
+    cp_cpp = (REPO_ROOT / "esphome/custom_components/captive_portal/captive_portal.cpp").read_text(
+        encoding="utf-8"
+    )
+    assert "WIFISAVE_HTML" in cp_cpp, "captive_portal.cpp must define WIFISAVE_HTML"
+    assert "Пароль збережено!" in cp_cpp
+    assert "QR-код для переходу в налаштування" in cp_cpp
+    assert "4 кліками" in cp_cpp
+
+    cp_index = (REPO_ROOT / "esphome/custom_components/captive_portal/captive_index.h").read_text(
+        encoding="utf-8"
+    )
+    m = re.findall(r"0x[0-9a-fA-F]{2}", cp_index)
+    decomp = gzip.decompress(bytes(int(x, 16) for x in m)).decode("utf-8", errors="ignore")
+    assert "Підключення до Wi-Fi" in decomp
+    assert "Що відбудеться після збереження:" in decomp
+    assert "QR-код налаштувань" in decomp
+    assert "4 швидкими кліками" in decomp
+
+
+# ============================================================================
+# T1-10: Settings QR Code When Connected & Modal AP Symmetrical Dismiss
+# ============================================================================
+def test_t1_10_settings_qr_code_and_dismiss_gestures():
+    """Verifies Settings QR when Wi-Fi connected, and dismiss gestures for modal_ap."""
+    core_ui = (REPO_ROOT / "esphome/core-ui.yaml").read_text(encoding="utf-8")
+    assert 'has_ip ? "налаштування" : "точка доступу"' in core_ui
+    assert 'has_ip ? ("http://" + ip + "/") : qr' in core_ui
+    assert '"htram.local"' in core_ui
+
+    for path in [
+        REPO_ROOT / "esphome/htram-core.yaml",
+        REPO_ROOT / "esphome/htram-sim-core.yaml",
+    ]:
+        content = path.read_text(encoding="utf-8")
+        assert "name: core_dismiss_ap_quadruple" in content
+        assert "name: core_dismiss_ap_double" in content
+        assert "name: core_dismiss_ap_long" in content
+        assert "name: core_preempt_ap" in content
+        assert "script.execute: dismiss_wifi_setup" in content
+        assert "- id: dismiss_wifi_setup" in content
+
+
+# ============================================================================
+# T1-11: Web Wi-Fi Settings & Autonomous SoftAP Recovery
+# ============================================================================
+def test_t1_11_web_wifi_settings_and_reconnect():
+    """Verifies that standalone web UI allows configuring Wi-Fi SSID/pass and rebooting."""
+    web_page_h = (REPO_ROOT / "esphome/custom_components/htram_web/web_page.h").read_text(
+        encoding="utf-8"
+    )
+    assert "Мережа Wi-Fi" in web_page_h
+    assert "inp-wifi-ssid" in web_page_h
+    assert "inp-wifi-pass" in web_page_h
+    assert "saveWifiSettings" in web_page_h
+    assert "/api/wifi" in web_page_h
+
+    web_cpp = (REPO_ROOT / "esphome/custom_components/htram_web/htram_web.cpp").read_text(
+        encoding="utf-8"
+    )
+    assert 'url == "/api/wifi"' in web_cpp
+    assert "save_wifi_sta(new_ssid.c_str(), new_password.c_str())" in web_cpp
+    assert "App.safe_reboot()" in web_cpp
+
+    bridge_py = (REPO_ROOT / "tools/standalone_web_bridge.py").read_text(encoding="utf-8")
+    assert 'url == "/api/wifi"' in bridge_py
+    assert '"wifi_ssid"' in bridge_py
+
+
+# ============================================================================
+# T1-12: Captive Portal Network Discovery & Full Scan Retention
+# ============================================================================
+def test_t1_12_captive_portal_network_discovery_and_keep_scan():
+    """Verifies that Captive Portal retains full scan results and actively scans networks."""
+    import gzip
+    import re
+
+    cp_init = (REPO_ROOT / "esphome/custom_components/captive_portal/__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert "wifi.request_wifi_scan_results()" in cp_init, (
+        "captive_portal must call wifi.request_wifi_scan_results() so scan results are retained across connections"
+    )
+
+    cp_cpp = (REPO_ROOT / "esphome/custom_components/captive_portal/captive_portal.cpp").read_text(
+        encoding="utf-8"
+    )
+    assert "wifi::global_wifi_component->start_scanning()" in cp_cpp, (
+        "captive_portal must trigger scanning upon portal start and empty results"
+    )
+    assert 'request->hasParam("rescan")' in cp_cpp, "handle_config must support rescan query param"
+
+    cp_index = (REPO_ROOT / "esphome/custom_components/captive_portal/captive_index.h").read_text(
+        encoding="utf-8"
+    )
+    m = re.findall(r"0x[0-9a-fA-F]{2}", cp_index)
+    decomp = gzip.decompress(bytes(int(x, 16) for x in m)).decode("utf-8", errors="ignore")
+    assert "loadNets" in decomp, "captive_index must implement loadNets for polling scan results"
+    assert "btn-ref" in decomp, (
+        "captive_index must provide a refresh button for user-triggered rescan"
+    )
+    assert "Пошук доступних мереж" in decomp, "captive_index must display discovery progress state"

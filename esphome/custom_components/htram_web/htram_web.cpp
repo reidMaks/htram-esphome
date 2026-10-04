@@ -14,6 +14,9 @@
 #include "esphome/components/number/number.h"
 #include "esphome/components/datetime/time_entity.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
 #endif
 
 #include "esphome/core/preferences.h"
@@ -96,7 +99,8 @@ bool HtramWebHandler::canHandle(AsyncWebServerRequest *request) const {
     return true;
   }
   if (request->method() == HTTP_POST && (url == "/api/settings" || url == "/api/check_update" ||
-                                         url == "/api/ota_update" || url == "/api/reboot")) {
+                                         url == "/api/ota_update" || url == "/api/reboot" ||
+                                         url == "/api/wifi")) {
     return true;
   }
   return false;
@@ -141,6 +145,16 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
     root["free_heap"] = esp_get_free_heap_size();
     root["min_free_heap"] = esp_get_minimum_free_heap_size();
     root["reset_reason"] = (int) esp_reset_reason();
+
+    #ifdef USE_WIFI
+    if (wifi::global_wifi_component != nullptr) {
+      char ssid_buf[wifi::SSID_BUFFER_SIZE];
+      const char *cur_ssid = wifi::global_wifi_component->wifi_ssid_to(ssid_buf);
+      if (cur_ssid != nullptr && cur_ssid[0] != '\0') {
+        root["wifi_ssid"] = cur_ssid;
+      }
+    }
+    #endif
 
     char id_buf[OBJECT_ID_MAX_LEN];
 
@@ -425,6 +439,43 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
   if (request->method() == HTTP_POST && url == "/api/reboot") {
     request->send(200, "application/json", "{\"result\":\"rebooting\"}");
     this->parent_->defer_action([]() { App.safe_reboot(); });
+    return;
+  }
+
+  // 7. POST /api/wifi
+  if (request->method() == HTTP_POST && url == "/api/wifi") {
+    std::string new_ssid;
+    std::string new_password;
+    bool valid = json::parse_json(this->post_body_, [&new_ssid, &new_password](JsonObject root) -> bool {
+      if (root["ssid"].isNull()) return false;
+      new_ssid = root["ssid"].as<std::string>();
+      if (new_ssid.empty()) return false;
+      if (!root["password"].isNull()) {
+        new_password = root["password"].as<std::string>();
+      }
+      return true;
+    });
+
+    this->post_body_.clear();
+
+    if (!valid) {
+      request->send(400, "application/json", "{\"result\":\"error\",\"reason\":\"invalid_ssid\"}");
+      return;
+    }
+
+    ESP_LOGI(TAG, "WiFi credentials update requested: SSID='%s'", new_ssid.c_str());
+
+    request->send(200, "application/json", "{\"result\":\"rebooting\"}");
+
+    this->parent_->defer_action([new_ssid, new_password]() {
+      #ifdef USE_WIFI
+      if (wifi::global_wifi_component != nullptr) {
+        wifi::global_wifi_component->save_wifi_sta(new_ssid.c_str(), new_password.c_str());
+      }
+      #endif
+      delay(250);
+      App.safe_reboot();
+    });
     return;
   }
 

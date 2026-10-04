@@ -232,6 +232,36 @@ htram_arbiter:
             id(ap_page) ^= 1;
             id(face_state) = -1;
         - script.execute: refresh_face
+    - event: button_quadruple
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_quadruple
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: button_double
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_double
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: button_many
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_many
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: button_long
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_long
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: screen_preempted
+      context: modal_ap
+      priority: 100
+      name: core_preempt_ap
+      then:
+        - script.execute: dismiss_wifi_setup
     - event: button_single
       context: modal_overlay
       priority: 100
@@ -316,6 +346,22 @@ script:
           id(ap_page) = 0;
           id(face_state) = -1;
           id(refresh_face).execute();
+
+  - id: dismiss_wifi_setup
+    mode: restart
+    then:
+      - lambda: |-
+          id(sim_override_ap) = 0;
+          id(ap_manual) = false;
+          if (id(htram_arbiter_hub)->get_screen_owner() == "ap") {
+            id(htram_arbiter_hub)->release_screen("ap");
+          }
+          lv_obj_invalidate(id(ui_root));
+          id(face_state) = -1;
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
 
 sensor:
   - platform: template

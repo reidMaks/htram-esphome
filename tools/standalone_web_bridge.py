@@ -67,6 +67,7 @@ class StandaloneWebBridge:
             "temp_trim": 0.0,
             "alert_active": False,
             "new_version": "",
+            "wifi_ssid": "HTRAM-Sim-WiFi",
         }
         self.services: dict[str, Any] = {}
         self.entities: dict[str, Any] = {}
@@ -344,6 +345,33 @@ class StandaloneWebBridge:
                 ).encode()
                 writer.write(header + resp_bytes)
                 await writer.drain()
+
+            elif method == "POST" and url == "/api/wifi":
+                try:
+                    data = json.loads(body.decode("utf-8"))
+                    ssid = str(data.get("ssid", "")).strip()
+                    if not ssid:
+                        raise ValueError("SSID cannot be empty")
+                    self.entity_states["wifi_ssid"] = ssid
+                    resp_bytes = b'{"result":"rebooting"}'
+                    header = (
+                        f"HTTP/1.1 200 OK\r\n"
+                        f"Content-Type: application/json\r\n"
+                        f"Content-Length: {len(resp_bytes)}\r\n"
+                        f"Connection: close\r\n\r\n"
+                    ).encode()
+                    writer.write(header + resp_bytes)
+                    await writer.drain()
+                except Exception as e:
+                    err_msg = json.dumps({"result": "error", "reason": str(e)}).encode("utf-8")
+                    header = (
+                        f"HTTP/1.1 400 Bad Request\r\n"
+                        f"Content-Type: application/json\r\n"
+                        f"Content-Length: {len(err_msg)}\r\n"
+                        f"Connection: close\r\n\r\n"
+                    ).encode()
+                    writer.write(header + err_msg)
+                    await writer.drain()
 
             else:
                 resp_bytes = b"Not Found"

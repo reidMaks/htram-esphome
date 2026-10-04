@@ -286,6 +286,20 @@ class TestPhysicalResetGesturesRouting:
         assert 'else if (h.context == "any") {' in arbiter_cpp
         assert "match = true;" in arbiter_cpp
 
+    def test_ap_modal_dismiss_gestures(self):
+        """Verifies modal_ap supports exit via quadruple click, double click, long press, and preemption."""
+        for path in [
+            REPO_ROOT / "esphome/htram-core.yaml",
+            REPO_ROOT / "esphome/htram-sim-core.yaml",
+        ]:
+            content = path.read_text(encoding="utf-8")
+            assert "name: core_dismiss_ap_quadruple" in content
+            assert "name: core_dismiss_ap_double" in content
+            assert "name: core_dismiss_ap_long" in content
+            assert "name: core_preempt_ap" in content
+            assert "script.execute: dismiss_wifi_setup" in content
+            assert "- id: dismiss_wifi_setup" in content
+
 
 # ============================================================================
 # 5. LIVE SIMULATOR E2E VERIFICATION (WHEN SIMULATOR BINARY IS PRESENT)
@@ -393,16 +407,25 @@ async def _run_live_simulator_test():
                 png1_path, "ap_02_info_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
             )
 
-        # 4. Reset back to Clock
-        await client.execute_service(services["simulate_reboot_resync"], {})
+        # 4. Dismiss modal_ap back to Clock via quadruple click (symmetrical exit)
+        await client.execute_service(services["inject_button"], {"action": "quadruple"})
         await asyncio.sleep(0.6)
-        assert states.get("Arbiter Context") == "clock", "Context must return to clock after resync"
+        assert states.get("Arbiter Context") == "clock", (
+            "Context must return to clock after quadruple click dismiss"
+        )
 
         # 5. Trigger Wi-Fi setup via many click (5-click gesture)
         await client.execute_service(services["inject_button"], {"action": "many"})
         await asyncio.sleep(0.6)
         assert states.get("Arbiter Context") == "modal_ap", (
             f"Expected modal_ap after 5-click 'many' gesture, got {states.get('Arbiter Context')}"
+        )
+
+        # 6. Dismiss modal_ap via double click
+        await client.execute_service(services["inject_button"], {"action": "double"})
+        await asyncio.sleep(0.6)
+        assert states.get("Arbiter Context") == "clock", (
+            "Context must return to clock after double click dismiss"
         )
 
     finally:

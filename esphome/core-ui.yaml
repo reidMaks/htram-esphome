@@ -254,30 +254,40 @@ script:
             }
             #endif
 
-            lv_label_set_text(id(ui_msg_cap), "точка доступу");
+            std::string ip = id(wifi_ip).state;
+            const bool has_ip = !ip.empty() && ip != "0.0.0.0" && net;
+
+            lv_label_set_text(id(ui_msg_cap), has_ip ? "налаштування" : "точка доступу");
             lv_obj_align(id(ui_msg_cap), LV_ALIGN_CENTER, 0,
                          id(ap_page) == 0 ? 76 : -62);
             lv_obj_remove_flag(id(ui_msg_cap), LV_OBJ_FLAG_HIDDEN);
 
             if (id(ap_page) == 0) {
-              // The whole join, in one scan. The modules land at ~0.55 mm on a
-              // 27 mm panel, which is close to what a phone camera resolves --
-              // hence page 1, which is the same credentials typed out.
               const std::string qr = pass.empty()
                   ? ("WIFI:T:nopass;S:" + ssid + ";;")
                   : ("WIFI:T:WPA;S:" + ssid + ";P:" + pass + ";;");
-              lv_qrcode_update(id(ui_ap_qr), qr.c_str(), qr.size());
+              const std::string qr_payload = has_ip ? ("http://" + ip + "/") : qr;
+              lv_qrcode_update(id(ui_ap_qr), qr_payload.c_str(), qr_payload.size());
               lv_obj_remove_flag(id(ui_ap_card), LV_OBJ_FLAG_HIDDEN);
               lv_obj_remove_flag(id(ui_ap_qr), LV_OBJ_FLAG_HIDDEN);
               return;
             }
 
-            lv_label_set_text(id(ui_msg), ssid.c_str());
-            lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -30);
-            lv_label_set_text(id(ui_msg_sub), "пароль");
-            lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 4);
-            lv_label_set_text(id(ui_msg2), pass.empty() ? "без пароля" : pass.c_str());
-            lv_obj_align(id(ui_msg2), LV_ALIGN_CENTER, 0, 34);
+            if (has_ip) {
+              lv_label_set_text(id(ui_msg), "htram.local");
+              lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -30);
+              lv_label_set_text(id(ui_msg_sub), "адреса");
+              lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 4);
+              lv_label_set_text(id(ui_msg2), ip.c_str());
+              lv_obj_align(id(ui_msg2), LV_ALIGN_CENTER, 0, 34);
+            } else {
+              lv_label_set_text(id(ui_msg), ssid.c_str());
+              lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -30);
+              lv_label_set_text(id(ui_msg_sub), "пароль");
+              lv_obj_align(id(ui_msg_sub), LV_ALIGN_CENTER, 0, 4);
+              lv_label_set_text(id(ui_msg2), pass.empty() ? "без пароля" : pass.c_str());
+              lv_obj_align(id(ui_msg2), LV_ALIGN_CENTER, 0, 34);
+            }
             lv_obj_remove_flag(id(ui_msg), LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(id(ui_msg2), LV_OBJ_FLAG_HIDDEN);

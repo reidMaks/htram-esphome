@@ -150,7 +150,11 @@ To ensure product ergonomics, software behavior, and error handling align with r
 4. **Seamless Provisioning:** Scanning the QR code with any smartphone automatically connects the phone to the Wi-Fi network and triggers the operating system's Captive Portal browser.
 5. **Configuration & Handoff:** The user selects their local home Wi-Fi SSID, inputs the password, selects their settlement (resolving JAAM alert region and Open-Meteo coordinates), and taps save.
 6. **Transition to Normal Mode:** The device saves parameters to NVS, connects to the home network, performs SNTP time synchronization, and transitions smoothly to the active clock face.
-7. **Physical Reset Gesture:** If the device is later moved to a new network, pressing the physical button 5 times (or quadruple click) re-engages Captive Portal provisioning without opening the enclosure.
+7. **Setup Modal & Symmetrical Dismiss Gestures:**
+   - Pressing the hardware button 4 times (quadruple click) opens the Setup Modal.
+   - When Wi-Fi is connected, the modal renders the **Settings QR code** (`http://<ip>/`) for instant smartphone scanning directly to the standalone Web UI.
+   - When Wi-Fi is not connected, it renders the AP Wi-Fi QR code (`WIFI:...`) and credentials.
+   - **Exiting the modal:** The modal can be exited at any time via a symmetrical **4-click**, **double-click**, or **long-press**, returning smoothly to the watchface.
 
 ---
 
@@ -331,7 +335,8 @@ stateDiagram-v2
 | `CLOCK_NORMAL` | JAAM binary packet received| Alert flags bit 11/12 active | `ALERT_STATE` | Dispatch `AlertOn` audio (prio 40), color digits, blit threat icon. |
 | `ALERT_STATE` | JAAM binary packet received| Threat escalated (e.g. drone to missile)| `ALERT_STATE` | Shift digit color Yellow → Red (`#E5484D`), update SPI Flash threat icon. |
 | `ALERT_STATE` | JAAM binary packet received| Alert flags cleared (all-clear)| `CLOCK_NORMAL` | Play `AlertOff` audio (prio 40), clear threat icon, set 5-min green timer. |
-| Any State | Button 5-click / Quadruple | Hardware reset gesture triggered | `MODAL_AP` | Force start `captive_portal`, beep confirmation, switch to AP face. |
+| `MODAL_AP` | Button 4-click / double / long | In `MODAL_AP` state | `CLOCK_NORMAL` | Symmetrical dismiss, stop captive portal, release screen mode 5, restore clock. |
+| Any State | Button 4-click / 5-click | Hardware setup gesture triggered | `MODAL_AP` | Open setup modal (Settings QR if Wi-Fi connected, SoftAP if offline), beep confirmation. |
 
 ---
 

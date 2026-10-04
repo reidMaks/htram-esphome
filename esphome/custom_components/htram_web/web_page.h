@@ -782,6 +782,29 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       ⚡ Усі налаштування застосовуються та зберігаються миттєво
     </div>
 
+    <!-- Мережа Wi-Fi -->
+    <div class="card" style="margin-top: 16px;">
+      <h2>Мережа Wi-Fi</h2>
+      <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+        Поточна мережа: <strong style="color: #fff;" id="lbl-wifi-current">--</strong>
+      </div>
+      <div class="form-group">
+        <label for="inp-wifi-ssid">Назва мережі (SSID):</label>
+        <input type="text" id="inp-wifi-ssid" placeholder="Введіть назву нової мережі" autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-top: 10px;">
+        <label for="inp-wifi-pass">Пароль Wi-Fi:</label>
+        <div style="position: relative; display: flex; align-items: center;">
+          <input type="password" id="inp-wifi-pass" placeholder="Пароль (залиште порожнім, якщо відкрита)" autocomplete="new-password" style="padding-right: 42px;">
+          <button type="button" onclick="toggleWifiPassVisibility()" style="position: absolute; right: 8px; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; padding: 4px;" title="Показати/приховати пароль">👁️</button>
+        </div>
+      </div>
+      <div style="font-size: 0.8rem; color: var(--warning); margin-top: 10px; line-height: 1.4;">
+        ⚠️ <strong>Увага:</strong> після збереження годинник перезавантажиться для підключення. Якщо параметри будуть невірними або мережа недоступна, увімкнеться точка доступу <strong>HTRAM Setup</strong> для налаштування (або натисніть кнопку 4 рази).
+      </div>
+      <button class="btn btn-secondary" style="margin-top: 14px; background: var(--primary); color: #000; font-weight: 600;" onclick="saveWifiSettings()">Зберегти та перепідключитись</button>
+    </div>
+
     <!-- Оновлення та Інфо -->
     <div class="card" style="margin-top: 16px;">
       <h2>Система</h2>
@@ -1301,6 +1324,10 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (d.version) document.getElementById('lbl-version').textContent = d.version;
         if (d.gd32_version) document.getElementById('lbl-gd32-ver').textContent = d.gd32_version;
         if (d.ip) document.getElementById('lbl-ip').textContent = d.ip;
+        if (d.wifi_ssid) {
+          const curWifiEl = document.getElementById('lbl-wifi-current');
+          if (curWifiEl) curWifiEl.textContent = d.wifi_ssid;
+        }
 
         // Update banner
         if (d.new_version) {
@@ -1368,6 +1395,10 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (currentSettings.co2_yellow != null) document.getElementById('inp-co2-yellow').value = currentSettings.co2_yellow;
       if (currentSettings.co2_red != null) document.getElementById('inp-co2-red').value = currentSettings.co2_red;
       if (currentSettings.temp_trim != null) document.getElementById('inp-trim').value = currentSettings.temp_trim;
+      if (currentSettings.wifi_ssid) {
+        const curWifiEl = document.getElementById('lbl-wifi-current');
+        if (curWifiEl) curWifiEl.textContent = currentSettings.wifi_ssid;
+      }
     }
 
     async function checkUpdates() {
@@ -1404,6 +1435,46 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         showToast('Пристрій перезавантажується...');
       } catch (e) {
         showToast('Помилка запиту перезавантаження');
+      }
+    }
+
+    function toggleWifiPassVisibility() {
+      const inp = document.getElementById('inp-wifi-pass');
+      if (inp) {
+        inp.type = inp.type === 'password' ? 'text' : 'password';
+      }
+    }
+
+    async function saveWifiSettings() {
+      const ssidEl = document.getElementById('inp-wifi-ssid');
+      const passEl = document.getElementById('inp-wifi-pass');
+      const ssid = ssidEl ? ssidEl.value.trim() : '';
+      const password = passEl ? passEl.value : '';
+
+      if (!ssid) {
+        alert('Будь ласка, введіть назву мережі (SSID)');
+        if (ssidEl) ssidEl.focus();
+        return;
+      }
+
+      if (!confirm(`Зберегти Wi-Fi мережу "${ssid}" та перезавантажити годинник?\n\nЗв'язок за поточною IP-адресою буде розірвано.`)) {
+        return;
+      }
+
+      showToast('Збереження Wi-Fi та перезавантаження...');
+      try {
+        const res = await fetch('/api/wifi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ssid, password })
+        });
+        if (res.ok) {
+          alert(`Параметри Wi-Fi збережено! Годинник перезавантажується.\n\n• Якщо дані вірні: підключіться до "${ssid}" та відкрийте http://htram.local\n• Якщо дані невірні: зачекайте точку доступу "HTRAM Setup" або натисніть кнопку 4 рази.`);
+        } else {
+          showToast('Помилка збереження Wi-Fi');
+        }
+      } catch (e) {
+        showToast('Помилка надсилання запиту');
       }
     }
 
