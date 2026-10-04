@@ -4,6 +4,9 @@
 #include "esphome/core/application.h"
 #include <ctime>
 #include <cctype>
+#ifdef USE_ESP32
+#include "esphome/components/http_request/http_request.h"
+#endif
 
 namespace esphome {
 namespace htram_gd32 {
@@ -897,9 +900,10 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
   }
 
   uint16_t staged_crc = crc16_ccitt(firmware.data(), firmware.size());
+  uint32_t host_crc32 = crc32_ieee(firmware.data(), firmware.size());
   ESP_LOGI(TAG, "[OTA] --- Starting GD32 OTA Firmware Update ---");
-  ESP_LOGI(TAG, "[OTA] Image size: %d bytes, Staged CRC16: 0x%04X, Battery: %d mV, Status: 0x%02X",
-           (int)firmware.size(), staged_crc, last_batt_mv_, last_status_);
+  ESP_LOGI(TAG, "[OTA] Image size: %d bytes, Staged CRC16: 0x%04X, Host CRC32: 0x%08X, Battery: %d mV, Status: 0x%02X",
+           (int)firmware.size(), staged_crc, (unsigned)host_crc32, last_batt_mv_, last_status_);
 
   // Suppress LVGL screen updates and light all LEDs to indicate OTA mode
   send_leds(1, 1, 1, 1);
@@ -932,12 +936,19 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
     }
     if (this->last_flash_ack_cmd_ == 0x26 && this->last_flash_ack_status_ == 0x00) {
       ESP_LOGI(TAG, "[OTA 0/6] Firmware backup SUCCESS: CRC32=0x%08X", (unsigned)this->last_flash_ack_addr_);
+      if ((uint32_t)this->last_flash_ack_addr_ == host_crc32) {
+        ESP_LOGI(TAG, "[OTA] Running GD32 firmware CRC32 matches new image (0x%08X). Already up-to-date!", (unsigned)host_crc32);
+        this->set_ota_mode(false);
+        resend_leds();
+        snprintf(buf, sizeof(buf), "{\"result\":\"ok\",\"status\":\"already_up_to_date\",\"bytes_written\":%d,\"staged_crc\":%u}",
+                 (int)firmware.size(), (unsigned)staged_crc);
+        return buf;
+      }
     } else {
       ESP_LOGW(TAG, "[OTA 0/6] Firmware backup warning: status=0x%02X", this->last_flash_ack_status_);
     }
 
     ESP_LOGI(TAG, "[OTA 0/6] Staging new firmware into SPI Flash (0x030000)...");
-    uint32_t host_crc32 = crc32_ieee(firmware.data(), firmware.size());
     this->last_flash_ack_cmd_ = 0;
     this->last_flash_ack_status_ = 0xFF;
     this->send_flash_erase_block(0x00030000);
@@ -1782,6 +1793,171 @@ bool HtramGd32Display::dump_ppm(const std::string &path) const {
   fclose(f);
   ESP_LOGI(TAG, "Screenshot dumped to '%s'", path.c_str());
   return true;
+}
+#endif
+
+#ifdef USE_ESP32
+bool HtramGd32Component::perform_remote_assets_update(http_request::HttpRequestComponent *http_client, const std::string &url) {
+  if (http_client == nullptr) {
+    ESP_LOGE(TAG, "[OTA ASSETS] http_client is null");
+    return false;
+  }
+
+  bool has_spi_flash = (this->spi_flash_sensor_ != nullptr &&
+                        !this->spi_flash_status_.empty() &&
+                        this->spi_flash_status_.find("Not detected") == std::string::npos);
+  if (!has_spi_flash) {
+    ESP_LOGW(TAG, "[OTA ASSETS] SPI Flash not detected, skipping assets update");
+    return false;
+  }
+
+  ESP_LOGI(TAG, "[OTA ASSETS] Fetching %s ...", url.c_str());
+
+  auto container = http_client->get(url);
+  if (container == nullptr || container->status_code != 200) {
+    ESP_LOGW(TAG, "[OTA ASSETS] Assets not available on release server (HTTP %d), skipping",
+             container ? container->status_code : -1);
+    if (container) container->end();
+    return false;
+  }
+
+  size_t total_size = container->content_length;
+  if (total_size < 20 || total_size > 65536) {
+    ESP_LOGW(TAG, "[OTA ASSETS] Invalid assets size %u, skipping", (unsigned)total_size);
+    container->end();
+    return false;
+  }
+
+  size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  if (largest < total_size + 2048) {
+    ESP_LOGE(TAG, "[OTA ASSETS] Not enough contiguous heap for assets (need %u, largest %u), skipping",
+             (unsigned)(total_size + 2048), (unsigned)largest);
+    container->end();
+    return false;
+  }
+
+  std::vector<uint8_t> data;
+  data.reserve(total_size);
+
+  uint8_t buf[512];
+  uint32_t last_data_time = millis();
+  const uint32_t timeout_ms = 30000;
+
+  while (container->get_bytes_read() < total_size) {
+    int read_bytes = container->read(buf, sizeof(buf));
+    App.feed_wdt();
+    yield();
+
+    auto loop_res = http_request::http_read_loop_result(read_bytes, last_data_time, timeout_ms,
+                                                        container->is_read_complete());
+    if (loop_res == http_request::HttpReadLoopResult::RETRY)
+      continue;
+    if (loop_res == http_request::HttpReadLoopResult::COMPLETE)
+      break;
+    if (loop_res != http_request::HttpReadLoopResult::DATA) {
+      ESP_LOGE(TAG, "[OTA ASSETS] HTTP read error (%d)", read_bytes);
+      container->end();
+      return false;
+    }
+
+    data.insert(data.end(), buf, buf + read_bytes);
+  }
+
+  container->end();
+
+  if (data.size() != total_size) {
+    ESP_LOGE(TAG, "[OTA ASSETS] Size mismatch: read %u bytes, expected %u", (unsigned)data.size(), (unsigned)total_size);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "[OTA ASSETS] Downloaded %u bytes. Applying to SPI Flash...", (unsigned)data.size());
+  std::string res = this->execute_assets_upload(data);
+  std::vector<uint8_t>().swap(data);
+  ESP_LOGI(TAG, "[OTA ASSETS] Result: %s", res.c_str());
+  return res.find("\"result\":\"ok\"") != std::string::npos;
+}
+
+bool HtramGd32Component::perform_remote_gd32_update(http_request::HttpRequestComponent *http_client, bool allow_on_battery, const std::string &url) {
+  if (http_client == nullptr) {
+    ESP_LOGE(TAG, "[OTA GD32] http_client is null");
+    return false;
+  }
+
+  if (last_batt_mv_ < 3500 && last_batt_mv_ != 0) {
+    ESP_LOGW(TAG, "[OTA GD32] Battery too low (%d mV), skipping GD32 update", last_batt_mv_);
+    return false;
+  }
+
+  const bool usb_present = (last_status_ & 0x02) != 0;
+  if (!usb_present && !allow_on_battery) {
+    ESP_LOGW(TAG, "[OTA GD32] Device is on battery and allow_on_battery=false, skipping GD32 update");
+    return false;
+  }
+
+  ESP_LOGI(TAG, "[OTA GD32] Fetching %s ...", url.c_str());
+
+  auto container = http_client->get(url);
+  if (container == nullptr || container->status_code != 200) {
+    ESP_LOGW(TAG, "[OTA GD32] GD32 firmware not available on release server (HTTP %d), skipping",
+             container ? container->status_code : -1);
+    if (container) container->end();
+    return false;
+  }
+
+  size_t total_size = container->content_length;
+  if (total_size < 1024 || total_size > 65536) {
+    ESP_LOGW(TAG, "[OTA GD32] Invalid GD32 firmware size %u, skipping", (unsigned)total_size);
+    container->end();
+    return false;
+  }
+
+  size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  if (largest < total_size + 2048) {
+    ESP_LOGE(TAG, "[OTA GD32] Not enough contiguous heap for GD32 firmware (need %u, largest %u), skipping",
+             (unsigned)(total_size + 2048), (unsigned)largest);
+    container->end();
+    return false;
+  }
+
+  std::vector<uint8_t> fw;
+  fw.reserve(total_size);
+
+  uint8_t buf[512];
+  uint32_t last_data_time = millis();
+  const uint32_t timeout_ms = 30000;
+
+  while (container->get_bytes_read() < total_size) {
+    int read_bytes = container->read(buf, sizeof(buf));
+    App.feed_wdt();
+    yield();
+
+    auto loop_res = http_request::http_read_loop_result(read_bytes, last_data_time, timeout_ms,
+                                                        container->is_read_complete());
+    if (loop_res == http_request::HttpReadLoopResult::RETRY)
+      continue;
+    if (loop_res == http_request::HttpReadLoopResult::COMPLETE)
+      break;
+    if (loop_res != http_request::HttpReadLoopResult::DATA) {
+      ESP_LOGE(TAG, "[OTA GD32] HTTP read error (%d)", read_bytes);
+      container->end();
+      return false;
+    }
+
+    fw.insert(fw.end(), buf, buf + read_bytes);
+  }
+
+  container->end();
+
+  if (fw.size() != total_size) {
+    ESP_LOGE(TAG, "[OTA GD32] Size mismatch: read %u bytes, expected %u", (unsigned)fw.size(), (unsigned)total_size);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "[OTA GD32] Downloaded %u bytes. Applying to GD32 coprocessor...", (unsigned)fw.size());
+  std::string res = this->execute_ota(fw, allow_on_battery);
+  std::vector<uint8_t>().swap(fw);
+  ESP_LOGI(TAG, "[OTA GD32] Result: %s", res.c_str());
+  return res.find("\"result\":\"ok\"") != std::string::npos;
 }
 #endif
 

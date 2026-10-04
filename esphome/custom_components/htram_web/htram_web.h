@@ -95,6 +95,9 @@ class HtramWebComponent : public Component {
   void set_new_version(const std::string &v) { new_version_ = v; }
   const std::string &get_new_version() const { return new_version_; }
 
+  void set_ota_allow_on_battery(bool val) { ota_allow_on_battery_ = val; }
+  bool get_ota_allow_on_battery() const { return ota_allow_on_battery_; }
+
   void load_preferences();
   void save_preferences();
   void sync_to_system();
@@ -107,6 +110,7 @@ class HtramWebComponent : public Component {
   float lon_{30.52f};
   std::string city_{"Київ"};
   bool alert_active_{false};
+  bool ota_allow_on_battery_{false};
 
   CallbackManager<void(int, float, float, const std::string &)> save_settings_callbacks_{};
   CallbackManager<void()> ota_update_callbacks_{};

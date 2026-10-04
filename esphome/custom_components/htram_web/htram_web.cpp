@@ -460,6 +460,8 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
 
   // 5. POST /api/ota_update
   if (request->method() == HTTP_POST && url == "/api/ota_update") {
+    bool on_battery = request->hasParam("on_battery");
+    this->parent_->set_ota_allow_on_battery(on_battery);
     request->send(200, "application/json", "{\"result\":\"starting_ota\"}");
     this->parent_->defer_action([this]() {
       this->parent_->trigger_ota_update();

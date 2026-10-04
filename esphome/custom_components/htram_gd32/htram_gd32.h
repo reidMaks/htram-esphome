@@ -27,6 +27,11 @@ inline size_t heap_caps_get_largest_free_block(uint32_t) { return 65536; }
 #include <ctime>
 
 namespace esphome {
+#ifdef USE_ESP32
+namespace http_request {
+class HttpRequestComponent;
+}
+#endif
 namespace htram_gd32 {
 
 enum FlashAssetId : uint16_t {
@@ -255,6 +260,17 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   // Returns JSON string with result
   std::string execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery);
   std::string execute_assets_upload(const std::vector<uint8_t> &assets_data);
+
+#ifndef USE_ESP32
+  bool perform_remote_assets_update(void *http_client = nullptr, const std::string &url = "") { return true; }
+  bool perform_remote_gd32_update(void *http_client = nullptr, bool allow_on_battery = false, const std::string &url = "") { return true; }
+#else
+  bool perform_remote_assets_update(http_request::HttpRequestComponent *http_client,
+                                   const std::string &url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/flash_assets.bin");
+  bool perform_remote_gd32_update(http_request::HttpRequestComponent *http_client,
+                                 bool allow_on_battery = false,
+                                 const std::string &url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/gd32_firmware.bin");
+#endif
 
  protected:
   bool flow_paused_{false};
