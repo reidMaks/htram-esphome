@@ -27,6 +27,11 @@ inline size_t heap_caps_get_largest_free_block(uint32_t) { return 65536; }
 #include <ctime>
 
 namespace esphome {
+#ifdef USE_ESP32
+namespace http_request {
+class HttpRequestComponent;
+}
+#endif
 namespace htram_gd32 {
 
 enum FlashAssetId : uint16_t {
@@ -75,7 +80,9 @@ enum FlashAssetId : uint16_t {
   ASSET_ID_COMFORT_MOLD_STEM = 42,
   ASSET_ID_COMFORT_MOLD_CAP = 43,
   ASSET_ID_COMFORT_MOLD_SPOTS = 44,
-  ASSET_ID_COUNT = 45
+  ASSET_ID_NO_NET = 45,
+  ASSET_ID_NO_TIME = 46,
+  ASSET_ID_COUNT = 47
 };
 
 struct FlashAssetMeta {
@@ -129,6 +136,8 @@ static constexpr FlashAssetMeta FLASH_ASSET_METAS[ASSET_ID_COUNT] = {
   {72, 72},   // 42: ASSET_ID_COMFORT_MOLD_STEM
   {72, 72},   // 43: ASSET_ID_COMFORT_MOLD_CAP
   {72, 72},   // 44: ASSET_ID_COMFORT_MOLD_SPOTS
+  {20, 20},   // 45: ASSET_ID_NO_NET
+  {20, 20},   // 46: ASSET_ID_NO_TIME
 };
 
 size_t encode_tga_rle_rgb565(const uint16_t *pixels, size_t num_pixels, uint8_t *out, size_t max_out);
@@ -255,6 +264,17 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   // Returns JSON string with result
   std::string execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery);
   std::string execute_assets_upload(const std::vector<uint8_t> &assets_data);
+
+#ifndef USE_ESP32
+  bool perform_remote_assets_update(void *http_client = nullptr, const std::string &url = "") { return true; }
+  bool perform_remote_gd32_update(void *http_client = nullptr, bool allow_on_battery = false, const std::string &url = "") { return true; }
+#else
+  bool perform_remote_assets_update(http_request::HttpRequestComponent *http_client,
+                                   const std::string &url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/flash_assets.bin");
+  bool perform_remote_gd32_update(http_request::HttpRequestComponent *http_client,
+                                 bool allow_on_battery = false,
+                                 const std::string &url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/gd32_firmware.bin");
+#endif
 
  protected:
   bool flow_paused_{false};

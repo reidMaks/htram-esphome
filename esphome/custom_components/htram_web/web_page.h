@@ -1461,10 +1461,15 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     }
 
     async function triggerOtaUpdate() {
-      if (!confirm('Почати оновлення прошивки? Пристрій перезавантажиться.')) return;
+      if (!currentSettings.usb) {
+        if (!confirm('Увага: пристрій працює від батареї!\nДля безпечного оновлення GD32 рекомендується підключити USB-живлення.\nПродовжити оновлення на батареї?')) return;
+      } else {
+        if (!confirm('Почати оновлення прошивки (GD32, асети, ESP32)? Пристрій перезавантажиться.')) return;
+      }
       try {
-        await fetch('/api/ota_update', { method: 'POST' });
-        showToast('Оновлення розпочато. Зачекайте 1-2 хвилини...');
+        const url = !currentSettings.usb ? '/api/ota_update?on_battery=1' : '/api/ota_update';
+        await fetch(url, { method: 'POST' });
+        showToast('Оновлення розпочато (GD32, асети, ESP32). Зачекайте 1-2 хвилини...');
       } catch (e) {
         showToast('Не вдалося запустити оновлення');
       }

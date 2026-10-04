@@ -8,7 +8,7 @@ substitutions:
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  firmware_version: "2.1.0"
+  firmware_version: "2.1.1"
 
 packages:
   ui: !include core-ui.yaml
@@ -55,9 +55,11 @@ logger:
   baud_rate: 115200
 
 http_request:
+  id: htram_http_request
   timeout: 30s
   buffer_size_rx: 4096
   buffer_size_tx: 4096
+  verify_ssl: false
 
 ota:
   - platform: http_request
@@ -325,8 +327,17 @@ script:
     mode: single
     then:
       - lambda: |-
-          ESP_LOGI("ota", "Starting 1-click OTA update from GitHub Releases...");
-          id(htram_core)->send_leds(1, 1, 1, 1);
+          ESP_LOGI("ota", "Starting full 1-click update from GitHub Releases (assets, GD32, ESP32)...");
+          id(htram_arbiter_hub)->set_leds(100, "ota", 1, 1, 1, 1);
+          bool allow_battery = id(htram_standalone_web)->get_ota_allow_on_battery();
+
+          // 1. Update graphic assets on SPI Flash if available
+          id(htram_core)->perform_remote_assets_update(id(htram_http_request));
+
+          // 2. Update GD32 coprocessor firmware if available
+          id(htram_core)->perform_remote_gd32_update(id(htram_http_request), allow_battery);
+
+          // 3. Flash ESP32 firmware
       - ota.http_request.flash:
           url: "https://github.com/reidMaks/htram-esphome/releases/latest/download/htram-standalone.bin"
           md5_url: "https://github.com/reidMaks/htram-esphome/releases/latest/download/htram-standalone.bin.md5"

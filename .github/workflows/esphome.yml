@@ -58,7 +58,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends make
+          sudo apt-get install -y --no-install-recommends make gcc-arm-none-eabi libnewlib-arm-none-eabi
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -74,6 +74,18 @@ jobs:
 
       - name: Setup mock secrets for YAML compilation
         run: cp esphome/secrets.yaml.example esphome/secrets.yaml
+
+      - name: Build GD32 Coprocessor Firmware & Pack Graphic Assets
+        run: |
+          make build-gd32
+          make pack-assets
+          make validate-assets
+          cp firmware/gd32/build/gd32_firmware.bin gd32_firmware.bin
+          md5sum gd32_firmware.bin | cut -d' ' -f1 > gd32_firmware.bin.md5
+          sha256sum gd32_firmware.bin | cut -d' ' -f1 > gd32_firmware.bin.sha256
+          cp firmware/gd32/build/flash_assets.bin flash_assets.bin
+          md5sum flash_assets.bin | cut -d' ' -f1 > flash_assets.bin.md5
+          sha256sum flash_assets.bin | cut -d' ' -f1 > flash_assets.bin.sha256
 
       - name: Compile Standalone ESP32 Firmware
         run: |
@@ -96,14 +108,14 @@ jobs:
           echo "md5=$md5" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Keep standalone binary for this run
+      - name: Keep release binaries for this run
         uses: actions/upload-artifact@v4
         with:
-          name: htram-standalone
+          name: htram-release-binaries
           path: |
-            htram-standalone.bin
-            htram-standalone.bin.md5
-            htram-standalone.bin.sha256
+            htram-standalone.bin*
+            gd32_firmware.bin*
+            flash_assets.bin*
           retention-days: 14
 
       - name: Publish to GitHub Release
@@ -135,5 +147,11 @@ jobs:
             htram-standalone.bin \
             htram-standalone.bin.md5 \
             htram-standalone.bin.sha256 \
+            gd32_firmware.bin \
+            gd32_firmware.bin.md5 \
+            gd32_firmware.bin.sha256 \
+            flash_assets.bin \
+            flash_assets.bin.md5 \
+            flash_assets.bin.sha256 \
             --clobber
 

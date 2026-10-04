@@ -102,6 +102,8 @@ CANONICAL_ASSETS = [
     (42, "comfort_mold_stem", "comfort_mold_stem_mask.png"),
     (43, "comfort_mold_cap", "comfort_mold_cap_mask.png"),
     (44, "comfort_mold_spots", "comfort_mold_spots_mask.png"),
+    (45, "no_net", "no_net_mask.png"),
+    (46, "no_time", "no_time_mask.png"),
 ]
 
 
