@@ -30,6 +30,7 @@ substitutions:
   friendly_name: HTRAM
   name_add_mac_suffix: "false"
   repo_url: "."
+  firmware_version: "2.1.0"
 
 packages:
   core: !include htram-core.yaml
@@ -39,3 +40,4 @@ packages:
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
+  climate: !include features/climate.yaml

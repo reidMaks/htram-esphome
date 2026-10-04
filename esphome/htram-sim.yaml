@@ -10,6 +10,11 @@ substitutions:
   name: htram-sim
   friendly_name: "HTRAM Full Simulator"
   repo_url: "."
+  jaam_host: "127.0.0.1"
+  jaam_port: "1"
+  slot_interval: "24h"
+  ap_flip_interval: "24h"
+  weather_api_host: "127.0.0.1:1"
 
 packages:
   core: !include htram-sim-core.yaml
@@ -19,10 +24,23 @@ packages:
   alarm: !include features/alarm.yaml
   weather: !include features/weather.yaml
   timer: !include features/timer.yaml
+  climate: !include features/climate.yaml
   debug: !include features/debug.yaml
 
 api:
   services:
+    - service: simulate_climate
+      variables:
+        co2: float
+        temperature: float
+        humidity: float
+      then:
+        - lambda: |-
+            if (!isnan(co2)) id(sensor_co2).publish_state(co2);
+            if (!isnan(temperature)) id(sensor_temp).publish_state(temperature);
+            if (!isnan(humidity)) id(sensor_hum).publish_state(humidity);
+            if (id(climate_shown)) id(refresh_climate_ui).execute();
+
     - service: simulate_weather
       variables:
         min_temp: float
@@ -62,8 +80,10 @@ api:
         - lambda: |-
             if (enabled) {
               id(alarm_enabled).turn_on();
+              id(alarm_enabled).publish_state(true);
             } else {
               id(alarm_enabled).turn_off();
+              id(alarm_enabled).publish_state(false);
             }
             auto call = id(alarm_time).make_call();
             call.set_hour((uint8_t) hour);
@@ -87,7 +107,8 @@ api:
       then:
         - lambda: |-
             id(alert_mark_until) = 0;
-            id(refresh_alert_marks).execute();
+            id(apply_face_alert_color).execute(0xF0EAE0);
+            id(refresh_alert_icon).execute();
 
     - service: expire_alert_mark
       then:
@@ -122,3 +143,57 @@ api:
             id(timer_remaining_seconds) = seconds;
             id(refresh_timer_ui).execute();
             id(refresh_slot).execute();
+
+    - service: start_timer
+      variables:
+        minutes: int
+        seconds: int
+      then:
+        - lambda: |-
+            int tot = minutes * 60 + seconds;
+            if (tot > 0) {
+              id(timer_total_seconds) = tot;
+              id(timer_remaining_seconds) = tot;
+              auto now = id(ha_time).now();
+              if (now.is_valid()) {
+                int cur = now.hour * 3600 + now.minute * 60 + now.second;
+                int fin = (cur + tot) % 86400;
+                id(timer_finish_hour) = (fin / 3600) % 24;
+                id(timer_finish_minute) = (fin % 3600) / 60.0f;
+              }
+            }
+        - script.execute: timer_start_running
+
+    - service: cancel_timer
+      then:
+        - script.execute: timer_cancel
+
+    - service: hide_weather
+      then:
+        - script.execute: hide_weather
+
+    - service: pause_timer
+      then:
+        - script.execute: timer_pause
+
+    - service: set_backlight
+      variables:
+        brightness: int
+      then:
+        - lambda: |-
+            id(screen_brightness).publish_state(brightness);
+            id(htram_core)->send_backlight(brightness);
+
+    - service: set_geo_settings
+      variables:
+        region: int
+        lat: float
+        lon: float
+        city: string
+      then:
+        - script.execute:
+            id: on_geo_settings_changed
+            region: !lambda return region;
+            lat: !lambda return lat;
+            lon: !lambda return lon;
+            city: !lambda return city;

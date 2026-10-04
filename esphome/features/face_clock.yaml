@@ -6,6 +6,9 @@
 # - Ротація слота кожні 7 секунд або 1 клік кнопки;
 # - Автоматичне відновлення після модальних вікон (подія Arbiter screen_idle).
 
+substitutions:
+  slot_interval: "7s"
+
 esphome:
   on_boot:
     - priority: -100
@@ -172,7 +175,7 @@ script:
           }
 
 interval:
-  - interval: 7s
+  - interval: ${slot_interval}
     then:
       - lambda: |-
           if (id(htram_core)->is_ota_mode()) return;

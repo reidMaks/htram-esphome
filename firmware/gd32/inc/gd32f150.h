@@ -19,8 +19,16 @@
 #define RCU_AHBEN       (*(volatile uint32_t *)(RCU_BASE + 0x14))
 #define RCU_APB2EN      (*(volatile uint32_t *)(RCU_BASE + 0x18))
 #define RCU_APB1EN      (*(volatile uint32_t *)(RCU_BASE + 0x1C))
+#define RCU_RSTSCK      (*(volatile uint32_t *)(RCU_BASE + 0x24))
 
-/* RCU AHBEN bits */
+/* RCU RSTSCK bits */
+#define RCU_RSTSCK_RSTFC     (1 << 24)
+#define RCU_RSTSCK_PINRSTF   (1 << 26)
+#define RCU_RSTSCK_PORRSTF   (1 << 27)
+#define RCU_RSTSCK_SWRSTF    (1 << 28)
+#define RCU_RSTSCK_FWDGTRSTF (1 << 29)
+#define RCU_RSTSCK_WWDGTRSTF (1 << 30)
+#define RCU_RSTSCK_LPWRRSTF  (1 << 31)
 #define RCU_AHBEN_PAEN  (1 << 17)
 #define RCU_AHBEN_PBEN  (1 << 18)
 #define RCU_AHBEN_PCEN  (1 << 19)

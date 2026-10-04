@@ -57,6 +57,25 @@ lvgl:
         knob:
           bg_opa: TRANSP
 
+number:
+  - platform: template
+    id: alarm_days
+    name: "Дні будильника"
+    optimistic: true
+    restore_value: true
+    initial_value: 127
+    min_value: 0
+    max_value: 127
+    step: 1
+    mode: box
+    set_action:
+      - lambda: |-
+          id(alarm_days).publish_state(x);
+          id(alarm_ui_sig) = -1;
+          id(refresh_alarm_ui).execute();
+    on_value:
+      - script.execute: refresh_alarm_ui
+
 datetime:
   - platform: template
     id: alarm_time
@@ -69,7 +88,16 @@ datetime:
     on_time:
       - if:
           condition:
-            switch.is_on: alarm_enabled
+            lambda: |-
+              if (!id(alarm_enabled).state) return false;
+              const float st = id(alarm_days).state;
+              const int mask = std::isnan(st) ? 127 : (int) st;
+              if (mask == 0) return false;
+              auto now = id(ha_time).now();
+              if (!now.is_valid()) now = id(net_time).now();
+              if (!now.is_valid()) return true;
+              int iso_dow = (now.day_of_week == 1) ? 7 : (now.day_of_week - 1);
+              return (mask & (1 << (iso_dow - 1))) != 0;
           then:
             - script.execute: alarm_ring
     on_value:
@@ -82,10 +110,11 @@ switch:
     icon: "mdi:alarm-check"
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
-    turn_on_action:
+    on_turn_on:
       - script.execute: refresh_alarm_ui
-    turn_off_action:
+    on_turn_off:
       - script.execute: alarm_dismiss
+      - script.execute: refresh_alarm_ui
 
 htram_arbiter:
   events:
@@ -131,6 +160,24 @@ htram_arbiter:
       name: alarm_snooze_dismiss_long_btn
       then:
         - script.execute: alarm_dismiss
+    - event: screen_hide
+      context: clock
+      priority: 20
+      name: alarm_clock_hide
+      then:
+        - lambda: |-
+            id(alarm_ui_sig) = -1;
+            lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
+            if (id(alarm_bell_drawn)) {
+              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
+              id(alarm_bell_drawn) = false;
+            }
+    - event: screen_idle
+      context: clock
+      priority: 20
+      name: alarm_clock_idle
+      then:
+        - script.execute: refresh_alarm_ui
 
 script:
   - id: refresh_alarm_ui
@@ -147,12 +194,33 @@ script:
           }
 
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alarm");
+          const bool is_clock_face = (id(htram_arbiter_hub)->get_screen_mode() == 0);
+
+          const float st = id(alarm_days).state;
+          const int mask = std::isnan(st) ? 127 : (int) st;
+          bool will_ring_next = true;
+          if (mask == 0) {
+            will_ring_next = false;
+          } else {
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) now = id(net_time).now();
+            if (now.is_valid()) {
+              const int today_iso = (now.day_of_week == 1) ? 7 : (now.day_of_week - 1);
+              const int now_min = now.hour * 60 + now.minute;
+              const int alarm_min = id(alarm_time).hour * 60 + id(alarm_time).minute;
+              const int target_iso = (now_min < alarm_min) ? today_iso : ((today_iso % 7) + 1);
+              will_ring_next = (mask & (1 << (target_iso - 1))) != 0;
+            }
+          }
+
           const int sig = (armed ? 1 : 0) | (ringing ? 2 : 0) | (snoozing ? 4 : 0) | (is_top ? 8 : 0) |
-                          ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 9);
+                          (is_clock_face ? 16 : 0) | (will_ring_next ? 32 : 0) |
+                          ((id(alarm_time).hour * 60 + id(alarm_time).minute) << 6) |
+                          ((mask & 0x7F) << 17);
           if (sig == id(alarm_ui_sig)) return;
           id(alarm_ui_sig) = sig;
 
-          if (armed) {
+          if (armed && is_clock_face) {
             // 12-годинне коло; LVGL рахує кути від 3-ї години, тож −90.
             const float dial = ((id(alarm_time).hour % 12) +
                                 id(alarm_time).minute / 60.0f) * 30.0f;
@@ -161,14 +229,15 @@ script:
               int32_t d = (int32_t) lroundf(deg) % 360;
               return d < 0 ? d + 360 : d;
             };
+            const uint32_t tick_color = will_ring_next ? 0xFF9E3D : 0x707880;
             lv_arc_set_bg_angles(id(ui_alarm_tick), norm(lv - 1.6f), norm(lv + 1.6f));
-            lv_obj_set_style_arc_color(id(ui_alarm_tick), lv_color_hex(0xFF9E3D), LV_PART_MAIN);
+            lv_obj_set_style_arc_color(id(ui_alarm_tick), lv_color_hex(tick_color), LV_PART_MAIN);
             lv_obj_remove_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
           } else {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
           }
 
-          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          const bool can_show = is_top && is_clock_face && !id(slot_hold);
           if (can_show) {
             const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
             id(htram_core)->send_draw_cached_asset_centered(
@@ -188,7 +257,9 @@ script:
           id(alarm_ringing) = true;
           id(alarm_snoozing) = false;
           id(htram_arbiter_hub)->set_snooze(false);
+          id(htram_arbiter_hub)->play_rtttl(30, "alarm", "${alarm_rtttl}");
           if (id(htram_arbiter_hub)->get_screen_mode() != 0) {
+            id(htram_arbiter_hub)->preempt_to_clock("alarm");
             id(face_state) = -1;
             id(refresh_face).execute();
           }
@@ -199,8 +270,8 @@ script:
       - repeat:
           count: 100
           then:
-            - lambda: id(htram_arbiter_hub)->play_rtttl(30, "alarm", "${alarm_rtttl}");
             - delay: ${alarm_repeat_seconds}s
+            - lambda: id(htram_arbiter_hub)->play_rtttl(30, "alarm", "${alarm_rtttl}");
       - script.execute: alarm_dismiss
 
   - id: alarm_stop
@@ -245,6 +316,10 @@ script:
             - script.execute: refresh_alarm_ui
 
   # Точки інтеграції з ядром
+  - id: !extend refresh_clock
+    then:
+      - script.execute: refresh_alarm_ui
+
   - id: !extend on_face_changed
     then:
       - lambda: |-

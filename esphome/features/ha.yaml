@@ -1,0 +1,93 @@
+# Home Assistant Modular Integration Package for HTRAM
+# Optional include package: provides encrypted Native API (port 6053) and remote action services.
+# When omitted, HTRAM compiles and functions 100% autonomously.
+
+api:
+  port: 6053
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_key
+  services:
+    - service: beep
+      variables:
+        freq: int
+        duration: int
+      then:
+        - lambda: |-
+            id(htram_core)->send_beep(freq, duration);
+
+    - service: set_backlight
+      variables:
+        brightness: int
+      then:
+        - lambda: |-
+            id(htram_core)->send_backlight(brightness);
+
+    - service: set_leds
+      variables:
+        r: int
+        y: int
+        g: int
+        brightness: int
+      then:
+        - lambda: |-
+            id(htram_core)->send_leds(r, y, g, brightness);
+
+    - service: enter_bootloader
+      then:
+        - lambda: |-
+            id(htram_core)->send_enter_bootloader();
+
+    - service: play_rtttl
+      variables:
+        song: string
+      then:
+        - lambda: |-
+            id(htram_core)->play_rtttl(song);
+
+    - service: stop_melody
+      then:
+        - lambda: |-
+            id(htram_core)->send_stop();
+
+    - service: start_timer
+      variables:
+        minutes: int
+        seconds: int
+      then:
+        - lambda: |-
+            int tot = minutes * 60 + seconds;
+            if (tot > 0) {
+              id(timer_total_seconds) = tot;
+              id(timer_remaining_seconds) = tot;
+              auto now = id(ha_time).now();
+              if (now.is_valid()) {
+                int cur = now.hour * 3600 + now.minute * 60 + now.second;
+                int fin = (cur + tot) % 86400;
+                id(timer_finish_hour) = (fin / 3600) % 24;
+                id(timer_finish_minute) = (fin % 3600) / 60.0f;
+              }
+            }
+        - script.execute: timer_start_running
+
+    - service: cancel_timer
+      then:
+        - script.execute: timer_cancel
+
+    - service: pause_timer
+      then:
+        - script.execute: timer_pause
+
+    - service: inject_button
+      variables:
+        action: string
+      then:
+        - lambda: |-
+            id(htram_arbiter_hub)->dispatch_button_action(action);
+
+    - service: inject_event
+      variables:
+        event: string
+      then:
+        - lambda: |-
+            id(htram_arbiter_hub)->dispatch_event(event);

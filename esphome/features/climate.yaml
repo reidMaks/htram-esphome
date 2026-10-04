@@ -1,0 +1,411 @@
+# HTRAM Feature: Клімат та комфорт (Climate & Comfort Face)
+#
+# Опис функціоналу:
+# - Окремий модальний екран клімату (індикація комфорту, точні температура та вологість);
+# - Запуск одинарним кліком на екрані годинника (SCREEN_MODAL_VIEW = 1);
+# - Автоматичне повернення до годинника через 60 секунд;
+# - Симетричне закриття одинарним або подвійним кліком;
+# - Тонкі прецизійні шкали температури та вологості на безелі (Стиль 1, нордична гама);
+# - Автентичні багаторівневі Twemoji піктограми комфорту зі SPI Flash GD32 (0 байт DRAM);
+# - Збереження безеля (ui_ring) та секундної крапки (ui_secdot);
+# - Без відображення ppm (якість повітря відображається світлодіодами приладу).
+
+substitutions:
+  climate_timeout: "60s"
+  climate_co2_yellow: "1500"
+  climate_co2_red: "2000"
+  climate_hum_mold: "68.0"
+
+
+globals:
+  - id: climate_shown
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: climate_icons_needed
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  - id: climate_condition
+    type: int
+    restore_value: false
+    initial_value: "0"  # 0=happy, 1=neutral, 2=stuffy, 3=hot, 4=cold, 5=dry, 6=dizzy, 7=mold
+
+lvgl:
+  widgets:
+    - obj:
+        id: ui_climate_face
+        align: center
+        width: 240
+        height: 240
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        scrollable: false
+        clickable: false
+        hidden: true
+        widgets:
+          # Лівий показник: Температура (значення)
+          - label:
+              id: ui_climate_temp_val
+              align: top_mid
+              x: -52
+              y: 144
+              text_font: font_msg
+              text_color: 0xF0EAE0
+              text: "--.-°"
+
+          # Лівий підпис: темп.
+          - label:
+              id: ui_climate_temp_cap
+              align: top_mid
+              x: -52
+              y: 174
+              text_font: font_slot
+              text_color: 0x9AA2AC
+              text: "темп."
+
+          # Правий показник: Вологість (значення)
+          - label:
+              id: ui_climate_hum_val
+              align: top_mid
+              x: 52
+              y: 144
+              text_font: font_msg
+              text_color: 0xF0EAE0
+              text: "--%"
+
+          # Правий підпис: волог.
+          - label:
+              id: ui_climate_hum_cap
+              align: top_mid
+              x: 52
+              y: 174
+              text_font: font_slot
+              text_color: 0x9AA2AC
+              text: "волог."
+
+          # Нижній статус комфорту
+          - label:
+              id: ui_climate_status
+              align: top_mid
+              x: 0
+              y: 194
+              text_font: font_slot
+              text_color: 0x38B36E
+              text: "комфортно"
+
+htram_arbiter:
+  events:
+    # 1. Відкриття екрана клімату з основного екрана годинника одинарним кліком
+    - event: button_single
+      context: clock
+      priority: 50
+      name: climate_open_btn
+      then:
+        - if:
+            condition:
+              lambda: |-
+                return id(htram_arbiter_hub)->get_screen_mode() == 0 &&
+                       !id(htram_arbiter_hub)->is_snooze_active() &&
+                       id(htram_arbiter_hub)->get_audio_priority() < 30 &&
+                       id(htram_arbiter_hub)->get_active_context() == "clock";
+            then:
+              - script.execute: show_climate
+
+    # 2. Дострокове закриття одинарним кліком всередині модального вікна
+    - event: button_single
+      context: modal_climate
+      priority: 50
+      name: climate_dismiss_single_btn
+      then:
+        - script.execute: hide_climate
+
+    # 3. Дострокове закриття подвійним кліком всередині модального вікна
+    - event: button_double
+      context: modal_climate
+      priority: 50
+      name: climate_dismiss_double_btn
+      then:
+        - script.execute: hide_climate
+
+    # 4. Витіснення екрана критичнішим режимом (тривога / хвилина мовчання)
+    - event: screen_preempted
+      context: modal_climate
+      priority: 100
+      name: climate_preempted
+      then:
+        - script.execute: hide_climate
+
+script:
+  # Тайм-аут автоповернення до годинника через 60 секунд
+  - id: hide_climate_timeout
+    mode: restart
+    then:
+      - delay: ${climate_timeout}
+      - script.execute: hide_climate
+
+  - id: show_climate
+    mode: restart
+    then:
+      - lambda: |-
+          if (!id(htram_arbiter_hub)->request_screen(1, "climate")) {
+            ESP_LOGW("climate", "Cannot show climate: screen rejected by arbiter");
+            return;
+          }
+          id(climate_shown) = true;
+          id(climate_icons_needed) = true;
+          id(face_state) = -1;
+
+          // Приховуємо стандартні елементи годинника та оверлеї, зберігаючи безель
+          lv_obj_t *const hide[] = {
+              id(ui_face_root), id(ui_pocket), id(ui_msg),
+              id(ui_msg_sub), id(ui_msg_cap), id(ui_msg2),
+              id(ui_ap_card), id(ui_ap_qr), id(ui_devid), id(ui_devid_cap)
+          };
+          for (auto *o : hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+
+          lv_obj_remove_flag(id(ui_climate_face), LV_OBJ_FLAG_HIDDEN);
+          id(htram_core)->clear_cached_assets();
+          lv_obj_invalidate(id(ui_root));
+      - script.execute: refresh_climate_ui
+      - script.execute: hide_climate_timeout
+
+  - id: hide_climate
+    mode: restart
+    then:
+      - script.stop: hide_climate_timeout
+      - lambda: |-
+          id(climate_shown) = false;
+          id(climate_icons_needed) = false;
+          id(htram_arbiter_hub)->release_screen("climate");
+          id(htram_core)->clear_cached_assets();
+
+          lv_obj_add_flag(id(ui_climate_face), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_face_root), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
+          id(face_state) = -1;
+          lv_obj_invalidate(id(ui_root));
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
+
+  - id: refresh_climate_ui
+    mode: restart
+    then:
+      - lambda: |-
+          if (!id(climate_shown)) return;
+
+          const float co2 = id(sensor_co2).state;
+          const float temp = id(sensor_temp).state;
+          const float hum = id(sensor_hum).state;
+
+          climate_curr_temp = temp;
+          climate_curr_hum = hum;
+
+          const float co2_y = ${climate_co2_yellow};
+          const float co2_r = ${climate_co2_red};
+          const float hum_m = ${climate_hum_mold};
+
+          // Оцінка стану комфорту
+          int cond = 0; // 0=happy, 1=neutral, 2=stuffy, 3=hot, 4=cold, 5=dry, 6=dizzy, 7=mold
+          const char *status_str = "комфортно";
+          uint32_t status_color = 0x38B36E; // Clear readable Sage
+
+          if (!isnan(co2) && co2 >= co2_r) {
+            cond = 6; // Dizzy / Severe CO2 (>= 2000 ppm)
+            status_str = "душно, провітріть!";
+            status_color = 0xE05A47; // Terracotta Coral
+          } else if (!isnan(hum) && hum >= hum_m) {
+            cond = 7; // Mold risk / High humidity (>= 68%)
+            status_str = "ризик плісняви!";
+            status_color = 0xE05A47; // Terracotta Coral
+          } else if (!isnan(co2) && co2 >= co2_y) {
+            cond = 2; // Stuffy moderate (>= 1500 ppm)
+            status_str = "провітріть кімнату";
+            status_color = 0xD97736; // Warm Ochre
+          } else if (!isnan(temp) && temp >= 25.5f) {
+            cond = 3; // Hot
+            status_str = "спекотно";
+            status_color = 0xE05A47; // Terracotta Coral
+          } else if (!isnan(temp) && temp <= 17.5f) {
+            cond = 4; // Cold
+            status_str = "прохолодно";
+            status_color = 0x5B92C2; // Slate Sky
+          } else if (!isnan(hum) && hum <= 35.0f) {
+            cond = 5; // Dry
+            status_str = "сухе повітря";
+            status_color = 0xD97736; // Warm Ochre
+          } else if (!isnan(hum) && hum >= 60.0f) {
+            cond = 1; // Humid / Neutral
+            status_str = "підвищена вологість";
+            status_color = 0x5B92C2; // Slate Sky
+          } else if ((!isnan(temp) && (temp < 19.0f || temp > 24.5f)) || (!isnan(hum) && (hum < 40.0f || hum > 60.0f))) {
+            cond = 1; // Neutral
+            status_str = "помірні умови";
+            status_color = 0xD97736; // Warm Ochre
+          }
+
+          id(climate_condition) = cond;
+
+          char buf_temp[32];
+          char buf_hum[32];
+
+          if (isnan(temp)) snprintf(buf_temp, sizeof(buf_temp), "--.-°");
+          else snprintf(buf_temp, sizeof(buf_temp), "%.1f°", temp);
+
+          if (isnan(hum)) snprintf(buf_hum, sizeof(buf_hum), "--%%");
+          else snprintf(buf_hum, sizeof(buf_hum), "%.0f%%", hum);
+
+          lv_label_set_text(id(ui_climate_temp_val), buf_temp);
+          lv_label_set_text(id(ui_climate_hum_val), buf_hum);
+          lv_label_set_text(id(ui_climate_status), status_str);
+          lv_obj_set_style_text_color(id(ui_climate_status), lv_color_hex(status_color), LV_PART_MAIN);
+
+          id(climate_icons_needed) = true;
+          lv_obj_invalidate(id(ui_climate_face));
+
+  - id: draw_climate_icons
+    mode: restart
+    then:
+      - lambda: |-
+          if (!id(climate_shown)) return;
+
+          const int cond = id(climate_condition);
+          const int cx = 120;
+          const int cy = 85;
+
+          if (cond == 0) {
+            // Happy: Yellow disc + Brown face
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DISC, cx, cy,
+                Color(0xFFCC4D), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_HAPPY_FACE, cx, cy,
+                Color(0x664500), Color(0x000000), 1
+            );
+          } else if (cond == 1) {
+            // Neutral: Yellow disc + Brown face
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DISC, cx, cy,
+                Color(0xFFCC4D), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_NEUTRAL_FACE, cx, cy,
+                Color(0x664500), Color(0x000000), 1
+            );
+          } else if (cond == 2) {
+            // Stuffy: Yellow disc + Brown face + Cyan sweat drop
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DISC, cx, cy,
+                Color(0xFFCC4D), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_STUFFY_FACE, cx, cy,
+                Color(0x664500), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_STUFFY_DROP, cx, cy,
+                Color(0x5DADEC), Color(0x000000), 1
+            );
+          } else if (cond == 3) {
+            // Hot: Red disc + Dark Red face + Cyan sweat drops
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DISC, cx, cy,
+                Color(0xDD2E44), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_HOT_FACE, cx, cy,
+                Color(0x662113), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_HOT_DROPS, cx, cy,
+                Color(0x5DADEC), Color(0x000000), 1
+            );
+          } else if (cond == 4) {
+            // Cold: Blue body + Dark Blue face + Ice White icicles
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_COLD_BODY, cx, cy,
+                Color(0x5DADEC), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_COLD_FACE, cx, cy,
+                Color(0x002E5D), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_COLD_ICE, cx, cy,
+                Color(0xE6F7FF), Color(0x000000), 1
+            );
+          } else if (cond == 5) {
+            // Dry: Cactus Green body + Dark Green accents
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DRY_BODY, cx, cy,
+                Color(0x77B255), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DRY_ACCENTS, cx, cy,
+                Color(0x3E721D), Color(0x000000), 1
+            );
+          } else if (cond == 6) {
+            // Dizzy: Yellow disc + Brown dizzy face
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DISC, cx, cy,
+                Color(0xFFCC4D), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_DIZZY_FACE, cx, cy,
+                Color(0x664500), Color(0x000000), 1
+            );
+          } else if (cond == 7) {
+            // Mold / Mushroom: Stem (slate/gray) + Cap (red) + Spots (white)
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_MOLD_STEM, cx, cy,
+                Color(0xDDE6ED), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_MOLD_CAP, cx, cy,
+                Color(0xDD2E44), Color(0x000000), 1
+            );
+            id(htram_core)->send_draw_cached_asset_centered(
+                htram_gd32::ASSET_ID_COMFORT_MOLD_SPOTS, cx, cy,
+                Color(0xFFFFFF), Color(0x000000), 1
+            );
+          }
+
+  # Точки інтеграції життєвого циклу
+  - id: !extend on_screen_drawn
+    then:
+      - lambda: |-
+          if (id(climate_shown) && id(climate_icons_needed)) {
+            id(climate_icons_needed) = false;
+            id(draw_climate_icons).execute();
+          }
+
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (face != 0 && id(climate_shown)) {
+            id(hide_climate).execute();
+          }
+
+  - id: !extend on_alarm_started
+    then:
+      - lambda: |-
+          if (id(climate_shown)) {
+            id(hide_climate).execute();
+          }
+
+esphome:
+  includes:
+    - climate_draw.h
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            lv_obj_set_parent(id(ui_climate_face), id(ui_root));
+            lv_obj_add_event_cb(id(ui_climate_face), climate_face_draw_cb, LV_EVENT_DRAW_MAIN, nullptr);
+            lv_obj_add_flag(id(ui_climate_face), LV_OBJ_FLAG_HIDDEN);

@@ -2,6 +2,7 @@
 #include "gd32f150.h"
 #include "spi_flash.h"
 #include "flash_assets.h"
+#include "periph.h"
 
 /*
  * ST7789 Pinout (GPIOB):
@@ -439,6 +440,7 @@ int display_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t 
     if (flags & 0x01) {
         /* Transparent mode: draw only foreground 1-bits in runs to preserve background */
         for (uint16_t row = 0; row < draw_h; row++) {
+            watchdog_kick();
             if (spi_flash_read_data(data_addr + (uint32_t)row * entry.stride, row_buf, entry.stride) != 0) {
                 return -1;
             }
@@ -466,6 +468,7 @@ int display_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t 
         display_set_window(x, y, (uint8_t)draw_w, (uint8_t)draw_h);
         LCD_CS_LOW();
         for (uint16_t row = 0; row < draw_h; row++) {
+            watchdog_kick();
             if (spi_flash_read_data(data_addr + (uint32_t)row * entry.stride, row_buf, entry.stride) != 0) {
                 LCD_CS_HIGH();
                 return -1;

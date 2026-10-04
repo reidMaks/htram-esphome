@@ -80,13 +80,10 @@ typedef struct {
 #define HELLO_FLAG_BOOT             (1 << 1)
 #define HELLO_FLAG_FLASH_OK         (1 << 2)
 #define HELLO_FLAG_FLASH_FAIL       (1 << 3)
-/* Set on the one HELLO the GD32 sends after it has finished drawing its own
- * boot screen. The ESP cannot otherwise tell a restart from the keep-alive
- * HELLO that rides every telemetry cycle, and it has to know: while the GD32
- * was booting its USART1 did not exist yet, so every pixel and every command
- * the ESP sent in that window went nowhere. Whatever the ESP believes is on
- * the panel, or on the LEDs, has to be sent again from here. */
-#define HELLO_FLAG_BOOT             (1 << 1)
+#define HELLO_FLAG_RESET_FWDGT      (1 << 4)
+#define HELLO_FLAG_RESET_SWRST      (1 << 5)
+#define HELLO_FLAG_RESET_POR        (1 << 6)
+#define HELLO_FLAG_RESET_PIN        (1 << 7)
 
 typedef struct {
     uint8_t magic0;         /* 0xAA */

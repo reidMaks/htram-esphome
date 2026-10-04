@@ -3,6 +3,7 @@ name: ESPHome & Codebase CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -43,3 +44,96 @@ jobs:
 
       - name: Validate Graphic Assets
         run: make validate-assets
+
+  release:
+    name: Build & Publish Release
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends make
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install project dependencies
+        run: uv sync
+
+      - name: Setup mock secrets for YAML compilation
+        run: cp esphome/secrets.yaml.example esphome/secrets.yaml
+
+      - name: Compile Standalone ESP32 Firmware
+        run: |
+          uv run esphome compile esphome/htram.yaml
+
+      - name: Package Release Binaries & Checksums
+        id: pkg
+        run: |
+          bin_path="esphome/.esphome/build/htram/build/firmware.ota.bin"
+          if [ ! -f "$bin_path" ]; then
+            bin_path="esphome/.esphome/build/htram/build/htram.bin"
+          fi
+          cp "$bin_path" htram-standalone.bin
+          md5sum htram-standalone.bin | cut -d' ' -f1 > htram-standalone.bin.md5
+          sha256sum htram-standalone.bin | cut -d' ' -f1 > htram-standalone.bin.sha256
+          size=$(stat -c%s htram-standalone.bin)
+          md5=$(cat htram-standalone.bin.md5)
+          sha=$(cat htram-standalone.bin.sha256)
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          echo "md5=$md5" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Keep standalone binary for this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: htram-standalone
+          path: |
+            htram-standalone.bin
+            htram-standalone.bin.md5
+            htram-standalone.bin.sha256
+          retention-days: 14
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            ver=$(python3 -c "import yaml; print(yaml.safe_load(open('esphome/htram-core.yaml'))['substitutions']['firmware_version'])")
+            tag="v${ver}"
+          fi
+
+          notes_file="docs/RELEASE_NOTES_${tag}.md"
+          if [ ! -f "$notes_file" ]; then
+            echo "Release notes $notes_file not found; creating default..."
+            echo "# HTRAM Release ${tag}" > "$notes_file"
+          fi
+
+          # Create release if it does not exist yet
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            echo "Creating GitHub Release $tag..."
+            gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+          else
+            echo "Release $tag already exists on GitHub; uploading/updating assets."
+          fi
+
+          gh release upload "$tag" \
+            htram-standalone.bin \
+            htram-standalone.bin.md5 \
+            htram-standalone.bin.sha256 \
+            --clobber
+

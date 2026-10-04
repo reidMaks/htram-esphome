@@ -203,6 +203,18 @@ bool HtramArbiter::release_screen(const std::string &owner) {
   return false;
 }
 
+void HtramArbiter::preempt_to_clock(const std::string &preemptor) {
+  if (this->screen_mode_ != SCREEN_CLOCK && !this->screen_owner_.empty() && this->screen_owner_ != "clock") {
+    std::string prev_owner = this->screen_owner_;
+    ESP_LOGI(TAG, "Screen preemption: '%s' preempted by '%s' to clock", prev_owner.c_str(), preemptor.c_str());
+    this->screen_mode_ = SCREEN_CLOCK;
+    this->screen_owner_ = "clock";
+    std::string prev_ctx = "modal_" + prev_owner;
+    this->dispatch_event_for_context("screen_preempted", prev_ctx);
+    this->dispatch_event("screen_idle");
+  }
+}
+
 void HtramArbiter::request_status_icon(const std::string &owner, int priority) {
   this->active_icons_[owner] = priority;
 }

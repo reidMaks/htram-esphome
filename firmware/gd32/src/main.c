@@ -67,8 +67,15 @@ static void format_fixed1(int32_t val, char *buf, int is_signed)
 
 int main(void)
 {
+    /* 0. Capture Hardware Reset Reason & Clear Flags Early */
+    uint32_t rstsck = RCU_RSTSCK;
+    RCU_RSTSCK |= RCU_RSTSCK_RSTFC;
+
     /* 1. Initialize Board Peripherals & Power Latches */
     periph_init();
+
+    /* 1b. Initialize Hardware Watchdog (~3.0s timeout) */
+    watchdog_init();
 
     /* 2. Initialize ST7789 Color Display */
 #ifndef DIAG_MINIMAL
@@ -124,6 +131,10 @@ int main(void)
      * being mid-boot itself; that case is covered by staying off the panel
      * entirely, below.) */
     uint8_t boot_flags = HELLO_FLAG_BOOT;
+    if (rstsck & RCU_RSTSCK_FWDGTRSTF) boot_flags |= HELLO_FLAG_RESET_FWDGT;
+    if (rstsck & RCU_RSTSCK_SWRSTF)    boot_flags |= HELLO_FLAG_RESET_SWRST;
+    if (rstsck & RCU_RSTSCK_PORRSTF)    boot_flags |= HELLO_FLAG_RESET_POR;
+    if (rstsck & RCU_RSTSCK_PINRSTF)    boot_flags |= HELLO_FLAG_RESET_PIN;
     const spi_flash_info_t *flash_info = spi_flash_get_info();
     if (flash_info->is_detected) {
         boot_flags |= HELLO_FLAG_FLASH_OK;
@@ -177,6 +188,7 @@ int main(void)
      * reset state, so if the cell still refuses to charge here, nothing this
      * firmware does is responsible. */
     while (1) {
+        watchdog_kick();
         uint32_t now = periph_millis();
         protocol_process_rx();
 
@@ -196,6 +208,7 @@ int main(void)
 }
 #else
     while (1) {
+        watchdog_kick();
         uint32_t now = periph_millis();
 
         /* Process all incoming packets from ESP32 */
@@ -257,7 +270,10 @@ int main(void)
             display_set_backlight(12);        /* dim: legible up close, cheap */
 
             /* Wait for button release */
-            while (periph_read_button()) delay_ms(10);
+            while (periph_read_button()) {
+                watchdog_kick();
+                delay_ms(10);
+            }
 
             uint32_t wakeup_ticks = 0;
             uint32_t last_draw_ms = 0;
@@ -270,6 +286,7 @@ int main(void)
             uint8_t last_usb = gpio_get(GPIOC_BASE, 13) ? 1 : 0;
 
             while (1) {
+                watchdog_kick();
                 uint32_t sb_now = periph_millis();
 
                 /* Plugging power in lights the screen, like the factory. It has

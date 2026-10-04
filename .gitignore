@@ -50,6 +50,7 @@ esphome/secrets.yaml
 .esphome/
 esphome/.esphome/
 scratch/
+tmp/
 
 # Вихідні знімки знаків загроз, з яких обведено силуети (чужа графіка).
 # Обведені SVG та маски лежать в esphome/images/ і комітяться.
@@ -77,4 +78,9 @@ tests/*.so
 .coverage
 coverage_html/
 .pytest_cache/
+docs/screenshots/e2e/
+
+# Agent execution artifacts
+.agents/*
+!.agents/skills
 

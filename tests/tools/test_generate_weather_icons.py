@@ -129,10 +129,12 @@ def test_multilayer_dimension_alignment(tmp_path, monkeypatch):
     )
 
 
-def test_generate_weather_icons_cli():
+def test_generate_weather_icons_cli(tmp_path):
     cmd = [
         sys.executable,
         str(REPO_ROOT / "tools" / "images" / "generate_weather_icons.py"),
+        "--out-dir",
+        str(tmp_path),
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     assert "Saved weather_sunny_mask.png" in res.stdout
@@ -140,3 +142,4 @@ def test_generate_weather_icons_cli():
     assert "Saved weather_partlycloudy_sun_mask.png" in res.stdout
     assert "Saved weather_partlycloudy_cloud_mask.png" in res.stdout
     assert "Saved weather_partlycloudy_night_moon_mask.png" in res.stdout
+    assert (tmp_path / "weather_sunny_mask.png").exists()

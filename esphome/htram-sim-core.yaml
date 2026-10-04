@@ -78,6 +78,7 @@ api:
         filename: string
       then:
         - lambda: |-
+            lv_refr_now(nullptr);
             id(htram_core)->dump_ppm(filename);
             ESP_LOGI("sim", "Screenshot dumped to %s", filename.c_str());
 
@@ -90,7 +91,11 @@ api:
         usb: bool
       then:
         - lambda: |-
-            if (!isnan(temp)) id(sensor_temp).publish_state(temp);
+            if (!isnan(temp)) {
+              id(t_from_gd32) = temp;
+              float trim = id(temp_trim).state;
+              id(sensor_temp).publish_state(isnan(trim) ? temp : temp + trim);
+            }
             if (!isnan(hum)) id(sensor_hum).publish_state(hum);
             if (!isnan(co2)) id(sensor_co2).publish_state(co2);
             if (!isnan(batt_pct)) id(sensor_batt_level).publish_state(batt_pct);
@@ -119,15 +124,27 @@ api:
         - script.execute: refresh_clock
         - script.execute: refresh_slot
 
+    - service: simulate_ap_state
+      variables:
+        ap_ok: int
+      then:
+        - lambda: |-
+            id(sim_override_ap) = ap_ok;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+
     - service: simulate_reboot_resync
       then:
         - lambda: |-
-            id(sim_override_net) = -1;
-            id(sim_override_time) = -1;
+            id(sim_override_net) = 1;
+            id(sim_override_time) = 1;
+            id(sim_override_ap) = 0;
             id(face_state) = -1;
             id(htram_arbiter_hub)->release_screen("overlay");
             id(htram_arbiter_hub)->release_screen("weather");
             id(htram_arbiter_hub)->release_screen("timer");
+            id(htram_arbiter_hub)->release_screen("ap");
+            id(htram_arbiter_hub)->release_screen("climate");
             id(htram_arbiter_hub)->reset_audio();
         - script.execute: refresh_face
         - script.execute: refresh_clock
@@ -214,7 +231,38 @@ htram_arbiter:
             id(ap_manual) = true;
             id(ap_page) ^= 1;
             id(face_state) = -1;
+            lv_obj_invalidate(lv_screen_active());
         - script.execute: refresh_face
+    - event: button_quadruple
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_quadruple
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: button_double
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_double
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: button_many
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_many
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: button_long
+      context: modal_ap
+      priority: 100
+      name: core_dismiss_ap_long
+      then:
+        - script.execute: dismiss_wifi_setup
+    - event: screen_preempted
+      context: modal_ap
+      priority: 100
+      name: core_preempt_ap
+      then:
+        - script.execute: dismiss_wifi_setup
     - event: button_single
       context: modal_overlay
       priority: 100
@@ -243,6 +291,18 @@ htram_arbiter:
             lv_obj_add_flag(id(ui_msg_sub), LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(id(ui_pocket), LV_OBJ_FLAG_HIDDEN);
             id(slot_hold) = false;
+    - event: button_many
+      context: any
+      priority: 10
+      name: core_setup_wifi_many
+      then:
+        - script.execute: start_wifi_setup
+    - event: button_quadruple
+      context: any
+      priority: 10
+      name: core_setup_wifi_quadruple
+      then:
+        - script.execute: start_wifi_setup
 
 time:
   - platform: host
@@ -271,6 +331,38 @@ globals:
 script:
   - id: refresh_leds
     then: []
+
+  - id: !extend set_system_alert_active
+    then:
+      - lambda: |-
+          id(alert_status_sensor).publish_state(active);
+
+  - id: start_wifi_setup
+    mode: restart
+    then:
+      - lambda: |-
+          id(sim_override_ap) = 1;
+          id(htram_arbiter_hub)->request_screen(5, "ap");
+          id(ap_manual) = false;
+          id(ap_page) = 0;
+          id(face_state) = -1;
+          id(refresh_face).execute();
+
+  - id: dismiss_wifi_setup
+    mode: restart
+    then:
+      - lambda: |-
+          id(sim_override_ap) = 0;
+          id(ap_manual) = false;
+          if (id(htram_arbiter_hub)->get_screen_owner() == "ap") {
+            id(htram_arbiter_hub)->release_screen("ap");
+          }
+          lv_obj_invalidate(id(ui_root));
+          id(face_state) = -1;
+      - script.execute: refresh_face
+      - script.execute: refresh_clock
+      - script.execute: refresh_slot
+      - script.execute: refresh_pocket
 
 sensor:
   - platform: template
@@ -316,6 +408,10 @@ binary_sensor:
     id: htram_button
     name: "Button"
 
+  - platform: template
+    id: alert_status_sensor
+    name: "Alert Active"
+
 text_sensor:
   - platform: template
     id: wifi_ip
@@ -344,3 +440,9 @@ number:
     step: 0.1
     initial_value: 0
     optimistic: true
+    set_action:
+      - lambda: |-
+          if (!isnan(id(t_from_gd32))) {
+            id(sensor_temp).publish_state(id(t_from_gd32) + x);
+            id(refresh_slot).execute();
+          }

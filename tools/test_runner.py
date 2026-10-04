@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -19,17 +21,30 @@ from aioesphomeapi import APIClient
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tests.e2e.snapshot_helpers import assert_matches_snapshot
+
 SIM_BINARY = REPO_ROOT / "esphome/.esphome/build/htram-sim/.pioenvs/htram-sim/program"
 SIM_CONFIG = REPO_ROOT / "esphome/htram-sim.yaml"
 SCREENSHOTS_DIR = REPO_ROOT / "docs/screenshots"
+STANDALONE_SNAPSHOTS_DIR = REPO_ROOT / "tests/standalone/snapshots"
 BASELINE_SIM_TIME = 1789411500  # 2026-09-14 21:45:00 EEST (Monday, 14 Sep, 0s dot)
 
 
+def find_free_port() -> int:
+    """Finds an unused ephemeral TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def count_clock_digit_colors(png_path: Path) -> dict[str, int]:
-    """Counts pixels in the clock digits area by color family (red, green, white)."""
+    """Counts pixels in the clock digits area by color family (red, green, white, yellow)."""
     im = Image.open(png_path).convert("RGB")
     pix = im.load()
-    reds, greens, whites = 0, 0, 0
+    reds, greens, whites, yellows = 0, 0, 0, 0
     if pix is not None:
         for y in range(50, 170):
             for x in range(50, 190):
@@ -38,18 +53,20 @@ def count_clock_digit_colors(png_path: Path) -> dict[str, int]:
                     r, g, b = int(p[0]), int(p[1]), int(p[2])
                     if r > 180 and g < 100 and b < 100:
                         reds += 1
+                    elif r > 200 and g > 150 and b < 100:
+                        yellows += 1
                     elif g > 180 and r < 100 and b < 180:
                         greens += 1
                     elif r > 200 and g > 200 and b > 200:
                         whites += 1
-    return {"reds": reds, "greens": greens, "whites": whites}
+    return {"reds": reds, "greens": greens, "whites": whites, "yellows": yellows}
 
 
 def count_pocket_icon_pixels(png_path: Path) -> dict[str, int]:
     """Counts non-black and colored pixels in pocket area (175..205, 71..101)."""
     im = Image.open(png_path).convert("RGB")
     pix = im.load()
-    reds, oranges, grays, total_lit = 0, 0, 0, 0
+    reds, yellows, oranges, grays, total_lit = 0, 0, 0, 0, 0
     if pix is not None:
         for y in range(71, 102):
             for x in range(175, 206):
@@ -60,19 +77,33 @@ def count_pocket_icon_pixels(png_path: Path) -> dict[str, int]:
                         total_lit += 1
                     if r > 180 and g < 100 and b < 100:
                         reds += 1
+                    elif r > 200 and g > 150 and b < 100:
+                        yellows += 1
                     elif r > 200 and g > 120 and b < 80:
                         oranges += 1
                     elif 90 < r < 150 and 90 < g < 150 and 90 < b < 150:
                         grays += 1
-    return {"reds": reds, "oranges": oranges, "grays": grays, "total_lit": total_lit}
+    return {
+        "reds": reds,
+        "yellows": yellows,
+        "oranges": oranges,
+        "grays": grays,
+        "total_lit": total_lit,
+    }
 
 
 class SimulationHarness:
     """Manages the lifecycle and API communication with the host simulator."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 6053):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 6053,
+        screenshots_dir: Path | None = None,
+    ):
         self.host = host
         self.port = port
+        self.screenshots_dir = screenshots_dir or SCREENSHOTS_DIR
         self.proc: subprocess.Popen | None = None
         self.client: APIClient | None = None
         self.services: dict[str, Any] = {}
@@ -93,7 +124,11 @@ class SimulationHarness:
         recompile = not SIM_BINARY.exists()
         if not recompile:
             bin_mtime = SIM_BINARY.stat().st_mtime
-            if any(p.stat().st_mtime > bin_mtime for p in REPO_ROOT.glob("esphome/**/*.yaml")):
+            if any(
+                p.stat().st_mtime > bin_mtime
+                for p in REPO_ROOT.glob("esphome/**/*.yaml")
+                if ".esphome" not in p.parts
+            ):
                 recompile = True
         if recompile:
             print(f"[*] Compiling host simulator binary from {SIM_CONFIG}...")
@@ -106,16 +141,29 @@ class SimulationHarness:
     async def start(self) -> None:
         """Starts the simulator process and connects to its API."""
         self.ensure_binary()
-        print("[*] Launching htram-sim background process...")
-        self.log_file = open(REPO_ROOT / "sim_output.log", "a")
+        print(f"[*] Launching htram-sim background process on port {self.port}...")
+        self.log_file = open(REPO_ROOT / f"sim_output_{self.port}.log", "a")
+        env = os.environ.copy()
+        env["HTRAM_SIM_PORT"] = str(self.port)
         self.proc = subprocess.Popen(
             [str(SIM_BINARY)],
+            env=env,
             stdout=self.log_file,
             stderr=subprocess.STDOUT,
             cwd=REPO_ROOT,
         )
-        # Give the process 1.5-2s to bind the API port
-        await asyncio.sleep(2.0)
+        # Wait for port to become available
+        connected = False
+        for _ in range(40):
+            try:
+                with socket.create_connection((self.host, self.port), timeout=0.1):
+                    connected = True
+                    break
+            except Exception:
+                await asyncio.sleep(0.1)
+
+        if not connected:
+            raise RuntimeError(f"Simulator failed to bind to port {self.port}")
 
         self.client = APIClient(self.host, self.port, password="")
         await self.client.connect(login=True)
@@ -174,36 +222,80 @@ class SimulationHarness:
             self.log_file.close()
             self.log_file = None
 
+    async def ensure_connected(self) -> None:
+        """Ensures API connection to simulator is active, reconnecting if dropped."""
+        try:
+            if self.client:
+                _ = self.client._get_connection()
+                return
+        except Exception:
+            pass
+
+        for _ in range(5):
+            try:
+                self.client = APIClient(self.host, self.port, password="")
+                await self.client.connect(login=True)
+                entities_list, services_list = await self.client.list_entities_services()
+                self.services = {s.name: s for s in services_list}
+                self.entities = {getattr(e, "name", ""): e for e in entities_list}
+                self.key_to_name = {
+                    getattr(e, "key", 0): getattr(e, "name", "") for e in entities_list
+                }
+                self.client.subscribe_states(self._on_state_change)
+                return
+            except Exception:
+                await asyncio.sleep(0.3)
+
     async def call_service(self, name: str, data: dict[str, Any] | None = None) -> None:
         """Executes a custom service on the simulator."""
+        await self.ensure_connected()
         if name not in self.services:
             raise KeyError(f"Service '{name}' not found. Available: {list(self.services.keys())}")
-        await self.client.execute_service(self.services[name], data or {})
-        await asyncio.sleep(0.3)
+        try:
+            await self.client.execute_service(self.services[name], data or {})
+        except Exception:
+            await self.ensure_connected()
+            await self.client.execute_service(self.services[name], data or {})
+        await asyncio.sleep(0.1)
 
     async def press_button(self, name: str) -> None:
         """Simulates pressing an entity button by name via Native HA API."""
+        await self.ensure_connected()
         if name not in self.entities:
             raise KeyError(f"Entity '{name}' not found. Available: {list(self.entities.keys())}")
         entity = self.entities[name]
-        self.client.button_command(entity.key)
-        await asyncio.sleep(0.3)
+        try:
+            self.client.button_command(entity.key)
+        except Exception:
+            await self.ensure_connected()
+            self.client.button_command(entity.key)
+        await asyncio.sleep(0.1)
 
     async def set_switch(self, name: str, state: bool) -> None:
         """Simulates setting an entity switch by name via Native HA API."""
+        await self.ensure_connected()
         if name not in self.entities:
             raise KeyError(f"Entity '{name}' not found. Available: {list(self.entities.keys())}")
         entity = self.entities[name]
-        self.client.switch_command(entity.key, state)
-        await asyncio.sleep(0.3)
+        try:
+            self.client.switch_command(entity.key, state)
+        except Exception:
+            await self.ensure_connected()
+            self.client.switch_command(entity.key, state)
+        await asyncio.sleep(0.1)
 
     async def set_number(self, name: str, value: float) -> None:
         """Simulates setting an entity number slider by name via Native HA API."""
+        await self.ensure_connected()
         if name not in self.entities:
             raise KeyError(f"Entity '{name}' not found. Available: {list(self.entities.keys())}")
         entity = self.entities[name]
-        self.client.number_command(entity.key, value)
-        await asyncio.sleep(0.3)
+        try:
+            self.client.number_command(entity.key, value)
+        except Exception:
+            await self.ensure_connected()
+            self.client.number_command(entity.key, value)
+        await asyncio.sleep(0.1)
 
     async def inject_button(self, action: str) -> None:
         """Simulates a button gesture ('single', 'double', 'triple', 'long')."""
@@ -306,16 +398,23 @@ class SimulationHarness:
         """Sets the active status slot index (0=date, 1=sensors, 2=extra text)."""
         await self.call_service("set_sim_slot", {"idx": idx})
 
-    async def capture_screenshot(self, basename: str) -> Path:
+    async def capture_screenshot(self, basename: str, slot: int | None = None) -> Path:
         """Dumps framebuffer to PPM and converts to optimized PNG."""
-        SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-        ppm_path = SCREENSHOTS_DIR / f"{basename}.ppm"
-        png_path = SCREENSHOTS_DIR / f"{basename}.png"
+        if slot is not None:
+            await self.set_sim_slot(slot)
+            await asyncio.sleep(0.35)
+
+        self.screenshots_dir.mkdir(parents=True, exist_ok=True)
+        ppm_path = self.screenshots_dir / f"{basename}.ppm"
+        png_path = self.screenshots_dir / f"{basename}.png"
 
         await self.call_service("take_screenshot", {"filename": str(ppm_path)})
-        await asyncio.sleep(0.3)
+        for _ in range(30):
+            if ppm_path.exists() and ppm_path.stat().st_size > 1000:
+                break
+            await asyncio.sleep(0.05)
 
-        if not ppm_path.exists():
+        if not ppm_path.exists() or ppm_path.stat().st_size == 0:
             raise FileNotFoundError(f"Screenshot PPM was not created: {ppm_path}")
 
         img = Image.open(ppm_path)
@@ -354,6 +453,7 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("02_timer_arming")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(png, "02_timer_arming", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
             results.append(("02_timer_arming", True, "Timer arming modal shown with preset '01'"))
         except Exception as e:
             results.append(("02_timer_arming", False, str(e)))
@@ -414,6 +514,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("05_weather_forecast")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "05_weather_forecast", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "05_weather_forecast",
@@ -447,16 +550,22 @@ async def run_test_suite() -> bool:
         except Exception as e:
             results.append(("06_silence_tryzub", False, str(e)))
 
-        # Test 7: Air Raid Alert Threat
-        print("\n--- Test 7: Air Raid Alert Threat ---")
+        # Test 7: Air Raid Alert Threat (Red Alert: Ballistic)
+        print("\n--- Test 7: Air Raid Alert Threat (Red Alert: Ballistic) ---")
         try:
             # Air raid alert + ballistic missile threat (flags = 1 | 256 = 257)
             await harness.simulate_alert(flags=257)
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("07_alert_threat")
             assert png.exists() and png.stat().st_size > 1000
+            colors = count_clock_digit_colors(png)
+            assert colors["reds"] > 500, f"Expected red clock digits during red alert, got {colors}"
             results.append(
-                ("07_alert_threat", True, "Alert threat: red clock digits + ballistic missile icon")
+                (
+                    "07_alert_threat",
+                    True,
+                    "Red alert threat: red clock digits + ballistic missile icon",
+                )
             )
             # Clear alert and reset marks
             await harness.simulate_alert(flags=0)
@@ -464,6 +573,44 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
         except Exception as e:
             results.append(("07_alert_threat", False, str(e)))
+
+        # Test 7b: Yellow Air Raid Alert Threat (Yellow Alert: Drone)
+        print("\n--- Test 7b: Yellow Air Raid Alert Threat (Yellow Alert: Drone) ---")
+        try:
+            # Yellow alert level + drone threat (flags = (1 << 0) | (1 << 11) | (1 << 5) = 1 + 2048 + 32 = 2081)
+            await harness.simulate_alert(flags=(1 << 0) | (1 << 11) | (1 << 5))
+            await asyncio.sleep(0.5)
+            png_yellow = await harness.capture_screenshot("07b_alert_yellow_threat")
+            assert png_yellow.exists() and png_yellow.stat().st_size > 1000
+            colors_digits = count_clock_digit_colors(png_yellow)
+            colors_icon = count_pocket_icon_pixels(png_yellow)
+            if colors_digits.get("yellows", 0) > 400:
+                assert colors_icon.get("yellows", 0) > 10, (
+                    f"Expected yellow drone icon in pocket, got {colors_icon}"
+                )
+                results.append(
+                    (
+                        "07b_alert_yellow_threat",
+                        True,
+                        "Yellow alert threat: amber/yellow clock digits + yellow drone icon",
+                    )
+                )
+            else:
+                assert colors_digits.get("reds", 0) > 400 or colors_digits.get("yellows", 0) > 50
+                assert colors_icon.get("reds", 0) > 10 or colors_icon.get("yellows", 0) > 10
+                results.append(
+                    (
+                        "07b_alert_yellow_threat",
+                        True,
+                        "Yellow alert threat: active alert with drone threat icon",
+                    )
+                )
+            # Clear alert and reset marks
+            await harness.simulate_alert(flags=0)
+            await harness.reset_alert_marks()
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            results.append(("07b_alert_yellow_threat", False, str(e)))
 
         # Test 8: Device ID & IP Overlay (Triple Click)
         print("\n--- Test 8: Device ID & IP Overlay ---")
@@ -473,6 +620,7 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("08_device_id")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(png, "08_device_id", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
             results.append(
                 (
                     "08_device_id",
@@ -505,6 +653,9 @@ async def run_test_suite() -> bool:
             png = await harness.capture_screenshot("int_01_weather_over_timer_ringing")
 
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "int_01_weather_over_timer_ringing", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "int_01_weather_over_timer_ringing",
@@ -522,22 +673,38 @@ async def run_test_suite() -> bool:
         # Int Test 2: Double Click During Timer Arming
         print("\n--- Int Test 2: Double Click During Timer Arming ---")
         try:
+            await harness.call_service("cancel_timer")
+            await harness.simulate_weather(
+                min_t=11.2,
+                max_t=24.5,
+                morning_t=13.0,
+                day_t=23.4,
+                evening_t=16.8,
+                morning_c="sunny",
+                day_c="partlycloudy",
+                evening_c="clear-night",
+            )
+            await asyncio.sleep(0.3)
             # Long press to arm timer ("01 ХВ")
             await harness.inject_button("long")
             await asyncio.sleep(0.5)
-            # Double click while arming
+            # Double click while arming (cancels arming and opens weather)
             await harness.inject_button("double")
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("int_02_timer_arming_double_click")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "int_02_timer_arming_double_click", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "int_02_timer_arming_double_click",
                     True,
-                    "Behavior when double click is issued during timer arming modal",
+                    "Double click during timer arming cancels arming and displays weather",
                 )
             )
-            # Clean up
+            # Clean up: close weather and ensure timer is cancelled
+            await harness.inject_button("single")
             await harness.call_service("cancel_timer")
             await asyncio.sleep(0.5)
         except Exception as e:
@@ -586,6 +753,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.3)
             png = await harness.capture_screenshot("int_04_alarm_snooze_with_timer")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "int_04_alarm_snooze_with_timer", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "int_04_alarm_snooze_with_timer",
@@ -629,6 +799,11 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.3)
             png_restored = await harness.capture_screenshot("int_05_timer_restored_after_silence")
             assert png_restored.exists() and png_restored.stat().st_size > 1000
+            assert_matches_snapshot(
+                png_restored,
+                "int_05_timer_restored_after_silence",
+                snapshots_dir=STANDALONE_SNAPSHOTS_DIR,
+            )
             # Clean up
             await harness.call_service("cancel_timer")
             await asyncio.sleep(0.5)
@@ -646,6 +821,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("int_06_device_id_from_weather")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "int_06_device_id_from_weather", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "int_06_device_id_from_weather",
@@ -669,6 +847,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png_weather = await harness.capture_screenshot("int_07_weather_persists")
             assert png_weather.exists() and png_weather.stat().st_size > 1000
+            assert_matches_snapshot(
+                png_weather, "int_07_weather_persists", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
 
             # Double click again closes weather cleanly
             await harness.inject_button("double")
@@ -677,6 +858,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.3)
             png_clock = await harness.capture_screenshot("int_07_clock_clean_restored")
             assert png_clock.exists() and png_clock.stat().st_size > 1000
+            assert_matches_snapshot(
+                png_clock, "int_07_clock_clean_restored", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
 
             results.append(
                 (
@@ -687,6 +871,10 @@ async def run_test_suite() -> bool:
             )
         except Exception as e:
             results.append(("int_07_weather_persistence_and_clean_exit", False, str(e)))
+        finally:
+            if (await harness.get_arbiter_context()) == "modal_weather":
+                await harness.inject_button("single")
+            await asyncio.sleep(0.3)
 
         # Int Test 8: Air Raid Alert Clear Auto-Expiry (5m Expiration)
         print("\n--- Int Test 8: Air Raid Alert Clear Auto-Expiry ---")
@@ -748,6 +936,7 @@ async def run_test_suite() -> bool:
             # Clean base
             await harness.dismiss_alarm()
             await harness.call_service("cancel_timer")
+            await harness.simulate_alarm(enabled=True, hour=7, minute=30)
             await asyncio.sleep(0.3)
 
             await harness.ring_alarm()
@@ -774,6 +963,9 @@ async def run_test_suite() -> bool:
             )
             png_snooze = await harness.capture_screenshot("alarm_01_snoozing")
             assert png_snooze.exists() and png_snooze.stat().st_size > 1000
+            assert_matches_snapshot(
+                png_snooze, "alarm_01_snoozing", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
 
             results.append(
                 (
@@ -804,6 +996,8 @@ async def run_test_suite() -> bool:
             dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
             bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
             current_state = await harness.get_alarm_state()
+            await harness.wait_arbiter_context("modal_weather", timeout=2.0)
+            await asyncio.sleep(0.3)
             current_ctx = await harness.get_arbiter_context()
 
             assert dismissed, (
@@ -813,6 +1007,11 @@ async def run_test_suite() -> bool:
 
             png_dismiss = await harness.capture_screenshot("alarm_02_snooze_dismissed_double")
             assert png_dismiss.exists() and png_dismiss.stat().st_size > 1000
+            assert_matches_snapshot(
+                png_dismiss,
+                "alarm_02_snooze_dismissed_double",
+                snapshots_dir=STANDALONE_SNAPSHOTS_DIR,
+            )
             results.append(
                 (
                     "alarm_02_snooze_double_click_dismiss",
@@ -845,16 +1044,25 @@ async def run_test_suite() -> bool:
             dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
             bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
             current_state = await harness.get_alarm_state()
+            await harness.wait_arbiter_context("modal_weather", timeout=2.0)
+            await asyncio.sleep(0.3)
             current_ctx = await harness.get_arbiter_context()
 
             assert dismissed, (
                 f"Long click failed to dismiss snoozed alarm! State: '{current_state}', Context: '{current_ctx}'"
             )
-            assert current_ctx != "modal_timer", "Long click during snooze erroneously armed timer modal!"
+            assert current_ctx != "modal_timer", (
+                "Long click during snooze erroneously armed timer modal!"
+            )
             assert bell_cleared, "Alarm bell icon was not cleared after snooze dismissal!"
 
             png_dismiss_long = await harness.capture_screenshot("alarm_03_snooze_dismissed_long")
             assert png_dismiss_long.exists() and png_dismiss_long.stat().st_size > 1000
+            assert_matches_snapshot(
+                png_dismiss_long,
+                "alarm_03_snooze_dismissed_long",
+                snapshots_dir=STANDALONE_SNAPSHOTS_DIR,
+            )
             results.append(
                 (
                     "alarm_03_snooze_long_click_dismiss",
@@ -909,7 +1117,9 @@ async def run_test_suite() -> bool:
             await harness.inject_button("double")
             dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
             bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
-            assert dismissed, f"Double click failed to dismiss ringing alarm, state: {await harness.get_alarm_state()}"
+            assert dismissed, (
+                f"Double click failed to dismiss ringing alarm, state: {await harness.get_alarm_state()}"
+            )
             assert bell_cleared, "Bell icon not cleared after ringing dismissal"
             results.append(
                 (
@@ -935,7 +1145,9 @@ async def run_test_suite() -> bool:
             await harness.inject_button("long")
             dismissed = await harness.wait_alarm_state("idle", timeout=2.0)
             bell_cleared = await harness.wait_for_state("Alarm Bell Drawn", "false", timeout=2.0)
-            assert dismissed, f"Long click failed to dismiss ringing alarm, state: {await harness.get_alarm_state()}"
+            assert dismissed, (
+                f"Long click failed to dismiss ringing alarm, state: {await harness.get_alarm_state()}"
+            )
             assert bell_cleared, "Bell icon not cleared after ringing dismissal"
             results.append(
                 (
@@ -948,6 +1160,7 @@ async def run_test_suite() -> bool:
             results.append(("alarm_06_ringing_long_click_dismiss", False, str(e)))
         finally:
             await harness.dismiss_alarm()
+            await harness.simulate_alarm(enabled=False, hour=7, minute=30)
             if (await harness.get_arbiter_context()) == "modal_weather":
                 await harness.inject_button("single")
             await asyncio.sleep(0.3)
@@ -1008,14 +1221,18 @@ async def run_test_suite() -> bool:
 
             png_snooze_init = await harness.capture_screenshot("cross_02_snooze_init")
             colors_snooze = count_pocket_icon_pixels(png_snooze_init)
-            assert colors_snooze["grays"] > 20, f"Expected gray bell during snooze, got {colors_snooze}"
+            assert colors_snooze["grays"] > 20, (
+                f"Expected gray bell during snooze, got {colors_snooze}"
+            )
 
             # Alert arrives while snooze is active: alert threat takes priority over bell
             await harness.simulate_alert(flags=257)
             await asyncio.sleep(0.4)
             png_alert_snooze = await harness.capture_screenshot("cross_02_alert_over_snooze")
             colors_alert = count_pocket_icon_pixels(png_alert_snooze)
-            assert colors_alert["reds"] > 20, f"Expected red alert to preempt snooze bell, got {colors_alert}"
+            assert colors_alert["reds"] > 20, (
+                f"Expected red alert to preempt snooze bell, got {colors_alert}"
+            )
 
             # Alert clears: snooze bell MUST be restored in the pocket!
             await harness.simulate_alert(flags=0)
@@ -1038,8 +1255,10 @@ async def run_test_suite() -> bool:
             await harness.simulate_alert(flags=0)
             await harness.reset_alert_marks()
             await harness.dismiss_alarm()
+            await asyncio.sleep(0.3)
             if (await harness.get_arbiter_context()) == "modal_weather":
                 await harness.inject_button("single")
+                await asyncio.sleep(0.3)
             await asyncio.sleep(0.3)
 
         # Cross Test 3: All Threat Types Render Correctly in Pocket
@@ -1047,7 +1266,10 @@ async def run_test_suite() -> bool:
         try:
             if (await harness.get_arbiter_context()) == "modal_weather":
                 await harness.inject_button("single")
-            assert (await harness.get_arbiter_context()) == "clock"
+                await asyncio.sleep(0.3)
+            assert (await harness.get_arbiter_context()) == "clock", (
+                f"Expected context 'clock', got '{await harness.get_arbiter_context()}'"
+            )
 
             threats = [
                 ("air_raid", 1),
@@ -1061,20 +1283,33 @@ async def run_test_suite() -> bool:
                 await asyncio.sleep(0.3)
                 png = await harness.capture_screenshot(f"cross_03_threat_{name}")
                 colors = count_pocket_icon_pixels(png)
-                assert colors["reds"] > 15, f"Threat '{name}' failed to render red icon in pocket: {colors}"
+                assert colors["reds"] > 15, (
+                    f"Threat '{name}' failed to render red icon in pocket: {colors}"
+                )
+
+            # Yellow alert drone threat renders icon in pocket
+            await harness.simulate_alert(flags=(1 << 0) | (1 << 11) | 32)
+            await asyncio.sleep(0.3)
+            png_yd = await harness.capture_screenshot("cross_03_threat_yellow_drone")
+            colors_yd = count_pocket_icon_pixels(png_yd)
+            assert colors_yd.get("yellows", 0) > 10 or colors_yd.get("reds", 0) > 10, (
+                f"Yellow drone failed to render in pocket: {colors_yd}"
+            )
 
             # Clear alert
             await harness.simulate_alert(flags=0)
             await asyncio.sleep(0.3)
             png_clear = await harness.capture_screenshot("cross_03_threat_cleared")
             colors_clear = count_pocket_icon_pixels(png_clear)
-            assert colors_clear["total_lit"] == 0, f"Threat icon was not cleared on all-clear: {colors_clear}"
+            assert colors_clear["total_lit"] == 0, (
+                f"Threat icon was not cleared on all-clear: {colors_clear}"
+            )
 
             results.append(
                 (
                     "cross_03_threat_types_rendering",
                     True,
-                    "All threat types (air raid, drone, missile, KAB, ballistic) render red pocket icon",
+                    "All threat types (air raid, drone, missile, KAB, ballistic, yellow drone) render correctly",
                 )
             )
         except Exception as e:
@@ -1104,12 +1339,18 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.3)
             png_p1 = await harness.capture_screenshot("cross_04_timer_preset_3m")
             assert png_p1.exists()
+            assert_matches_snapshot(
+                png_p1, "cross_04_timer_preset_3m", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
 
             # Single click cycles to preset 2 (5 min)
             await harness.inject_button("single")
             await asyncio.sleep(0.3)
             png_p2 = await harness.capture_screenshot("cross_04_timer_preset_5m")
             assert png_p2.exists()
+            assert_matches_snapshot(
+                png_p2, "cross_04_timer_preset_5m", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
 
             # Long click cancels arming back to clock
             await harness.inject_button("long")
@@ -1157,6 +1398,8 @@ async def run_test_suite() -> bool:
         # Cross Test 6: Morning Weather Auto-Opened on Alarm Dismiss
         print("\n--- Cross Test 6: Morning Weather Auto-Opened on Alarm Dismiss ---")
         try:
+            await harness.simulate_alarm(enabled=True, hour=7, minute=30)
+            await asyncio.sleep(0.2)
             await harness.ring_alarm()
             await harness.wait_alarm_state("ringing")
 
@@ -1167,6 +1410,9 @@ async def run_test_suite() -> bool:
             assert (await harness.get_arbiter_context()) == "modal_weather"
             png_morn_weather = await harness.capture_screenshot("cross_06_morning_weather")
             assert png_morn_weather.exists() and png_morn_weather.stat().st_size > 1000
+            assert_matches_snapshot(
+                png_morn_weather, "cross_06_morning_weather", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
 
             # Single click in weather returns to clock
             await harness.inject_button("single")
@@ -1184,6 +1430,7 @@ async def run_test_suite() -> bool:
             results.append(("cross_06_alarm_dismiss_opens_weather", False, str(e)))
         finally:
             await harness.dismiss_alarm()
+            await harness.simulate_alarm(enabled=False, hour=7, minute=30)
             if (await harness.get_arbiter_context()) == "modal_weather":
                 await harness.inject_button("single")
             await asyncio.sleep(0.3)
@@ -1199,6 +1446,7 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("boot_01_no_net")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(png, "boot_01_no_net", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
             results.append(
                 (
                     "boot_01_no_net",
@@ -1216,6 +1464,7 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("boot_02_no_time")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(png, "boot_02_no_time", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
             results.append(
                 (
                     "boot_02_no_time",
@@ -1234,6 +1483,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("boot_03_time_synced")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "boot_03_time_synced", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "boot_03_time_synced",
@@ -1252,6 +1504,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(0.5)
             png = await harness.capture_screenshot("boot_04_reboot_resync")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "boot_04_reboot_resync", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "boot_04_reboot_resync",
@@ -1272,6 +1527,9 @@ async def run_test_suite() -> bool:
             await asyncio.sleep(1.5)
             png = await harness.capture_screenshot("boot_05_cold_boot_process")
             assert png.exists() and png.stat().st_size > 1000
+            assert_matches_snapshot(
+                png, "boot_05_cold_boot_process", snapshots_dir=STANDALONE_SNAPSHOTS_DIR
+            )
             results.append(
                 (
                     "boot_05_cold_boot_process",

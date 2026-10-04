@@ -1,6 +1,6 @@
 [project]
 name = "htram-esphome"
-version = "0.1.0"
+version = "2.0.0"
 description = "Custom firmware for the Honeywell HTRAM: ESPHome on the ESP32, bare-metal on the GD32"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,6 +25,8 @@ dev = [
     # Testing frameworks and coverage
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
+    "pytest-xdist>=3.8.0",
+    "playwright>=1.50.0",
     "hypothesis>=6.100.0",
     "gcovr>=7.0",
     # Linters and static analysis
@@ -37,7 +39,8 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests/tools", "tests/esphome_config"]
+testpaths = ["tests/tools", "tests/esphome_config", "tests/standalone", "tests/e2e"]
+addopts = "-n auto --dist=loadfile"
 
 [tool.ruff]
 line-length = 100
