@@ -1333,10 +1333,50 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         if (d.new_version) {
           document.getElementById('update-banner').style.display = 'block';
           document.getElementById('update-text').textContent = 'Доступна нова версія: ' + d.new_version;
+        } else if (d.version && !window._checkedGithubRelease) {
+          window._checkedGithubRelease = true;
+          checkGithubRelease(d.version, false);
         }
 
       } catch (e) {
         console.error('Fetch status error:', e);
+      }
+    }
+
+    function isNewerVersion(latest, current) {
+      if (!latest || !current) return false;
+      const parse = v => String(v).replace(/^v/, '').split('.').map(x => parseInt(x, 10) || 0);
+      const l = parse(latest);
+      const c = parse(current);
+      for (let i = 0; i < Math.max(l.length, c.length); i++) {
+        const lp = l[i] || 0;
+        const cp = c[i] || 0;
+        if (lp > cp) return true;
+        if (lp < cp) return false;
+      }
+      return false;
+    }
+
+    async function checkGithubRelease(currentVer, showFeedback = false) {
+      try {
+        const resp = await fetch('https://api.github.com/repos/reidMaks/htram-esphome/releases/latest', {
+          headers: { 'Accept': 'application/vnd.github.v3+json' }
+        });
+        if (!resp.ok) {
+          if (showFeedback) showToast('Не вдалося перевірити GitHub');
+          return;
+        }
+        const rel = await resp.json();
+        const latestTag = rel.tag_name || '';
+        if (latestTag && isNewerVersion(latestTag, currentVer)) {
+          document.getElementById('update-banner').style.display = 'block';
+          document.getElementById('update-text').textContent = 'Доступна нова версія: ' + latestTag;
+          if (showFeedback) showToast('Знайдено нову версію ' + latestTag);
+        } else if (showFeedback) {
+          showToast('У вас встановлено найновішу версію');
+        }
+      } catch (err) {
+        if (showFeedback) showToast('Помилка перевірки оновлень');
       }
     }
 
@@ -1410,11 +1450,13 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           document.getElementById('update-banner').style.display = 'block';
           document.getElementById('update-text').textContent = 'Доступна нова версія: ' + d.new_version;
           showToast('Знайдено нову версію ' + d.new_version);
-        } else {
-          showToast('У вас встановлено найновішу версію');
+          return;
         }
+        const cur = d.current_version || currentSettings.version || document.getElementById('lbl-version').textContent;
+        await checkGithubRelease(cur, true);
       } catch (e) {
-        showToast('Помилка перевірки оновлень');
+        const cur = currentSettings.version || document.getElementById('lbl-version').textContent;
+        await checkGithubRelease(cur, true);
       }
     }
 

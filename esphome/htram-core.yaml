@@ -8,7 +8,7 @@ substitutions:
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  firmware_version: "2.0.0"
+  firmware_version: "2.1.0"
 
 packages:
   ui: !include core-ui.yaml
@@ -151,6 +151,7 @@ htram_arbiter:
             id(ap_manual) = true;
             id(ap_page) ^= 1;
             id(face_state) = -1;
+            lv_obj_invalidate(lv_screen_active());
         - script.execute: refresh_face
     - event: button_quadruple
       context: modal_ap

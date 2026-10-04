@@ -231,6 +231,7 @@ htram_arbiter:
             id(ap_manual) = true;
             id(ap_page) ^= 1;
             id(face_state) = -1;
+            lv_obj_invalidate(lv_screen_active());
         - script.execute: refresh_face
     - event: button_quadruple
       context: modal_ap

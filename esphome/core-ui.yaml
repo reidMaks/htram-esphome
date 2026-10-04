@@ -487,10 +487,12 @@ interval:
           static bool boot_synced = false;
           if (!boot_synced && millis() > 1500) {
             boot_synced = true;
-            last_min = -1;
-            id(face_state) = -1;
-            id(refresh_face).execute();
-            lv_obj_invalidate(lv_screen_active());
+            if (id(htram_arbiter_hub)->get_screen_mode() == 0) {
+              last_min = -1;
+              id(face_state) = -1;
+              id(refresh_face).execute();
+              lv_obj_invalidate(lv_screen_active());
+            }
           }
 
           // React immediately when captive portal / fallback AP starts or ends
