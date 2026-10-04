@@ -171,11 +171,11 @@ class StandaloneSimHarness:
     def inject_button(self, action: str) -> None:
         self.call_service("inject_button", {"action": action})
 
-    def capture_screenshot(self, name: str) -> Path:
-        out_dir = REPO_ROOT / "docs/screenshots"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ppm_path = out_dir / f"{name}.ppm"
-        png_path = out_dir / f"{name}.png"
+    def capture_screenshot(self, name: str, out_dir: Path | None = None) -> Path:
+        target_dir = out_dir or (REPO_ROOT / "docs/screenshots")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        ppm_path = target_dir / f"{name}.ppm"
+        png_path = target_dir / f"{name}.png"
         if ppm_path.exists():
             ppm_path.unlink()
         self.call_service("take_screenshot", {"filename": str(ppm_path.resolve())})
