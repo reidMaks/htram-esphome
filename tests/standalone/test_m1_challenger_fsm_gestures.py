@@ -11,7 +11,9 @@ Verifies:
 from __future__ import annotations
 
 import re
+import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -325,18 +327,20 @@ def test_live_simulator_ap_mode_and_gestures_e2e():
         time.sleep(0.5)
 
         # 2. Capture screenshot of AP Page 0 (QR code) and assert against golden snapshot
-        png1 = sim.capture_screenshot("live_sim_ap_01_qr_card")
-        assert_matches_snapshot(png1, "ap_01_qr_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_dir = Path(tmpdir)
+            png1 = sim.capture_screenshot("live_sim_ap_01_qr_card", out_dir=tmp_dir)
+            assert_matches_snapshot(png1, "ap_01_qr_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
 
-        # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
-        sim.inject_button("single")
-        time.sleep(0.5)
-        assert sim.states.get("Arbiter Context") == "modal_ap", (
-            "Context must remain modal_ap during single-click"
-        )
+            # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
+            sim.inject_button("single")
+            time.sleep(0.5)
+            assert sim.states.get("Arbiter Context") == "modal_ap", (
+                "Context must remain modal_ap during single-click"
+            )
 
-        png2 = sim.capture_screenshot("live_sim_ap_02_info_card")
-        assert_matches_snapshot(png2, "ap_02_info_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
+            png2 = sim.capture_screenshot("live_sim_ap_02_info_card", out_dir=tmp_dir)
+            assert_matches_snapshot(png2, "ap_02_info_card", snapshots_dir=STANDALONE_SNAPSHOTS_DIR)
 
         # 4. Dismiss modal_ap back to Clock via quadruple click (symmetrical exit)
         sim.inject_button("quadruple")
