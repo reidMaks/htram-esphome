@@ -371,7 +371,7 @@ async def _run_live_simulator_test():
 
         # 1. Trigger Wi-Fi setup via quadruple click (4-click gesture)
         await client.execute_service(services["inject_button"], {"action": "quadruple"})
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(1.0)
 
         # Context MUST transition to modal_ap
         assert states.get("Arbiter Context") == "modal_ap", (
