@@ -79,6 +79,7 @@ wifi:
   reboot_timeout: 0s
   ap:
     ssid: "HTRAM Setup"
+    ap_timeout: 15s
   on_connect:
     then:
       - script.execute: refresh_pocket

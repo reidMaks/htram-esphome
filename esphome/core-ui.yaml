@@ -493,6 +493,22 @@ interval:
             lv_obj_invalidate(lv_screen_active());
           }
 
+          // React immediately when captive portal / fallback AP starts or ends
+          static bool last_ap_active = false;
+          #ifdef USE_CAPTIVE_PORTAL
+          const bool cur_ap = (captive_portal::global_captive_portal != nullptr &&
+                               captive_portal::global_captive_portal->is_active()) ||
+                              (id(sim_override_ap) != -1 && id(sim_override_ap) == 1);
+          #else
+          const bool cur_ap = (id(sim_override_ap) != -1 && id(sim_override_ap) == 1);
+          #endif
+          if (cur_ap != last_ap_active) {
+            last_ap_active = cur_ap;
+            id(face_state) = -1;
+            id(refresh_face).execute();
+            lv_obj_invalidate(lv_screen_active());
+          }
+
   - interval: ${ap_flip_interval}
     then:
       # Flips the AP face between the QR and the typed credentials,
