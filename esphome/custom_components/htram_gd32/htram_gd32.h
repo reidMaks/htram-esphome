@@ -80,7 +80,9 @@ enum FlashAssetId : uint16_t {
   ASSET_ID_COMFORT_MOLD_STEM = 42,
   ASSET_ID_COMFORT_MOLD_CAP = 43,
   ASSET_ID_COMFORT_MOLD_SPOTS = 44,
-  ASSET_ID_COUNT = 45
+  ASSET_ID_NO_NET = 45,
+  ASSET_ID_NO_TIME = 46,
+  ASSET_ID_COUNT = 47
 };
 
 struct FlashAssetMeta {
@@ -134,6 +136,8 @@ static constexpr FlashAssetMeta FLASH_ASSET_METAS[ASSET_ID_COUNT] = {
   {72, 72},   // 42: ASSET_ID_COMFORT_MOLD_STEM
   {72, 72},   // 43: ASSET_ID_COMFORT_MOLD_CAP
   {72, 72},   // 44: ASSET_ID_COMFORT_MOLD_SPOTS
+  {20, 20},   // 45: ASSET_ID_NO_NET
+  {20, 20},   // 46: ASSET_ID_NO_TIME
 };
 
 size_t encode_tga_rle_rgb565(const uint16_t *pixels, size_t num_pixels, uint8_t *out, size_t max_out);

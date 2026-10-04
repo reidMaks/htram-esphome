@@ -103,6 +103,10 @@ globals:
     type: int
     restore_value: false
     initial_value: "-1"
+  - id: pocket_warn_asset
+    type: int
+    restore_value: false
+    initial_value: "-1"
 
 script:
   # Extension point: updated by active face (e.g. face_clock)
@@ -113,7 +117,14 @@ script:
   # Extension point: called after LVGL finishes rendering and flushing all dirty areas to the screen
   - id: on_screen_drawn
     mode: restart
-    then: []
+    then:
+      - lambda: |-
+          if (id(htram_arbiter_hub)->get_screen_mode() == 0 && id(face_state) == 0 && !id(slot_hold)) {
+            if (id(pocket_warn_asset) >= 0) {
+              id(htram_core)->send_draw_cached_asset(
+                  (uint16_t) id(pocket_warn_asset), 16, 12, Color(0xFF, 0x9E, 0x3D), Color(0, 0, 0), 1);
+            }
+          }
 
   # One caption line, three facts, rotating every 7 s.
   # Which unit am I looking at? Triple-click and the caption says so for a few
@@ -130,6 +141,10 @@ script:
           id(slot_hold) = true;
           id(htram_arbiter_hub)->request_screen(3, "overlay");
           id(face_state) = -1;
+          if (id(pocket_warn_asset) >= 0) {
+            id(htram_core)->send_clear_cached_asset((uint16_t) id(pocket_warn_asset), 16, 12);
+            id(pocket_warn_asset) = -1;
+          }
           std::string s = esphome::get_mac_address().substr(6);
           lv_label_set_text(id(ui_devid), s.c_str());
           std::string ip = id(wifi_ip).state;
@@ -210,6 +225,10 @@ script:
           const int prev_face = id(face_state);
           if (want == prev_face) return;
           id(face_state) = want;
+          if (want != 0 && id(pocket_warn_asset) >= 0) {
+            id(htram_core)->send_clear_cached_asset((uint16_t) id(pocket_warn_asset), 16, 12);
+            id(pocket_warn_asset) = -1;
+          }
           if (prev_face == 4 && want != 4) {
             lv_obj_invalidate(id(ui_root));
           }
@@ -403,7 +422,13 @@ script:
     mode: restart
     then:
       - lambda: |-
-          if (id(htram_arbiter_hub)->get_screen_mode() != 0) return;
+          if (id(htram_arbiter_hub)->get_screen_mode() != 0 || id(face_state) != 0 || id(slot_hold)) {
+            if (id(pocket_warn_asset) >= 0) {
+              id(htram_core)->send_clear_cached_asset((uint16_t) id(pocket_warn_asset), 16, 12);
+              id(pocket_warn_asset) = -1;
+            }
+            return;
+          }
 
           #ifdef USE_WIFI
           const bool real_net = (wifi::global_wifi_component != nullptr) && wifi::global_wifi_component->is_connected();
@@ -417,7 +442,7 @@ script:
                                       (::time(nullptr) > 1700000000);
           const bool have_time = (id(sim_override_time) != -1) ? (id(sim_override_time) == 1) : real_have_time;
 
-          // The pocket warning ! signals strictly Wi-Fi disconnection or invalid NTP time, never HA status.
+          // The pocket warning signals strictly Wi-Fi disconnection or invalid NTP time, never HA status.
           const bool warn = !net || !have_time;
           const bool on_batt = !id(sensor_usb).state &&
                                !isnan(id(sensor_batt_level).state);
@@ -426,7 +451,25 @@ script:
                    (int) net, (int) have_time, (int) id(sensor_usb).state,
                    id(sensor_batt_level).state, (int) warn, (int) on_batt);
 
-          lv_label_set_text(id(ui_pocket), warn ? "!" : "");
+          int want_asset = -1;
+          if (!net) {
+            want_asset = htram_gd32::ASSET_ID_NO_NET;
+          } else if (!have_time) {
+            want_asset = htram_gd32::ASSET_ID_NO_TIME;
+          }
+
+          if (want_asset != id(pocket_warn_asset)) {
+            if (id(pocket_warn_asset) >= 0) {
+              id(htram_core)->send_clear_cached_asset((uint16_t) id(pocket_warn_asset), 16, 12);
+            }
+            id(pocket_warn_asset) = want_asset;
+            if (want_asset >= 0) {
+              id(htram_core)->send_draw_cached_asset(
+                  (uint16_t) want_asset, 16, 12, Color(0xFF, 0x9E, 0x3D), Color(0, 0, 0), 1);
+            }
+          }
+
+          lv_label_set_text(id(ui_pocket), "");
 
           lv_obj_t *const batt[3] = {id(ui_batt_body), id(ui_batt_nub), id(ui_batt_fill)};
           for (int i = 0; i < 3; i++) {
