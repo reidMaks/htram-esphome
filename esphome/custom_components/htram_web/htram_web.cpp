@@ -68,6 +68,38 @@ void HtramWebComponent::sync_to_system() {
   this->trigger_save_settings(this->region_, this->lat_, this->lon_, this->city_);
 }
 
+void save_permanent_wifi(const std::string &ssid, const std::string &password) {
+  if (ssid.empty()) return;
+  HtramPermanentWifi w{};
+  w.magic = WIFI_PERM_MAGIC;
+  strncpy(w.ssid, ssid.c_str(), sizeof(w.ssid) - 1);
+  strncpy(w.password, password.c_str(), sizeof(w.password) - 1);
+  ESPPreferenceObject pref = global_preferences->make_preference<HtramPermanentWifi>(fnv1_hash("htram_wifi_perm_v1"));
+  if (pref.save(&w)) {
+    global_preferences->sync();
+    ESP_LOGI(TAG, "Permanent Wi-Fi credentials saved: SSID='%s'", w.ssid);
+  }
+}
+
+bool restore_permanent_wifi() {
+  ESPPreferenceObject pref = global_preferences->make_preference<HtramPermanentWifi>(fnv1_hash("htram_wifi_perm_v1"));
+  HtramPermanentWifi w{};
+  if (pref.load(&w) && w.magic == WIFI_PERM_MAGIC && w.ssid[0] != '\0') {
+    ESP_LOGI(TAG, "Restoring permanent Wi-Fi credentials from NVS: SSID='%s'", w.ssid);
+#ifdef USE_WIFI
+    if (wifi::global_wifi_component != nullptr) {
+      wifi::WiFiAP sta{};
+      sta.set_ssid(w.ssid);
+      sta.set_password(w.password);
+      wifi::global_wifi_component->set_sta(sta);
+      wifi::global_wifi_component->save_wifi_sta(w.ssid, w.password);
+      return true;
+    }
+#endif
+  }
+  return false;
+}
+
 void HtramWebComponent::setup() {
   this->load_preferences();
 #ifdef HTRAM_WEB_ENABLED
@@ -468,6 +500,7 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
     request->send(200, "application/json", "{\"result\":\"rebooting\"}");
 
     this->parent_->defer_action([new_ssid, new_password]() {
+      save_permanent_wifi(new_ssid, new_password);
       #ifdef USE_WIFI
       if (wifi::global_wifi_component != nullptr) {
         wifi::global_wifi_component->save_wifi_sta(new_ssid.c_str(), new_password.c_str());

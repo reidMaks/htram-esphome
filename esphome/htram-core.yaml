@@ -27,6 +27,8 @@ esphome:
   on_boot:
     - priority: 600
       then:
+        - lambda: |-
+            esphome::htram_web::restore_permanent_wifi();
         - text_sensor.template.publish:
             id: device_id
             state: !lambda "return esphome::get_mac_address().substr(6);"
@@ -53,7 +55,9 @@ logger:
   baud_rate: 115200
 
 http_request:
-  timeout: 10s
+  timeout: 30s
+  buffer_size_rx: 4096
+  buffer_size_tx: 4096
 
 ota:
   - platform: http_request

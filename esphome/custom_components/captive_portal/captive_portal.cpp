@@ -4,12 +4,32 @@
 #include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/string_ref.h"
+#include "esphome/core/preferences.h"
 #include "esphome/components/wifi/wifi_component.h"
 #include "captive_index.h"
 
 namespace esphome::captive_portal {
 
 static const char *const TAG = "captive_portal";
+
+struct PermanentWifiCredentials {
+  uint32_t magic;      // 0x57465354 ('WFST')
+  char ssid[33];
+  char password[65];
+};
+
+static void save_permanent_wifi_settings(const std::string &ssid, const std::string &password) {
+  if (ssid.empty()) return;
+  PermanentWifiCredentials creds{};
+  creds.magic = 0x57465354;
+  strncpy(creds.ssid, ssid.c_str(), sizeof(creds.ssid) - 1);
+  strncpy(creds.password, password.c_str(), sizeof(creds.password) - 1);
+  ESPPreferenceObject pref = global_preferences->make_preference<PermanentWifiCredentials>(fnv1_hash("htram_wifi_perm_v1"));
+  if (pref.save(&creds)) {
+    global_preferences->sync();
+    ESP_LOGI(TAG, "Permanent Wi-Fi credentials saved: SSID='%s'", creds.ssid);
+  }
+}
 
 void CaptivePortal::handle_config(AsyncWebServerRequest *request) {
   static uint32_t last_scan_trigger = 0;
@@ -108,10 +128,12 @@ static const char WIFISAVE_HTML[] PROGMEM =
 
 #ifdef USE_ESP8266
   // ESP8266 is single-threaded, call directly
+  save_permanent_wifi_settings(ssid, psk);
   wifi::global_wifi_component->save_wifi_sta(ssid.c_str(), psk.c_str());
 #else
   // Defer save by 1200ms to allow HTTP response and TCP FIN/ACK to transmit before Wi-Fi radio changes channel
   this->set_timeout("wifisave", 1200, [ssid, psk]() {
+    save_permanent_wifi_settings(ssid, psk);
     wifi::global_wifi_component->save_wifi_sta(ssid.c_str(), psk.c_str());
   });
 #endif

@@ -24,7 +24,17 @@ struct HtramWebSettings {
   char city[64];       // UTF-8 settlement name null-terminated
 };
 
+struct HtramPermanentWifi {
+  uint32_t magic;      // 0x57465354 ('WFST')
+  char ssid[33];
+  char password[65];
+};
+
 static constexpr uint32_t SETTINGS_MAGIC = 0x48545232;
+static constexpr uint32_t WIFI_PERM_MAGIC = 0x57465354;
+
+void save_permanent_wifi(const std::string &ssid, const std::string &password);
+bool restore_permanent_wifi();
 
 class HtramWebComponent : public Component {
  public:
