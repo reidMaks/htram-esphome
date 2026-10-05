@@ -60,6 +60,19 @@ For individual devices:
 make ota-esp DEVICE=office     # or bedroom, living, <ip>
 ```
 
+## Public Releases & 1-Click Update
+
+When publishing firmware for users to download and install, do **NOT** flash physical devices manually one by one. Follow the standardized release lifecycle:
+1. Increment `firmware_version` in `esphome/htram-core.yaml` and `esphome/htram.yaml`.
+2. Increment `GD32_FW_VERSION` in `firmware/gd32/inc/protocol.h` (if GD32 changed).
+3. Document changes in `docs/RELEASE_NOTES_v<version>.md`.
+4. Validate with `make build-gd32`, `make test-gd32`, `make lint`, and `make test`.
+5. Merge into `main`, tag `v<version>`, and push (`git push origin main && git push origin v<version>`).
+6. GitHub Actions compiles `htram-standalone.bin`, `gd32_firmware.bin`, and `flash_assets.bin` and publishes the GitHub Release.
+7. End-user devices discover the update and install it via the web interface 1-click update button (**«Оновити все»**).
+
+See the dedicated skill **`htram-release`** (`.agents/skills/htram-release/SKILL.md`) and `docs/RELEASE_LIFECYCLE.md` for the full checklist.
+
 ## SPI Flash Detection After Reboot
 
 Immediately following an ESP32 reboot, `spi_flash_status_` is initialized as empty.

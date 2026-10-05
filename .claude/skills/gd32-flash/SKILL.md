@@ -87,7 +87,18 @@ from `esphome/secrets.yaml` (`web_username` / `web_password`). If overriding:
 
 ---
 
-### Path 2: SWD (Hardware Bench / Recovery)
+### Path 2: Automated GitHub Releases & 1-Click Update (Production Path)
+
+For production updates delivered to users without local command line tools:
+1. Increment `#define GD32_FW_VERSION` in `firmware/gd32/inc/protocol.h` (e.g. `0x0132` $\rightarrow$ `v1.3.2`).
+2. Push a release tag `v*` to GitHub (`git push origin main && git push origin v2.1.3`).
+3. GitHub Actions (`.github/workflows/gd32.yml`) cross-compiles `gd32_firmware.bin`, packages and validates `flash_assets.bin`, computes SHA256 / MD5 checksums, and attaches them to the release.
+4. Physical devices discover the release and execute a full 1-click update via the web UI, staging the GD32 binary to SPI Flash Slot 3 with autonomous hardware rollback protection.
+5. See the dedicated skill **`htram-release`** (`.agents/skills/htram-release/SKILL.md`) and `docs/RELEASE_LIFECYCLE.md` for the complete procedure.
+
+---
+
+### Path 3: SWD (Hardware Bench / Recovery)
 
 Used when OTA cannot be reached or the GD32 requires unbricking. Requires Raspberry Pi
 Pico debugprobe connected over SWD:

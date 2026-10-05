@@ -70,7 +70,107 @@ Because HTRAM is a dual-chip system with coprocessor firmware and cached SPI Fla
 
 ---
 
-## 2. Dual-Track Continuous Integration
+## 2. Step-by-Step Release Procedure (Operator & Agent Guide)
+
+This section provides the exact, reproducible checklist for creating and publishing a public HTRAM release so that it is compiled by GitHub Actions, populated with dual-chip binaries and graphic assets, and made available to physical devices for 1-click update.
+
+### 2.1 Release Workflow
+
+```mermaid
+flowchart TD
+    A["1. Bump Versions<br>(esphome/htram-core.yaml, protocol.h)"] --> B["2. Write Release Notes<br>(docs/RELEASE_NOTES_vX.Y.Z.md)"]
+    B --> C["3. Full Local Verification<br>(make build-gd32, make test-gd32, make lint, make test)"]
+    C --> D["4. Merge & Tag<br>(git merge --no-ff, git tag -a vX.Y.Z)"]
+    D --> E["5. Push to GitHub<br>(git push origin main && git push origin vX.Y.Z)"]
+    E --> F["6. Monitor GitHub Actions<br>(GD32 CI & ESPHome CI)"]
+    F --> G["7. Verify GitHub Release<br>(htram-standalone.bin, gd32_firmware.bin, flash_assets.bin)"]
+    G --> H["8. Fleet Verification<br>(Web UI 1-Click Update on Physical Devices)"]
+```
+
+### 2.2 Release Checklist
+
+#### Step 1: Version Bumps
+- **ESPHome Firmware**: Increment `firmware_version` in:
+  - `esphome/htram-core.yaml`: `firmware_version: "X.Y.Z"`
+  - `esphome/htram.yaml`: `firmware_version: "X.Y.Z"`
+- **GD32 Coprocessor Firmware** (if `firmware/gd32/` changed):
+  - `firmware/gd32/inc/protocol.h`:
+    `#define GD32_FW_VERSION 0x0132 /* v1.3.2 */`
+    *(Note: Major byte `>> 8`, Minor nibble `>> 4`, Patch nibble `& 0x0F`)*
+- **Graphic Assets Container** (if icons changed):
+  - Execute: `make pack-assets validate-assets`
+
+#### Step 2: Release Notes Documentation
+- Create `docs/RELEASE_NOTES_v<X.Y.Z>.md` with:
+  - Ukrainian release summary (`Огляд релізу`)
+  - Key features and bug fixes (`Основні зміни`)
+  - Component versions table (`Підвищення версій компонентів`)
+  - Artifact checksums note (`Хеш-суми бінарних файлів`)
+
+#### Step 3: Local Verification & Pre-flight Testing
+Execute the full test and lint suite locally before committing:
+```bash
+make build-gd32   # Verify Flash (<64KB) and SRAM (<8KB) limits
+make test-gd32    # Run all GD32 C99 unit tests (protocol, sensors, HAL, flash)
+make lint         # Run fanalyzer, yamllint, ruff, mypy
+make test         # Run complete 132+ test suite
+```
+
+#### Step 4: Branching, Merging & Tagging
+1. Commit changes on the feature or fix branch:
+   ```bash
+   git add esphome/htram-core.yaml esphome/htram.yaml firmware/gd32/inc/protocol.h docs/RELEASE_NOTES_v<X.Y.Z>.md
+   git commit -m "feat(scope): concise description (v<X.Y.Z>)"
+   ```
+2. Checkout `main` and merge with `--no-ff`:
+   ```bash
+   git checkout main
+   git merge --no-ff -m "Merge branch '<feature>' into main: v<X.Y.Z> release" <feature>
+   ```
+3. Create an annotated Git tag:
+   ```bash
+   git tag -a v<X.Y.Z> -m "Release v<X.Y.Z>: <summary>"
+   ```
+4. Push `main` and the tag together:
+   ```bash
+   git push origin main && git push origin v<X.Y.Z>
+   ```
+
+#### Step 5: Automated GitHub Actions CI & Artifact Validation
+GitHub Actions automatically builds and publishes the release assets.
+Mandatory artifacts that must be attached to the release:
+- `htram-standalone.bin` (ESPHome OTA image, ~1.4 MB)
+- `gd32_firmware.bin` (GD32 coprocessor firmware, ~16 KB)
+- `flash_assets.bin` (SPI Flash vector assets container, ~20 KB)
+- Associated `.md5` and `.sha256` checksums for all three binaries.
+
+Verify using Python API:
+```bash
+python3 -c "
+import urllib.request, json
+url = 'https://api.github.com/repos/reidMaks/htram-esphome/releases/tags/v<X.Y.Z>'
+req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+with urllib.request.urlopen(req) as resp:
+    data = json.loads(resp.read().decode())
+    print('Release:', data['name'])
+    for a in data.get('assets', []):
+        print(f\"  {a['name']}: {a['size']} bytes\")
+"
+```
+
+#### Step 6: End-User 1-Click Update Verification
+Physical devices automatically poll GitHub Releases. In the web interface (`http://<ip>/`):
+1. The update notification appears: "Доступне оновлення: **v<X.Y.Z>**".
+2. Clicking **«Оновити все»** executes:
+   - NVS Wi-Fi credential persistence (`htram_wifi_perm_v1`).
+   - GD32 staging to SPI Flash Block 3 and GD32 reflash.
+   - Readable fallback diagnostic screen while ESP32 reboots.
+   - ESP32 OTA download and partition swap.
+   - Clean boot, Wi-Fi reconnection, and boot confirmation.
+
+---
+
+## 3. Dual-Track Continuous Integration
 
 HTRAM employs two parallel GitHub Actions CI workflows designed to validate the two distinct microcontrollers and prevent regressions before any code merges into `main`.
 
@@ -120,7 +220,7 @@ HTRAM employs two parallel GitHub Actions CI workflows designed to validate the 
 
 ---
 
-### 2.1 Track 1: ESPHome & Core CI
+### 3.1 Track 1: ESPHome & Core CI
 Defined in `.github/workflows/esphome.yml`, Track 1 runs on all pull requests and pushes to `main`:
 
 #### 2.1.1 Linters & Static Analysis (`make lint`)
@@ -154,7 +254,7 @@ Executes the LVGL simulator test harness, simulating real time, hardware button 
 
 ---
 
-### 2.2 Track 2: GD32 Firmware CI
+### 3.2 Track 2: GD32 Firmware CI
 Defined in `.github/workflows/gd32.yml`, Track 2 handles the bare-metal ARM Cortex-M0 coprocessor:
 1. **Reproducible Cross-Compilation:** Compiles `firmware/gd32` using `arm-none-eabi-gcc`. Uses commit date (`BUILD_EPOCH`) to ensure byte-for-byte reproducibility.
 2. **Size Enforcement:** Asserts the compiled binary fits comfortably within the 64 KB GD32 flash bank.
@@ -166,7 +266,7 @@ Defined in `.github/workflows/gd32.yml`, Track 2 handles the bare-metal ARM Cort
 
 ---
 
-## 3. 1-Click OTA Update Architecture
+## 4. 1-Click OTA Update Architecture
 
 HTRAM features an autonomous over-the-air update system designed to allow users to update both the ESP32 and GD32 coprocessor without programming tools.
 
@@ -213,7 +313,7 @@ HTRAM features an autonomous over-the-air update system designed to allow users 
 +---------------------------------------------------------------------------------+
 ```
 
-### 3.1 Dual-Partition Rollback Mechanics
+### 4.1 Dual-Partition Rollback Mechanics
 1. **Symmetrical Partition Allocation:** The ESP32 partition table allocates two symmetrical 1.75 MB (`0x1C0000`) application partitions (`ota_0` and `ota_1`).
 2. **Rollback State Machine:**
    - After flashing, the bootloader flags the new partition as `ESP_OTA_IMG_NEW`.
@@ -223,9 +323,9 @@ HTRAM features an autonomous over-the-air update system designed to allow users 
 
 ---
 
-## 4. Hardware Flashing & Bench Recovery
+## 5. Hardware Flashing & Bench Recovery
 
-### 4.1 Fleet Operations via Makefile
+### 5.1 Fleet Operations via Makefile
 For day-to-day operations and firmware deployment across the physical device fleet, developers use standardized Makefile targets. Recognized fleet nodes:
 - `office` (`192.168.0.78` / `9436b0`)
 - `bedroom` (`192.168.0.159` / `954f48`)
@@ -254,7 +354,7 @@ make status-all
 
 ---
 
-### 4.2 Hardware Bench Setup (Raspberry Pi Pico Debugprobe)
+### 5.2 Hardware Bench Setup (Raspberry Pi Pico Debugprobe)
 When flashing bare-metal chips or developing low-level drivers, the device connects to the hardware bench:
 
 ```
@@ -281,11 +381,11 @@ python3 tools/swd/flash.py --rdp-unlock
 
 ---
 
-### 4.3 Emergency Unbricking: Rescue Under Reset
-#### 4.3.1 The Failure Mode
+### 5.3 Emergency Unbricking: Rescue Under Reset
+#### 5.3.1 The Failure Mode
 During experimental development or interrupted flashing, garbage written to the GD32 flash vector table can cause the MCU to execute random opcodes on reset. The CPU frequently reconfigures pins `PA13` and `PA14` as GPIO outputs, disabling the SWD debug peripheral within 2–5 ms of power-on. In this state, standard debuggers report `No ACK` or `Target not found`.
 
-#### 4.3.2 Hardware Rescue Procedure (`rescue_under_reset.py`)
+#### 5.3.2 Hardware Rescue Procedure (`rescue_under_reset.py`)
 To recover a locked chip without unsoldering:
 1. **Connect Debugprobe:** Wire the Pico probe to SWDIO, SWCLK, GND, and 3.3V.
 2. **Ground NRST:** Connect a pair of tweezers or a jumper wire from **TP18 (NRST)** to ground (**GND**). While NRST is held low, the ARM Cortex-M core executes nothing, keeping the SWD pins in their default debug function.
@@ -308,7 +408,7 @@ To recover a locked chip without unsoldering:
 
 ---
 
-## 5. Document Metadata & Sign-off
+## 6. Document Metadata & Sign-off
 
 - **Author:** Teamwork Systems Engineering (M5 Documentation Worker)
 - **Approved by:** Project Technical Lead & Antigravity Orchestrator
