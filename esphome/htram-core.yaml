@@ -8,7 +8,7 @@ substitutions:
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  firmware_version: "2.1.1"
+  firmware_version: "2.1.2"
 
 packages:
   ui: !include core-ui.yaml
@@ -88,6 +88,8 @@ wifi:
     ap_timeout: 15s
   on_connect:
     then:
+      - lambda: |-
+          esphome::htram_web::auto_save_active_wifi();
       - script.execute: refresh_pocket
       - script.execute: refresh_face
   on_disconnect:
@@ -327,6 +329,7 @@ script:
     mode: single
     then:
       - lambda: |-
+          esphome::htram_web::auto_save_active_wifi();
           ESP_LOGI("ota", "Starting full 1-click update from GitHub Releases (assets, GD32, ESP32)...");
           id(htram_arbiter_hub)->set_leds(100, "ota", 1, 1, 1, 1);
           bool allow_battery = id(htram_standalone_web)->get_ota_allow_on_battery();

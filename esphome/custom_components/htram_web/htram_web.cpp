@@ -92,12 +92,38 @@ bool restore_permanent_wifi() {
       sta.set_ssid(w.ssid);
       sta.set_password(w.password);
       wifi::global_wifi_component->set_sta(sta);
-      wifi::global_wifi_component->save_wifi_sta(w.ssid, w.password);
       return true;
     }
 #endif
   }
   return false;
+}
+
+void auto_save_active_wifi() {
+#ifdef USE_WIFI
+  if (wifi::global_wifi_component == nullptr) return;
+  if (!wifi::global_wifi_component->is_connected()) return;
+
+  wifi::WiFiAP sta = wifi::global_wifi_component->get_sta();
+  std::string ssid = sta.get_ssid().str();
+  std::string password = sta.get_password().str();
+
+  if (ssid.empty() || ssid == "YourWiFi") return;
+
+  ESPPreferenceObject pref = global_preferences->make_preference<HtramPermanentWifi>(fnv1_hash("htram_wifi_perm_v1"));
+  HtramPermanentWifi w{};
+  bool has_nvs = pref.load(&w) && w.magic == WIFI_PERM_MAGIC && w.ssid[0] != '\0';
+  if (has_nvs) {
+    if (strncmp(w.ssid, ssid.c_str(), sizeof(w.ssid)) == 0) {
+      if (password.empty() || strncmp(w.password, password.c_str(), sizeof(w.password)) == 0) {
+        return;
+      }
+    }
+  }
+
+  save_permanent_wifi(ssid, password);
+  ESP_LOGI(TAG, "Auto-persisted active Wi-Fi credentials to NVS: SSID='%s'", ssid.c_str());
+#endif
 }
 
 void HtramWebComponent::setup() {
