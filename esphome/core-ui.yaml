@@ -292,6 +292,9 @@ script:
               return;
             }
 
+            lv_obj_add_flag(id(ui_ap_card), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_ap_qr), LV_OBJ_FLAG_HIDDEN);
+
             if (has_ip) {
               lv_label_set_text(id(ui_msg), "htram.local");
               lv_obj_align(id(ui_msg), LV_ALIGN_CENTER, 0, -30);

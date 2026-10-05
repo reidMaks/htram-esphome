@@ -35,6 +35,7 @@ static constexpr uint32_t WIFI_PERM_MAGIC = 0x57465354;
 
 void save_permanent_wifi(const std::string &ssid, const std::string &password);
 bool restore_permanent_wifi();
+void auto_save_active_wifi();
 
 class HtramWebComponent : public Component {
  public:
