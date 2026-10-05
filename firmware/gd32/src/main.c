@@ -16,10 +16,44 @@
 #include "sensors.h"
 #include "periph.h"
 #include "spi_flash.h"
+#include "flash_assets.h"
 
 #ifndef GD32_UART_BAUD
 #define GD32_UART_BAUD 921600UL
 #endif
+
+#ifdef __arm__
+extern uint32_t _ebss;
+#define GD32_RAM_USED() ((uint32_t)&_ebss - 0x20000000UL)
+#else
+#define GD32_RAM_USED() (3188UL)
+#endif
+
+/* Append src string to dst string */
+static void str_cat(char *dst, const char *src)
+{
+    while (*dst) dst++;
+    while (*src) *dst++ = *src++;
+    *dst = '\0';
+}
+
+/* Pad string with spaces up to target_len */
+static void pad_to_len(char *buf, int target_len)
+{
+    int l = 0;
+    while (buf[l]) l++;
+    while (l < target_len) {
+        buf[l++] = ' ';
+    }
+    buf[l] = '\0';
+}
+
+/* Draw aligned diagnostic row: 7-char label at x=32, 15-char value at x=88 */
+static void draw_diag_row(uint8_t y, const char *label, const char *val, uint16_t val_color)
+{
+    display_draw_string(32, y, label, COLOR_WHITE, COLOR_BLACK);
+    display_draw_string(88, y, val, val_color, COLOR_BLACK);
+}
 
 
 /* Format integer to string */
@@ -474,54 +508,174 @@ int main(void)
              * is not running either. */
             if (!local_header_drawn) {
                 local_header_drawn = 1;
-                display_draw_string(56, 30, "HTRAM GD32 1.0.0", COLOR_WHITE, COLOR_BLACK);
-                display_draw_string(48, 50, "WAITING FOR ESP32", COLOR_ORANGE, COLOR_BLACK);
+
+                /* 1. Header: Dynamic GD32 Version (y = 24) */
+                char ver_buf[24];
+                ver_buf[0] = '\0';
+                str_cat(ver_buf, "HTRAM GD32 ");
+                char num[12];
+                int_to_str((GD32_FW_VERSION >> 8) & 0xFF, num, 0);
+                str_cat(ver_buf, num);
+                str_cat(ver_buf, ".");
+                int_to_str((GD32_FW_VERSION >> 4) & 0x0F, num, 0);
+                str_cat(ver_buf, num);
+                str_cat(ver_buf, ".");
+                int_to_str(GD32_FW_VERSION & 0x0F, num, 0);
+                str_cat(ver_buf, num);
+
+                int ver_len = 0;
+                while (ver_buf[ver_len]) ver_len++;
+                uint8_t ver_x = (DISPLAY_WIDTH - (ver_len * 8)) / 2;
+                display_draw_string(ver_x, 24, ver_buf, COLOR_WHITE, COLOR_BLACK);
+
+                /* Subheader: Status (y = 40) */
+                display_draw_string(52, 40, "WAITING FOR ESP32", COLOR_ORANGE, COLOR_BLACK);
+
+                /* Divider 1 (y = 58) */
+                display_fill_rect(40, 58, 160, 1, COLOR_DARK_GRAY);
+
+                /* 2. Storage / Memory Diagnostics */
+                /* ROM Usage (y = 65) */
+                uint32_t fw_size = spi_flash_get_fw_size();
+                uint32_t fw_int = fw_size / 1024;
+                uint32_t fw_dec = ((fw_size % 1024) * 10) / 1024;
+                uint32_t fw_pct = (fw_size * 100) / 65536;
+                char row_buf[24];
+                row_buf[0] = '\0';
+                int_to_str(fw_int, num, 0);
+                str_cat(row_buf, num);
+                str_cat(row_buf, ".");
+                int_to_str(fw_dec, num, 0);
+                str_cat(row_buf, num);
+                str_cat(row_buf, "K/64K (");
+                int_to_str(fw_pct, num, 0);
+                str_cat(row_buf, num);
+                str_cat(row_buf, "%)");
+                pad_to_len(row_buf, 15);
+                draw_diag_row(65, "ROM  : ", row_buf, COLOR_CYAN);
+
+                /* RAM Usage (y = 80) */
+                uint32_t ram_used = GD32_RAM_USED();
+                uint32_t ram_int = ram_used / 1024;
+                uint32_t ram_dec = ((ram_used % 1024) * 10) / 1024;
+                uint32_t ram_pct = (ram_used * 100) / 8192;
+                row_buf[0] = '\0';
+                int_to_str(ram_int, num, 0);
+                str_cat(row_buf, num);
+                str_cat(row_buf, ".");
+                int_to_str(ram_dec, num, 0);
+                str_cat(row_buf, num);
+                str_cat(row_buf, "K/8K (");
+                int_to_str(ram_pct, num, 0);
+                str_cat(row_buf, num);
+                str_cat(row_buf, "%)");
+                pad_to_len(row_buf, 15);
+                draw_diag_row(80, "RAM  : ", row_buf, COLOR_CYAN);
+
+                /* External SPI Flash (y = 95) */
+                const spi_flash_info_t *finfo = spi_flash_get_info();
+                display_draw_string(32, 95, "SPI  : ", COLOR_WHITE, COLOR_BLACK);
+                if (finfo && finfo->is_detected) {
+                    display_draw_string(88, 95, "W25Q32 4MB ", COLOR_CYAN, COLOR_BLACK);
+                    display_draw_string(88 + 11 * 8, 95, "[OK]", COLOR_GREEN, COLOR_BLACK);
+                } else {
+                    display_draw_string(88, 95, "NOT DETECTED   ", COLOR_RED, COLOR_BLACK);
+                }
+
+                /* Graphic Assets on SPI Flash (y = 110) */
+                row_buf[0] = '\0';
+                flash_assets_header_t asst_hdr;
+                if (finfo && finfo->is_detected &&
+                    spi_flash_read_data(SPI_FLASH_ASSETS_ADDR, (uint8_t *)&asst_hdr, sizeof(asst_hdr)) == 0 &&
+                    asst_hdr.magic == FLASH_ASSETS_MAGIC) {
+                    int_to_str(asst_hdr.asset_count, num, 0);
+                    str_cat(row_buf, num);
+                    str_cat(row_buf, " ICONS (");
+                    int_to_str((asst_hdr.total_size + 1023) / 1024, num, 0);
+                    str_cat(row_buf, num);
+                    str_cat(row_buf, "K)");
+                    pad_to_len(row_buf, 15);
+                    draw_diag_row(110, "ASSET: ", row_buf, COLOR_CYAN);
+                } else {
+                    draw_diag_row(110, "ASSET: ", "NOT FOUND      ", COLOR_ORANGE);
+                }
+
+                /* Divider 2 (y = 128) */
+                display_fill_rect(32, 128, 176, 1, COLOR_DARK_GRAY);
+
+                /* Divider 3 (y = 198) */
+                display_fill_rect(40, 198, 160, 1, COLOR_DARK_GRAY);
             }
 
-            char buf[32];
+            /* Dynamic sensor telemetry & uptime (refreshed every 1000ms) */
+            char buf[24];
+            char num[12];
 
-            /* CO2 Line */
-            display_fill_rect(20, 140, 200, 16, COLOR_BLACK);
-            display_draw_string(24, 142, "CO2 :", COLOR_WHITE, COLOR_BLACK);
+            /* CO2 Line (y = 135) */
+            display_draw_string(32, 135, "CO2  : ", COLOR_WHITE, COLOR_BLACK);
             if (warmup || co2_ppm == 0) {
-                display_draw_string(80, 142, "WARMING UP...", COLOR_ORANGE, COLOR_BLACK);
+                display_draw_string(88, 135, "WARMING UP...  ", COLOR_ORANGE, COLOR_BLACK);
             } else {
-                int_to_str(co2_ppm, buf, 0);
-                display_draw_string(80, 142, buf, COLOR_GREEN, COLOR_BLACK);
-                int l = 0; while (buf[l]) l++;
-                display_draw_string(80 + l * 8 + 8, 142, "PPM", COLOR_WHITE, COLOR_BLACK);
+                buf[0] = '\0';
+                int_to_str(co2_ppm, num, 0);
+                str_cat(buf, num);
+                str_cat(buf, " PPM");
+                pad_to_len(buf, 15);
+                uint16_t co2_col = (co2_ppm < 1000) ? COLOR_GREEN :
+                                   (co2_ppm < 1500) ? COLOR_YELLOW : COLOR_RED;
+                display_draw_string(88, 135, buf, co2_col, COLOR_BLACK);
             }
 
-            /* Temp Line */
-            display_fill_rect(20, 165, 200, 16, COLOR_BLACK);
-            display_draw_string(24, 167, "TEMP:", COLOR_WHITE, COLOR_BLACK);
-            format_fixed1(temp_001c, buf, 1);
-            display_draw_string(80, 167, buf, COLOR_CYAN, COLOR_BLACK);
-            int l = 0; while (buf[l]) l++;
-            display_draw_string(80 + l * 8 + 8, 167, "C", COLOR_WHITE, COLOR_BLACK);
+            /* Temp Line (y = 150) */
+            buf[0] = '\0';
+            format_fixed1(temp_001c, num, 1);
+            str_cat(buf, num);
+            str_cat(buf, " C");
+            pad_to_len(buf, 15);
+            draw_diag_row(150, "TEMP : ", buf, COLOR_CYAN);
 
-            /* Humidity Line */
-            display_fill_rect(20, 190, 200, 16, COLOR_BLACK);
-            display_draw_string(24, 192, "HUM :", COLOR_WHITE, COLOR_BLACK);
-            format_fixed1(hum_001pct, buf, 0);
-            display_draw_string(80, 192, buf, COLOR_CYAN, COLOR_BLACK);
-            l = 0; while (buf[l]) l++;
-            display_draw_string(80 + l * 8 + 8, 192, "%RH", COLOR_WHITE, COLOR_BLACK);
+            /* Humidity Line (y = 165) */
+            buf[0] = '\0';
+            format_fixed1(hum_001pct, num, 0);
+            str_cat(buf, num);
+            str_cat(buf, " %RH");
+            pad_to_len(buf, 15);
+            draw_diag_row(165, "HUM  : ", buf, COLOR_CYAN);
 
-            /* Battery Line */
-            display_fill_rect(20, 215, 200, 16, COLOR_BLACK);
-            display_draw_string(24, 217, "BATT:", COLOR_WHITE, COLOR_BLACK);
-            int_to_str(batt_mv, buf, 0);
-            display_draw_string(80, 217, buf, COLOR_YELLOW, COLOR_BLACK);
-            int l_b = 0; while (buf[l_b]) l_b++;
-            display_draw_string(80 + l_b * 8 + 4, 217, "MV", COLOR_WHITE, COLOR_BLACK);
+            /* Battery Line (y = 180) */
+            display_draw_string(32, 180, "BATT : ", COLOR_WHITE, COLOR_BLACK);
+            buf[0] = '\0';
+            int_to_str(batt_mv, num, 0);
+            str_cat(buf, num);
+            str_cat(buf, " MV ");
+            pad_to_len(buf, 8);
+            display_draw_string(88, 180, buf, COLOR_YELLOW, COLOR_BLACK);
             if (is_charging) {
-                display_draw_string(160, 217, "[CHRG]", COLOR_GREEN, COLOR_BLACK);
+                display_draw_string(88 + 8 * 8, 180, "[CHRG] ", COLOR_GREEN, COLOR_BLACK);
             } else if (is_usb_present) {
-                display_draw_string(160, 217, "[USB ]", COLOR_CYAN, COLOR_BLACK);
+                display_draw_string(88 + 8 * 8, 180, "[USB]  ", COLOR_CYAN, COLOR_BLACK);
             } else {
-                display_draw_string(160, 217, "[BATT]", COLOR_YELLOW, COLOR_BLACK);
+                display_draw_string(88 + 8 * 8, 180, "[BATT] ", COLOR_YELLOW, COLOR_BLACK);
             }
+
+            /* Uptime Line (y = 205) */
+            uint32_t up_sec = now / 1000;
+            buf[0] = '\0';
+            str_cat(buf, "UPTIME: ");
+            int_to_str(up_sec, num, 0);
+            str_cat(buf, num);
+            str_cat(buf, "S");
+            int up_len = 0;
+            while (buf[up_len]) up_len++;
+            char centered_up[18];
+            int pad_left = (16 - up_len) / 2;
+            if (pad_left < 0) pad_left = 0;
+            int ci = 0;
+            for (int p = 0; p < pad_left; p++) centered_up[ci++] = ' ';
+            for (int p = 0; p < up_len; p++) centered_up[ci++] = buf[p];
+            while (ci < 16) centered_up[ci++] = ' ';
+            centered_up[16] = '\0';
+            display_draw_string(56, 205, centered_up, COLOR_GRAY, COLOR_BLACK);
         }
 
         /* 5ms delay per loop */
