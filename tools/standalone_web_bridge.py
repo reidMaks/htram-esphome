@@ -61,6 +61,10 @@ class StandaloneWebBridge:
             "alarm_days": [1, 2, 3, 4, 5, 6, 7],
             "silence_enabled": True,
             "brightness": 100,
+            "night_mode_enabled": True,
+            "night_start_time": "23:00",
+            "day_start_time": "07:00",
+            "night_brightness": 4,
             "led_auto": True,
             "co2_yellow": 1000,
             "co2_red": 1500,
@@ -131,6 +135,14 @@ class StandaloneWebBridge:
                         self.entity_states["silence_enabled"] = bool(val)
                     elif name == "Підстроювання температури":
                         self.entity_states["temp_trim"] = float(val)
+                    elif name in ("Нічний розклад", "Night Mode"):
+                        self.entity_states["night_mode_enabled"] = bool(val)
+                    elif name in ("Нічна яскравість", "Night Brightness"):
+                        self.entity_states["night_brightness"] = int(val)
+                    elif name in ("Початок ночі", "Night Start Time"):
+                        self.entity_states["night_start_time"] = str(val)
+                    elif name in ("Початок дня", "Day Start Time"):
+                        self.entity_states["day_start_time"] = str(val)
                     elif name == "Alert Active":
                         self.entity_states["alert_active"] = bool(val)
 

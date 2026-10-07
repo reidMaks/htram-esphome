@@ -266,6 +266,7 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
       if (name == "Будильник увімкнено" || oid == "alarm_enabled") root["alarm_enabled"] = sw->state;
       else if (name == "Хвилина мовчання" || oid == "silence_enabled") root["silence_enabled"] = sw->state;
       else if (name == "LED Auto" || oid == "led_auto" || oid == "switch_led_auto") root["led_auto"] = sw->state;
+      else if (name == "Нічний розклад" || oid == "night_mode_enabled") root["night_mode_enabled"] = sw->state;
     }
 
     // Numbers
@@ -275,6 +276,10 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
       if (name == "Screen Brightness" || oid == "screen_brightness") {
         if (std::isnan(num->state)) root["brightness"] = nullptr;
         else root["brightness"] = num->state;
+      }
+      else if (name == "Нічна яскравість" || oid == "night_brightness") {
+        if (std::isnan(num->state)) root["night_brightness"] = nullptr;
+        else root["night_brightness"] = num->state;
       }
       else if (name == "Підстроювання температури" || oid == "temp_trim") {
         if (std::isnan(num->state)) root["temp_trim"] = nullptr;
@@ -298,6 +303,16 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
         char time_buf[16];
         snprintf(time_buf, sizeof(time_buf), "%02d:%02d", dt->hour, dt->minute);
         root["alarm_time"] = time_buf;
+      }
+      else if (name == "Початок ночі" || oid == "night_start_time") {
+        char time_buf[16];
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d", dt->hour, dt->minute);
+        root["night_start_time"] = time_buf;
+      }
+      else if (name == "Початок дня" || oid == "day_start_time") {
+        char time_buf[16];
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d", dt->hour, dt->minute);
+        root["day_start_time"] = time_buf;
       }
     }
 
@@ -385,8 +400,20 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
         }
       }
 
+      bool has_night_mode = !root["night_mode_enabled"].isNull();
+      bool night_mode_val = has_night_mode ? root["night_mode_enabled"].as<bool>() : false;
+
+      bool has_night_bright = !root["night_brightness"].isNull();
+      float night_bright_val = has_night_bright ? root["night_brightness"].as<float>() : 4.0f;
+
+      bool has_night_start = !root["night_start_time"].isNull();
+      std::string night_start_str = has_night_start ? root["night_start_time"].as<std::string>() : "";
+
+      bool has_day_start = !root["day_start_time"].isNull();
+      std::string day_start_str = has_day_start ? root["day_start_time"].as<std::string>() : "";
+
       auto *parent = this->parent_;
-      parent->defer_action([parent, reg, lat, lon, city, geo_changed, has_alarm, alarm_val, has_silence, silence_val, has_led_auto, led_auto_val, has_bright, bright_val, has_trim, trim_val, has_co2_y, co2_y_val, has_co2_r, co2_r_val, has_alarm_time, alarm_time_str, has_alarm_days, alarm_days_val]() {
+      parent->defer_action([parent, reg, lat, lon, city, geo_changed, has_alarm, alarm_val, has_silence, silence_val, has_led_auto, led_auto_val, has_bright, bright_val, has_trim, trim_val, has_co2_y, co2_y_val, has_co2_r, co2_r_val, has_alarm_time, alarm_time_str, has_alarm_days, alarm_days_val, has_night_mode, night_mode_val, has_night_bright, night_bright_val, has_night_start, night_start_str, has_day_start, day_start_str]() {
         char id_buf[OBJECT_ID_MAX_LEN];
 
         if (geo_changed) {
@@ -408,6 +435,8 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
             if (silence_val) sw->turn_on(); else sw->turn_off();
           } else if (has_led_auto && (name == "LED Auto" || oid == "led_auto" || oid == "switch_led_auto")) {
             if (led_auto_val) sw->turn_on(); else sw->turn_off();
+          } else if (has_night_mode && (name == "Нічний розклад" || oid == "night_mode_enabled")) {
+            if (night_mode_val) sw->turn_on(); else sw->turn_off();
           }
         }
 
@@ -417,6 +446,8 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
           auto oid = num->get_object_id_to(id_buf);
           if (has_bright && (name == "Screen Brightness" || oid == "screen_brightness")) {
             num->make_call().set_value(bright_val).perform();
+          } else if (has_night_bright && (name == "Нічна яскравість" || oid == "night_brightness")) {
+            num->make_call().set_value(night_bright_val).perform();
           } else if (has_trim && (name == "Підстроювання температури" || oid == "temp_trim")) {
             num->make_call().set_value(trim_val).perform();
           } else if (has_co2_y && (name == "CO2 Yellow Threshold" || oid == "co2_thresh_yellow")) {
@@ -436,6 +467,40 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
               auto name = dt->get_name();
               auto oid = dt->get_object_id_to(id_buf);
               if (name == "Будильник" || oid == "alarm_time") {
+                auto call = dt->make_call();
+                call.set_hour((uint8_t) h);
+                call.set_minute((uint8_t) m);
+                call.perform();
+              }
+            }
+          }
+        }
+
+        // Apply to night_start_time datetime
+        if (has_night_start) {
+          int h = 23, m = 0;
+          if (sscanf(night_start_str.c_str(), "%d:%d", &h, &m) >= 2) {
+            for (auto *dt : App.get_times()) {
+              auto name = dt->get_name();
+              auto oid = dt->get_object_id_to(id_buf);
+              if (name == "Початок ночі" || oid == "night_start_time") {
+                auto call = dt->make_call();
+                call.set_hour((uint8_t) h);
+                call.set_minute((uint8_t) m);
+                call.perform();
+              }
+            }
+          }
+        }
+
+        // Apply to day_start_time datetime
+        if (has_day_start) {
+          int h = 7, m = 0;
+          if (sscanf(day_start_str.c_str(), "%d:%d", &h, &m) >= 2) {
+            for (auto *dt : App.get_times()) {
+              auto name = dt->get_name();
+              auto oid = dt->get_object_id_to(id_buf);
+              if (name == "Початок дня" || oid == "day_start_time") {
                 auto call = dt->make_call();
                 call.set_hour((uint8_t) h);
                 call.set_minute((uint8_t) m);

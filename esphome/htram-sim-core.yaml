@@ -30,6 +30,9 @@ esphome:
         - lambda: |-
             id(htram_arbiter_hub)->set_core(id(htram_core));
         - script.execute: refresh_face
+        - script.execute:
+            id: apply_scheduled_brightness
+            smooth: false
 
 host:
 
@@ -303,6 +306,14 @@ htram_arbiter:
       name: core_setup_wifi_quadruple
       then:
         - script.execute: start_wifi_setup
+    - event: time_synced
+      context: any
+      priority: 9
+      name: core_auto_brightness_on_time_sync
+      then:
+        - script.execute:
+            id: apply_scheduled_brightness
+            smooth: false
 
 time:
   - platform: host
@@ -319,6 +330,14 @@ time:
     timezone: "Europe/Kyiv"
 
 globals:
+  - id: current_backlight_val
+    type: float
+    restore_value: false
+    initial_value: "100.0"
+  - id: day_brightness
+    type: float
+    restore_value: false
+    initial_value: "100.0"
   - id: led_auto
     type: bool
     restore_value: false
@@ -331,6 +350,78 @@ globals:
 script:
   - id: refresh_leds
     then: []
+
+  # Плавна зміна яскравості дисплея за 3–4 секунди кроками по 100 мс
+  - id: fade_backlight
+    mode: restart
+    parameters:
+      target: float
+    then:
+      - lambda: |-
+          if (target < 0.0f) target = 0.0f;
+          if (target > 100.0f) target = 100.0f;
+      - while:
+          condition:
+            lambda: |-
+              return std::abs(id(current_backlight_val) - target) > 0.5f;
+          then:
+            - lambda: |-
+                float cur = id(current_backlight_val);
+                float step = (target - cur) * 0.15f;
+                if (std::abs(step) < 1.0f) {
+                  step = (target > cur) ? 1.0f : -1.0f;
+                }
+                cur += step;
+                if ((step > 0.0f && cur > target) || (step < 0.0f && cur < target)) {
+                  cur = target;
+                }
+                id(current_backlight_val) = cur;
+                id(htram_core)->send_backlight((uint8_t) std::round(cur));
+            - delay: 100ms
+      - lambda: |-
+          id(current_backlight_val) = target;
+          id(htram_core)->send_backlight((uint8_t) std::round(target));
+          id(screen_brightness).publish_state(target);
+
+  # Застосування розкладу яскравості відповідно до поточного часу
+  - id: apply_scheduled_brightness
+    mode: restart
+    parameters:
+      smooth: bool
+    then:
+      - lambda: |-
+          if (!id(night_mode_enabled).state) {
+            float day_target = id(day_brightness);
+            if (smooth) {
+              id(fade_backlight).execute(day_target);
+            } else {
+              id(current_backlight_val) = day_target;
+              id(htram_core)->send_backlight((uint8_t) std::round(day_target));
+              id(screen_brightness).publish_state(day_target);
+            }
+            return;
+          }
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) now = id(net_time).now();
+          if (!now.is_valid()) return;
+
+          int cur_min = now.hour * 60 + now.minute;
+          int night_min = id(night_start_time).hour * 60 + id(night_start_time).minute;
+          int day_min = id(day_start_time).hour * 60 + id(day_start_time).minute;
+          bool is_night = false;
+          if (night_min > day_min) {
+            is_night = (cur_min >= night_min || cur_min < day_min);
+          } else if (night_min < day_min) {
+            is_night = (cur_min >= night_min && cur_min < day_min);
+          }
+          float target = is_night ? id(night_brightness).state : id(day_brightness);
+          if (smooth) {
+            id(fade_backlight).execute(target);
+          } else {
+            id(current_backlight_val) = target;
+            id(htram_core)->send_backlight((uint8_t) std::round(target));
+            id(screen_brightness).publish_state(target);
+          }
 
   - id: !extend set_system_alert_active
     then:
@@ -422,6 +513,49 @@ text_sensor:
     name: "Device ID"
 
 
+datetime:
+  - platform: template
+    id: night_start_time
+    name: "Початок ночі"
+    type: time
+    optimistic: true
+    restore_value: false
+    initial_value: "23:00:00"
+    icon: "mdi:clock-start"
+    on_time:
+      - if:
+          condition:
+            lambda: return id(night_mode_enabled).state;
+          then:
+            - script.execute:
+                id: fade_backlight
+                target: !lambda "return id(night_brightness).state;"
+    on_value:
+      - script.execute:
+          id: apply_scheduled_brightness
+          smooth: true
+
+  - platform: template
+    id: day_start_time
+    name: "Початок дня"
+    type: time
+    optimistic: true
+    restore_value: false
+    initial_value: "07:00:00"
+    icon: "mdi:clock-end"
+    on_time:
+      - if:
+          condition:
+            lambda: return id(night_mode_enabled).state;
+          then:
+            - script.execute:
+                id: fade_backlight
+                target: !lambda "return id(day_brightness);"
+    on_value:
+      - script.execute:
+          id: apply_scheduled_brightness
+          smooth: true
+
 number:
   - platform: template
     name: "Screen Brightness"
@@ -431,6 +565,56 @@ number:
     step: 1
     initial_value: 100
     optimistic: true
+    set_action:
+      - lambda: |-
+          id(fade_backlight).stop();
+          id(current_backlight_val) = x;
+          id(htram_core)->send_backlight((uint8_t) std::round(x));
+
+          bool is_night = false;
+          if (id(night_mode_enabled).state) {
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) now = id(net_time).now();
+            if (now.is_valid()) {
+              int cur_min = now.hour * 60 + now.minute;
+              int night_min = id(night_start_time).hour * 60 + id(night_start_time).minute;
+              int day_min = id(day_start_time).hour * 60 + id(day_start_time).minute;
+              if (night_min > day_min) is_night = (cur_min >= night_min || cur_min < day_min);
+              else if (night_min < day_min) is_night = (cur_min >= night_min && cur_min < day_min);
+            }
+          }
+          if (!is_night) {
+            id(day_brightness) = x;
+          }
+
+  - platform: template
+    name: "Нічна яскравість"
+    id: night_brightness
+    icon: "mdi:brightness-4"
+    entity_category: config
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 4
+    restore_value: false
+    optimistic: true
+    set_action:
+      - lambda: |-
+          if (id(night_mode_enabled).state) {
+            auto now = id(ha_time).now();
+            if (!now.is_valid()) now = id(net_time).now();
+            if (now.is_valid()) {
+              int cur_min = now.hour * 60 + now.minute;
+              int night_min = id(night_start_time).hour * 60 + id(night_start_time).minute;
+              int day_min = id(day_start_time).hour * 60 + id(day_start_time).minute;
+              bool is_night = false;
+              if (night_min > day_min) is_night = (cur_min >= night_min || cur_min < day_min);
+              else if (night_min < day_min) is_night = (cur_min >= night_min && cur_min < day_min);
+              if (is_night) {
+                id(fade_backlight).execute(x);
+              }
+            }
+          }
 
   - platform: template
     name: "Підстроювання температури"
@@ -446,3 +630,19 @@ number:
             id(sensor_temp).publish_state(id(t_from_gd32) + x);
             id(refresh_slot).execute();
           }
+
+switch:
+  - platform: template
+    name: "Нічний розклад"
+    id: night_mode_enabled
+    icon: "mdi:weather-night"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - script.execute:
+          id: apply_scheduled_brightness
+          smooth: true
+    on_turn_off:
+      - script.execute:
+          id: fade_backlight
+          target: !lambda "return id(day_brightness);"

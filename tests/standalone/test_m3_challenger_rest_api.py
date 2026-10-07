@@ -175,6 +175,7 @@ class TestStandaloneWebBridgeCoreEndpoints:
             "hum",
             "batt_pct",
             "brightness",
+            "night_brightness",
             "co2_yellow",
             "co2_red",
             "temp_trim",
@@ -185,6 +186,7 @@ class TestStandaloneWebBridgeCoreEndpoints:
         required_bool_fields = [
             "usb",
             "alarm_enabled",
+            "night_mode_enabled",
             "silence_enabled",
             "led_auto",
             "alert_active",
@@ -195,6 +197,8 @@ class TestStandaloneWebBridgeCoreEndpoints:
             "version",
             "city",
             "alarm_time",
+            "night_start_time",
+            "day_start_time",
         ]
 
         for field in required_numeric_fields:
@@ -270,6 +274,24 @@ class TestStandaloneWebBridgeCoreEndpoints:
         assert bridge_server.bridge.entity_states["lat"] == 50.5489
         assert bridge_server.bridge.entity_states["lon"] == 30.2209
 
+        # 6. Update night mode schedule settings
+        status, headers, body = make_request(
+            bridge_server.port,
+            "POST",
+            "/api/settings",
+            {
+                "night_mode_enabled": True,
+                "night_start_time": "22:30",
+                "day_start_time": "08:15",
+                "night_brightness": 3,
+            },
+        )
+        assert status == 200
+        assert bridge_server.bridge.entity_states["night_mode_enabled"] is True
+        assert bridge_server.bridge.entity_states["night_start_time"] == "22:30"
+        assert bridge_server.bridge.entity_states["day_start_time"] == "08:15"
+        assert bridge_server.bridge.entity_states["night_brightness"] == 3
+
         # Verify state reflected in subsequent GET /api/status
         _, _, status_body = make_request(bridge_server.port, "GET", "/api/status")
         status_data = json.loads(status_body.decode("utf-8"))
@@ -284,6 +306,10 @@ class TestStandaloneWebBridgeCoreEndpoints:
         assert status_data["temp_trim"] == -1.8
         assert status_data["region"] == 75
         assert status_data["city"] == "Буча"
+        assert status_data["night_mode_enabled"] is True
+        assert status_data["night_start_time"] == "22:30"
+        assert status_data["day_start_time"] == "08:15"
+        assert status_data["night_brightness"] == 3
 
     def test_post_api_ota_update_endpoint(self, bridge_server: BridgeServerContext):
         """POST /api/ota_update returns 200 OK with starting_ota result."""
@@ -466,6 +492,10 @@ class TestWebPageHeaderInvariants:
         assert "inp-wifi-pass" in html
         assert "chk-day-1" in html
         assert "chk-day-7" in html
+        assert "chk-night-mode" in html
+        assert "rng-night-brightness" in html
+        assert "inp-night-start" in html
+        assert "inp-day-start" in html
 
 
 # ============================================================================
