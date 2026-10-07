@@ -306,11 +306,15 @@ def test_live_simulator_ap_mode_and_gestures_e2e():
     if not SIM_BINARY.exists():
         pytest.skip(f"Simulator binary not found at {SIM_BINARY}. Skipping live E2E test.")
 
-    from tests.standalone.test_gestures_and_boot import StandaloneSimHarness
+    from tests.standalone.test_gestures_and_boot import (
+        BASELINE_SIM_TIME,
+        StandaloneSimHarness,
+    )
 
     sim = StandaloneSimHarness()
     sim.start()
     try:
+        sim.set_sim_time(BASELINE_SIM_TIME, freeze=True)
         sim.simulate_reboot_resync()
         time.sleep(0.4)
 
