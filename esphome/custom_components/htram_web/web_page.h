@@ -743,7 +743,33 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <h2>Екран та Світлодіоди</h2>
       <div class="form-group">
         <label for="rng-brightness">Яскравість дисплея: <span id="lbl-brightness">100</span>%</label>
-        <input type="range" id="rng-brightness" min="5" max="100" step="1" oninput="onBrightnessInput(this.value)">
+        <input type="range" id="rng-brightness" min="0" max="100" step="1" oninput="onBrightnessInput(this.value)">
+      </div>
+      <div class="switch-row" style="margin-top: 10px;">
+        <div>
+          <div>Нічний розклад</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Автоматичне приглушення дисплея на ніч</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="chk-night-mode" onchange="onNightModeToggle(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div id="night-mode-container" style="margin-top: 12px; padding: 12px; background: rgba(11, 17, 32, 0.7); border-radius: 8px; border: 1px solid var(--card-border); transition: opacity 0.2s;">
+        <div class="grid" style="margin-bottom: 8px;">
+          <div class="form-group">
+            <label for="inp-night-start">🌙 Початок ночі:</label>
+            <input type="time" id="inp-night-start" onchange="autoSave({ night_start_time: this.value })">
+          </div>
+          <div class="form-group">
+            <label for="inp-day-start">☀️ Початок дня:</label>
+            <input type="time" id="inp-day-start" onchange="autoSave({ day_start_time: this.value })">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+          <label for="rng-night-brightness">Нічна яскравість: <span id="lbl-night-brightness">4</span>%</label>
+          <input type="range" id="rng-night-brightness" min="0" max="100" step="1" oninput="onNightBrightnessInput(this.value)">
+        </div>
       </div>
       <div class="switch-row" style="margin-top: 10px;">
         <div>
@@ -830,6 +856,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     let currentSettings = {};
     let brightnessDebounce = null;
+    let nightBrightnessDebounce = null;
     let saveTimeout = null;
 
     function setSaveStatus(state, text) {
@@ -872,6 +899,20 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       clearTimeout(brightnessDebounce);
       brightnessDebounce = setTimeout(() => {
         autoSave({ brightness: parseInt(val) });
+      }, 100);
+    }
+
+    function onNightModeToggle(checked) {
+      const el = document.getElementById('night-mode-container');
+      if (el) el.style.opacity = checked ? '1' : '0.4';
+      autoSave({ night_mode_enabled: checked });
+    }
+
+    function onNightBrightnessInput(val) {
+      document.getElementById('lbl-night-brightness').textContent = val;
+      clearTimeout(nightBrightnessDebounce);
+      nightBrightnessDebounce = setTimeout(() => {
+        autoSave({ night_brightness: parseInt(val) });
       }, 100);
     }
 
@@ -1426,6 +1467,17 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       if (currentSettings.brightness != null) {
         document.getElementById('rng-brightness').value = currentSettings.brightness;
         document.getElementById('lbl-brightness').textContent = currentSettings.brightness;
+      }
+      if (currentSettings.night_mode_enabled != null) {
+        document.getElementById('chk-night-mode').checked = currentSettings.night_mode_enabled;
+        const el = document.getElementById('night-mode-container');
+        if (el) el.style.opacity = currentSettings.night_mode_enabled ? '1' : '0.4';
+      }
+      if (currentSettings.night_start_time) document.getElementById('inp-night-start').value = currentSettings.night_start_time;
+      if (currentSettings.day_start_time) document.getElementById('inp-day-start').value = currentSettings.day_start_time;
+      if (currentSettings.night_brightness != null) {
+        document.getElementById('rng-night-brightness').value = currentSettings.night_brightness;
+        document.getElementById('lbl-night-brightness').textContent = currentSettings.night_brightness;
       }
       if (currentSettings.led_auto != null) {
         document.getElementById('chk-led-auto').checked = currentSettings.led_auto;

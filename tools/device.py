@@ -139,6 +139,14 @@ class HtramClient:
                     status["USB Power"] = "ON" if data["usb"] else "OFF"
                 if "brightness" in data:
                     status["Screen Brightness"] = data["brightness"]
+                if "night_mode_enabled" in data:
+                    status["Night Mode"] = "ON" if data["night_mode_enabled"] else "OFF"
+                if "night_brightness" in data:
+                    status["Night Brightness"] = data["night_brightness"]
+                if "night_start_time" in data:
+                    status["Night Start"] = data["night_start_time"]
+                if "day_start_time" in data:
+                    status["Day Start"] = data["day_start_time"]
                 if "alarm_enabled" in data:
                     status["Будильник увімкнено"] = "ON" if data["alarm_enabled"] else "OFF"
                 if "silence_enabled" in data:
