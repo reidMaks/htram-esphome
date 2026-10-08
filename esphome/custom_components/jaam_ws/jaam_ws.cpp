@@ -2,6 +2,11 @@
 #include "esphome/core/log.h"
 #include <cstring>
 #include <algorithm>
+#include <string>
+
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
 
 namespace esphome {
 namespace jaam_ws {
@@ -347,7 +352,7 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
     case WEBSOCKET_EVENT_CONNECTED:
       ESP_LOGI(TAG, "Connected to JAAM alert server");
       self->set_connected(true);
-      self->last_seen_ms_ = millis();
+      self->touch_last_seen();
       if (self->is_fusion_mode()) {
         self->clear_fusion_state();
         self->send_text("chip_id:HTRAM_STANDALONE");
@@ -370,7 +375,7 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
       self->set_connected(false);
       break;
     case WEBSOCKET_EVENT_DATA:
-      self->last_seen_ms_ = millis();
+      self->touch_last_seen();
       if (ev->op_code == 0x02 || ev->op_code == 0x00) {
         self->on_ws_binary(reinterpret_cast<const uint8_t *>(ev->data_ptr), ev->data_len,
                            ev->payload_offset, ev->payload_len, ev->fin);
@@ -678,7 +683,7 @@ void JaamWsComponent::loop() {
   const uint32_t now = millis();
 
 #ifdef USE_WIFI
-  const bool wifi_ok = (wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected());
+  const bool wifi_ok = (esphome::wifi::global_wifi_component != nullptr && esphome::wifi::global_wifi_component->is_connected());
 #else
   const bool wifi_ok = true;
 #endif

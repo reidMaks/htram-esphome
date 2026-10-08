@@ -92,6 +92,11 @@ class JaamWsComponent : public Component {
   void stop_client();
   void restart_client();
   void clear_fusion_state();
+  void touch_last_seen() {
+#ifdef USE_ESP_IDF
+    this->last_seen_ms_ = millis();
+#endif
+  }
 
   // Simulation helper: inject alert flags in tests or host environment
   void simulate_flags(uint32_t flags) {
