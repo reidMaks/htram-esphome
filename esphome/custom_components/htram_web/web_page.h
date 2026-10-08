@@ -380,7 +380,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     <!-- Повітряна тривога -->
     <div class="card">
-      <h2>Повітряна тривога <span id="alert-status-badge" class="badge badge-clear">Відбій</span></h2>
+      <h2>Повітряна тривога <span id="alert-status-badge" class="badge badge-clear">Відбій</span> <span id="jaam-status-badge" class="badge badge-clear">Сервер: онлайн</span></h2>
       <div class="form-group">
         <label for="sel-region">Регіон сповіщення (район / місто / область):</label>
         <select id="sel-region" onchange="onRegionChange(parseInt(this.value))">
@@ -1359,6 +1359,17 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           alertBadge.textContent = 'Відбій';
           alertBadge.className = 'badge badge-clear';
           alertBanner.style.display = 'none';
+        }
+
+        const jaamBadge = document.getElementById('jaam-status-badge');
+        if (jaamBadge) {
+          if (d.jaam_connected) {
+            jaamBadge.textContent = 'Сервер: онлайн';
+            jaamBadge.className = 'badge badge-clear';
+          } else {
+            jaamBadge.textContent = 'Сервер: офлайн';
+            jaamBadge.className = 'badge badge-warning';
+          }
         }
 
         // Versions

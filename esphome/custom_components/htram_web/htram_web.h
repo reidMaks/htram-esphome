@@ -93,6 +93,9 @@ class HtramWebComponent : public Component {
   void set_alert_active(bool a) { alert_active_ = a; }
   bool is_alert_active() const { return alert_active_; }
 
+  void set_jaam_connected(bool c) { jaam_connected_ = c; }
+  bool is_jaam_connected() const { return jaam_connected_; }
+
   void set_new_version(const std::string &v) { new_version_ = v; }
   const std::string &get_new_version() const { return new_version_; }
 
@@ -111,6 +114,7 @@ class HtramWebComponent : public Component {
   float lon_{30.52f};
   std::string city_{"Київ"};
   bool alert_active_{false};
+  bool jaam_connected_{false};
   bool ota_allow_on_battery_{false};
 
   CallbackManager<void(int, float, float, const std::string &)> save_settings_callbacks_{};

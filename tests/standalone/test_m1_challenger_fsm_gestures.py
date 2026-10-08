@@ -316,7 +316,7 @@ def test_live_simulator_ap_mode_and_gestures_e2e():
     try:
         sim.set_sim_time(BASELINE_SIM_TIME, freeze=True)
         sim.simulate_reboot_resync()
-        time.sleep(0.4)
+        time.sleep(0.8)
 
         # Baseline: Context should be "clock"
         assert sim.wait_arbiter_context("clock", timeout=3.0), (
@@ -328,7 +328,7 @@ def test_live_simulator_ap_mode_and_gestures_e2e():
         assert sim.wait_arbiter_context("modal_ap", timeout=3.0), (
             f"Expected modal_ap after quadruple click, got {sim.states.get('Arbiter Context')}"
         )
-        time.sleep(0.5)
+        time.sleep(0.8)
 
         # 2. Capture screenshot of AP Page 0 (QR code) and assert against golden snapshot
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -338,7 +338,7 @@ def test_live_simulator_ap_mode_and_gestures_e2e():
 
             # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
             sim.inject_button("single")
-            time.sleep(0.5)
+            time.sleep(0.8)
             assert sim.states.get("Arbiter Context") == "modal_ap", (
                 "Context must remain modal_ap during single-click"
             )

@@ -70,6 +70,7 @@ class StandaloneWebBridge:
             "co2_red": 1500,
             "temp_trim": 0.0,
             "alert_active": False,
+            "jaam_connected": True,
             "new_version": "",
             "wifi_ssid": "HTRAM-Sim-WiFi",
         }

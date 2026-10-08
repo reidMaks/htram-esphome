@@ -153,6 +153,10 @@ class HtramClient:
                     status["Хвилина мовчання"] = "ON" if data["silence_enabled"] else "OFF"
                 if "led_auto" in data:
                     status["LED Auto"] = "ON" if data["led_auto"] else "OFF"
+                if "alert_active" in data:
+                    status["Повітряна тривога"] = "ТРИВОГА!" if data["alert_active"] else "Відбій"
+                if "jaam_connected" in data:
+                    status["JAAM WS Connected"] = "ON" if data["jaam_connected"] else "OFF"
                 if "city" in data:
                     status["City"] = data["city"]
                 if "free_heap" in data:
