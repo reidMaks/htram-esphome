@@ -8,7 +8,7 @@ substitutions:
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  firmware_version: "2.2.0"
+  firmware_version: "2.2.1"
 
 packages:
   ui: !include core-ui.yaml
@@ -276,6 +276,11 @@ script:
     then:
       - lambda: |-
           id(htram_standalone_web).set_alert_active(active);
+
+  - id: !extend set_system_jaam_connected
+    then:
+      - lambda: |-
+          id(htram_standalone_web).set_jaam_connected(connected);
 
   # Сигнал після першого завантаження свіжої прошивки:
   - id: check_flash_chime

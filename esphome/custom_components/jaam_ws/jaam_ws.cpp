@@ -328,6 +328,17 @@ void JaamWsComponent::set_region_index(int idx) {
 
 #ifdef USE_ESP_IDF
 #include "esphome/components/json/json_util.h"
+#include "esphome/core/hal.h"
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
+
+void JaamWsComponent::clear_fusion_state() {
+  memset(this->active_alerts_table_, 0, sizeof(this->active_alerts_table_));
+  this->notif_flags_region_ = 0;
+  this->notif_flags_district_ = 0;
+  this->notif_flags_state_ = 0;
+}
 
 static void ws_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
   auto *self = static_cast<JaamWsComponent *>(arg);
@@ -336,7 +347,9 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
     case WEBSOCKET_EVENT_CONNECTED:
       ESP_LOGI(TAG, "Connected to JAAM alert server");
       self->set_connected(true);
+      self->last_seen_ms_ = millis();
       if (self->is_fusion_mode()) {
+        self->clear_fusion_state();
         self->send_text("chip_id:HTRAM_STANDALONE");
         self->send_text("firmware:5.1_HTRAM");
       } else if (self->is_upstream_mode()) {
@@ -352,10 +365,12 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
       break;
     case WEBSOCKET_EVENT_DISCONNECTED:
     case WEBSOCKET_EVENT_CLOSED:
-      ESP_LOGW(TAG, "JAAM alert server disconnected");
+    case WEBSOCKET_EVENT_ERROR:
+      ESP_LOGW(TAG, "JAAM alert server disconnected or error (event id=%d)", (int) id);
       self->set_connected(false);
       break;
     case WEBSOCKET_EVENT_DATA:
+      self->last_seen_ms_ = millis();
       if (ev->op_code == 0x02 || ev->op_code == 0x00) {
         self->on_ws_binary(reinterpret_cast<const uint8_t *>(ev->data_ptr), ev->data_len,
                            ev->payload_offset, ev->payload_len, ev->fin);
@@ -368,7 +383,10 @@ static void ws_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
   }
 }
 
-void JaamWsComponent::setup() {
+void JaamWsComponent::start_client() {
+#ifdef USE_ESP_IDF
+  if (this->client_ != nullptr) return;
+
   std::string uri = "ws://" + this->host_ + ":" + std::to_string(this->port_) + this->path_;
 
   esp_websocket_client_config_t cfg = {};
@@ -378,6 +396,7 @@ void JaamWsComponent::setup() {
   cfg.ping_interval_sec = 10;
   cfg.pingpong_timeout_sec = 20;
   cfg.disable_auto_reconnect = false;
+  cfg.enable_close_reconnect = true; // Auto-reconnect when server/Cloudflare closes connection!
   cfg.buffer_size = 2048;
   cfg.task_stack = 6144;
 
@@ -388,9 +407,39 @@ void JaamWsComponent::setup() {
     return;
   }
   esp_websocket_register_events(this->client_, WEBSOCKET_EVENT_ANY, ws_event_handler, this);
-  esp_websocket_client_start(this->client_);
-  ESP_LOGI(TAG, "Connecting to %s (region_id=%u, district_id=%u, parent_state_id=%u)",
-           uri.c_str(), this->region_id_, this->district_id_, this->state_id_);
+  esp_err_t err = esp_websocket_client_start(this->client_);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to start websocket client: %d", err);
+  } else {
+    ESP_LOGI(TAG, "Connecting to %s (region_id=%u, district_id=%u, parent_state_id=%u)",
+             uri.c_str(), this->region_id_, this->district_id_, this->state_id_);
+  }
+#endif
+}
+
+void JaamWsComponent::stop_client() {
+#ifdef USE_ESP_IDF
+  if (this->client_ != nullptr) {
+    esp_websocket_client_stop(this->client_);
+    esp_websocket_client_destroy(this->client_);
+    this->client_ = nullptr;
+    this->connected_ = false;
+  }
+#endif
+}
+
+void JaamWsComponent::restart_client() {
+  this->stop_client();
+  this->start_client();
+}
+
+void JaamWsComponent::setup() {
+#ifdef USE_ESP_IDF
+  this->start_client();
+#else
+  ESP_LOGI(TAG, "JAAM WS initialized in simulation mode (Host)");
+  this->connected_ = true;
+#endif
 }
 
 void JaamWsComponent::on_ws_binary(const uint8_t *data, size_t len, int offset, int total_len, bool fin) {
@@ -407,6 +456,11 @@ void JaamWsComponent::on_ws_binary(const uint8_t *data, size_t len, int offset, 
   if (this->rx_bin_len_ + len <= sizeof(this->rx_bin_buf_)) {
     memcpy(this->rx_bin_buf_ + this->rx_bin_len_, data, len);
     this->rx_bin_len_ += len;
+  } else {
+    ESP_LOGW(TAG, "rx_bin_buf_ overflow: dropping chunk (len=%u, cur=%u, max=%u)",
+             (unsigned)len, (unsigned)this->rx_bin_len_, (unsigned)sizeof(this->rx_bin_buf_));
+    this->rx_bin_len_ = 0;
+    return;
   }
   if (fin || (total_len > 0 && (int)this->rx_bin_len_ >= total_len)) {
     this->parse_binary_packet(this->rx_bin_buf_, this->rx_bin_len_);
@@ -581,6 +635,25 @@ void JaamWsComponent::setup() {
   this->connected_ = true;
 }
 
+void JaamWsComponent::start_client() {
+  this->connected_ = true;
+}
+
+void JaamWsComponent::stop_client() {
+  this->connected_ = false;
+}
+
+void JaamWsComponent::restart_client() {
+  this->connected_ = true;
+}
+
+void JaamWsComponent::clear_fusion_state() {
+  memset(this->active_alerts_table_, 0, sizeof(this->active_alerts_table_));
+  this->notif_flags_region_ = 0;
+  this->notif_flags_district_ = 0;
+  this->notif_flags_state_ = 0;
+}
+
 void JaamWsComponent::on_ws_data(const char *data, size_t len) {
   (void)data;
   (void)len;
@@ -601,6 +674,44 @@ void JaamWsComponent::parse_binary_packet(const uint8_t *data, size_t len) {
 #endif
 
 void JaamWsComponent::loop() {
+#ifdef USE_ESP_IDF
+  const uint32_t now = millis();
+
+#ifdef USE_WIFI
+  const bool wifi_ok = (wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected());
+#else
+  const bool wifi_ok = true;
+#endif
+
+  if (wifi_ok) {
+    if (this->client_ == nullptr) {
+      if (this->last_reconnect_attempt_ms_ == 0 || (now - this->last_reconnect_attempt_ms_ > 10000)) {
+        this->last_reconnect_attempt_ms_ = now;
+        this->start_client();
+      }
+    } else {
+      const bool is_conn = esp_websocket_client_is_connected(this->client_);
+      if (is_conn != this->connected_) {
+        this->connected_ = is_conn;
+        if (is_conn) {
+          this->last_seen_ms_ = now;
+        }
+      }
+      if (!is_conn) {
+        if (this->last_reconnect_attempt_ms_ == 0) {
+          this->last_reconnect_attempt_ms_ = now;
+        } else if (now - this->last_reconnect_attempt_ms_ > 30000) {
+          this->last_reconnect_attempt_ms_ = now;
+          ESP_LOGW(TAG, "JAAM connection lost >30s with active Wi-Fi. Restarting client...");
+          this->restart_client();
+        }
+      } else {
+        this->last_reconnect_attempt_ms_ = now;
+      }
+    }
+  }
+#endif
+
   if (!this->pending_)
     return;
   this->pending_ = false;

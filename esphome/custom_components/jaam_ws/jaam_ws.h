@@ -87,6 +87,12 @@ class JaamWsComponent : public Component {
 
   void send_text(const char *msg);
 
+  // Client lifecycle management & supervision
+  void start_client();
+  void stop_client();
+  void restart_client();
+  void clear_fusion_state();
+
   // Simulation helper: inject alert flags in tests or host environment
   void simulate_flags(uint32_t flags) {
     this->flags_ = flags;
@@ -132,8 +138,10 @@ class JaamWsComponent : public Component {
 #ifdef USE_ESP_IDF
   esp_websocket_client_handle_t client_{nullptr};
   std::string rx_buf_;
-  uint8_t rx_bin_buf_[1024];
+  uint8_t rx_bin_buf_[4096];
   size_t rx_bin_len_{0};
+  uint32_t last_reconnect_attempt_ms_{0};
+  uint32_t last_seen_ms_{0};
 #endif
 };
 

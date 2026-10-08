@@ -227,6 +227,9 @@ interval:
       - script.execute:
           id: set_system_alert_active
           active: !lambda "return id(alert_active);"
+      - script.execute:
+          id: set_system_jaam_connected
+          connected: !lambda "return id(jaam)->connected();"
 
   - interval: 5s
     then:

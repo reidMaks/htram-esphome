@@ -379,6 +379,11 @@ script:
       active: bool
     then: []
 
+  - id: set_system_jaam_connected
+    parameters:
+      connected: bool
+    then: []
+
   - id: apply_face_alert_color
     parameters:
       color: int

@@ -200,6 +200,7 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
     root["lon"] = this->parent_->get_lon();
     root["city"] = this->parent_->get_city();
     root["alert_active"] = this->parent_->is_alert_active();
+    root["jaam_connected"] = this->parent_->is_jaam_connected();
     root["free_heap"] = esp_get_free_heap_size();
     root["min_free_heap"] = esp_get_minimum_free_heap_size();
     root["reset_reason"] = (int) esp_reset_reason();

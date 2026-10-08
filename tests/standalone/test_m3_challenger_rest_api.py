@@ -190,6 +190,7 @@ class TestStandaloneWebBridgeCoreEndpoints:
             "silence_enabled",
             "led_auto",
             "alert_active",
+            "jaam_connected",
         ]
         required_str_fields = [
             "ip",
