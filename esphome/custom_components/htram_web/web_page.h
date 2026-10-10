@@ -808,7 +808,10 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
       <div class="form-group" style="margin-top: 14px;">
         <label for="inp-trim">Поправка температури (°C): <span style="font-size: 0.75rem; color: var(--text-muted);">(компенсація нагріву корпусу)</span></label>
-        <input type="number" step="0.1" min="-10" max="10" id="inp-trim" onchange="autoSave({ temp_trim: parseFloat(this.value) || 0.0 })">
+        <input type="number" step="0.1" min="-15" max="10" id="inp-trim" onchange="autoSave({ temp_trim: parseFloat(this.value) || 0.0 })">
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">
+          Фізичний сенсор SHT30: <strong id="lbl-raw-temp" style="color: #fff;">--</strong> °C (<strong id="lbl-raw-hum" style="color: #fff;">--</strong>% RH)
+        </div>
       </div>
     </div>
 
@@ -1342,6 +1345,11 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
         document.getElementById('val-temp').textContent = d.temp != null ? d.temp.toFixed(1) : '--';
         document.getElementById('val-hum').textContent = d.hum != null ? d.hum.toFixed(0) : '--';
+
+        const rawTempEl = document.getElementById('lbl-raw-temp');
+        if (rawTempEl) rawTempEl.textContent = d.raw_temp != null ? d.raw_temp.toFixed(1) : '--';
+        const rawHumEl = document.getElementById('lbl-raw-hum');
+        if (rawHumEl) rawHumEl.textContent = d.raw_hum != null ? d.raw_hum.toFixed(0) : '--';
         
         if (d.usb) {
           document.getElementById('val-batt').textContent = 'USB';

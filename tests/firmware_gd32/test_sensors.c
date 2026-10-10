@@ -118,24 +118,6 @@ void test_modbus_crc16(void) {
   TEST_ASSERT_EQUAL_HEX16(0x0494, crc);
 }
 
-void test_exp_q16(void) {
-  TEST_ASSERT_EQUAL_UINT32(65536, exp_q16(0));
-  uint32_t e_q16 = exp_q16(1u << 16);
-  TEST_ASSERT_INT_WITHIN(1000, 177493, e_q16);
-  TEST_ASSERT_EQUAL_UINT32(e_q16, exp_q16((1u << 16) + 5000));
-}
-
-void test_rh_ratio_q16(void) {
-  TEST_ASSERT_EQUAL_UINT32(1u << 16, rh_ratio_q16(2500, 0));
-  TEST_ASSERT_EQUAL_UINT32(1u << 16, rh_ratio_q16(2500, -100));
-
-  uint32_t ratio = rh_ratio_q16(3150, 650);
-  TEST_ASSERT_GREATER_THAN(1u << 16, ratio);
-
-  uint32_t ratio_cold = rh_ratio_q16(-25000, 500);
-  TEST_ASSERT_GREATER_THAN(1u << 16, ratio_cold);
-}
-
 void test_sensors_init(void) {
   sensors_init();
   TEST_ASSERT_TRUE(mock_rcu_apb2en & RCU_APB2EN_USART0EN);
@@ -153,24 +135,19 @@ void test_sensors_sht30_fetch_normal(void) {
   uint16_t hum = 0;
   int ret = sensors_sht30_fetch(&temp, &hum, 0); /* On battery */
   TEST_ASSERT_EQUAL(0, ret);
-  TEST_ASSERT_GREATER_THAN(1500, temp);
-  TEST_ASSERT_LESS_THAN(2500, temp);
-  TEST_ASSERT_GREATER_THAN(4000, hum);
-  TEST_ASSERT_LESS_THAN(7500, hum);
+  TEST_ASSERT_EQUAL_INT16(2500, temp); /* 25.00 °C raw */
+  TEST_ASSERT_EQUAL_UINT16(4999, hum); /* 49.99 % raw */
 }
 
-void test_sensors_sht30_fetch_usb_self_heating_relaxation(void) {
+void test_sensors_sht30_fetch_usb_raw_invariance(void) {
+  /* USB presence must not alter raw physical telemetry */
   set_sht30_response(26214, 32767);
   int16_t temp = 0;
   uint16_t hum = 0;
   int ret = sensors_sht30_fetch(&temp, &hum, 1);
   TEST_ASSERT_EQUAL(0, ret);
-
-  set_sht30_response(26214, 32767);
-  int16_t temp2 = 0;
-  uint16_t hum2 = 0;
-  ret = sensors_sht30_fetch(&temp2, &hum2, 1);
-  TEST_ASSERT_EQUAL(0, ret);
+  TEST_ASSERT_EQUAL_INT16(2500, temp);
+  TEST_ASSERT_EQUAL_UINT16(4999, hum);
 }
 
 void test_sensors_sht30_fetch_crc_error(void) {
@@ -237,19 +214,6 @@ void test_sensors_poll_co2_bad_crc(void) {
   TEST_ASSERT_EQUAL(-11, ret);
 }
 
-void test_sensors_sht30_fetch_relax_downwards(void) {
-  /* 1. First fetch on USB: target = 1150 */
-  set_sht30_response(26214, 32767);
-  int16_t temp = 0;
-  uint16_t hum = 0;
-  sensors_sht30_fetch(&temp, &hum, 1);
-
-  /* 2. Next fetch on Battery: target = 650 (d < 0 -> relax downwards) */
-  set_sht30_response(26214, 32767);
-  int ret = sensors_sht30_fetch(&temp, &hum, 0);
-  TEST_ASSERT_EQUAL(0, ret);
-}
-
 void test_sensors_poll_co2_clears_dirty_fifo(void) {
   /* Put dirty byte in RX before calling sensors_poll_co2 */
   mock_usart0_stat |= USART_STAT_RBNE;
@@ -281,18 +245,15 @@ int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_sht30_crc8);
   RUN_TEST(test_modbus_crc16);
-  RUN_TEST(test_exp_q16);
-  RUN_TEST(test_rh_ratio_q16);
   RUN_TEST(test_sensors_init);
   RUN_TEST(test_sensors_sht30_start);
   RUN_TEST(test_sensors_sht30_fetch_normal);
-  RUN_TEST(test_sensors_sht30_fetch_usb_self_heating_relaxation);
+  RUN_TEST(test_sensors_sht30_fetch_usb_raw_invariance);
   RUN_TEST(test_sensors_sht30_fetch_crc_error);
   RUN_TEST(test_sensors_poll_co2_success);
   RUN_TEST(test_sensors_poll_co2_warmup);
   RUN_TEST(test_sensors_poll_co2_invalid_header);
   RUN_TEST(test_sensors_poll_co2_bad_crc);
-  RUN_TEST(test_sensors_sht30_fetch_relax_downwards);
   RUN_TEST(test_sensors_poll_co2_clears_dirty_fifo);
   RUN_TEST(test_sensors_poll_co2_timeout);
   return UNITY_END();

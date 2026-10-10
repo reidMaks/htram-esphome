@@ -47,6 +47,8 @@ class StandaloneWebBridge:
             "co2": 485.0,
             "temp": 22.4,
             "hum": 45.0,
+            "raw_temp": 30.9,
+            "raw_hum": 28.0,
             "batt_pct": 100.0,
             "usb": True,
             "ip": "192.168.1.120",
@@ -119,6 +121,10 @@ class StandaloneWebBridge:
                         self.entity_states["temp"] = float(val)
                     elif name == "Humidity":
                         self.entity_states["hum"] = float(val)
+                    elif name in ("Raw Temperature", "sensor_temp_raw"):
+                        self.entity_states["raw_temp"] = float(val)
+                    elif name in ("Raw Humidity", "sensor_hum_raw"):
+                        self.entity_states["raw_hum"] = float(val)
                     elif name == "Battery":
                         self.entity_states["batt_pct"] = float(val)
                     elif name == "USB Power":
