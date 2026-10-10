@@ -78,6 +78,19 @@ class HtramClient:
         res.raise_for_status()
         return res
 
+    def check_update(self) -> dict[str, Any]:
+        url = f"{self.base_url}/api/check_update"
+        res = requests.post(url, auth=self.auth, headers={"Content-Length": "0"}, timeout=self.timeout)
+        res.raise_for_status()
+        return res.json()
+
+    def trigger_ota(self, on_battery: bool = False) -> dict[str, Any]:
+        param = "?on_battery=1" if on_battery else ""
+        url = f"{self.base_url}/api/ota_update{param}"
+        res = requests.post(url, auth=self.auth, headers={"Content-Length": "0"}, timeout=self.timeout)
+        res.raise_for_status()
+        return res.json()
+
     def get_events(self, max_lines: int = 50) -> list[str]:
         url = f"{self.base_url}/events"
         lines: list[str] = []
@@ -173,9 +186,10 @@ def main() -> int:
     parser.add_argument("device", help="Device IP or alias (office, bedroom, living, c1da24...)")
     parser.add_argument(
         "command",
-        choices=["silence", "test-silence", "beep", "status", "reboot", "press"],
+        choices=["silence", "test-silence", "beep", "status", "reboot", "press", "check-update", "update"],
         help="Command to execute",
     )
+    parser.add_argument("--on-battery", action="store_true", help="Allow OTA update on battery")
     parser.add_argument("args", nargs="*", help="Extra arguments for command (e.g. button name for 'press')")
 
     args = parser.parse_args()
@@ -193,6 +207,12 @@ def main() -> int:
         elif args.command == "reboot":
             client.reboot()
             print("Device reboot command sent.")
+        elif args.command == "check-update":
+            res = client.check_update()
+            print(f"Check update response: {res}")
+        elif args.command == "update":
+            res = client.trigger_ota(on_battery=args.on_battery)
+            print(f"Trigger OTA response: {res}")
         elif args.command == "press":
             if not args.args:
                 print("Error: 'press' command requires button name.", file=sys.stderr)
