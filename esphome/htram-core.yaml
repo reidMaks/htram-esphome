@@ -8,7 +8,7 @@ substitutions:
   repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  firmware_version: "2.2.2"
+  firmware_version: "2.3.0"
 
 packages:
   ui: !include core-ui.yaml
@@ -257,10 +257,13 @@ globals:
     restore_value: true
     initial_value: "true"
 
-  # Температура так, як її прислав GD32, до підстроювання нижче: фільтр
-  # вологості рахує від неї. У телеметрії T публікується перед RH з того
-  # самого пакета, тож на момент фільтра RH значення свіже.
+  # Температура і вологість так, як їх прислав GD32 (сирі покази SHT30).
+  # Фільтр вологості перераховує відносну вологість від t_from_gd32 до скоригованої точки.
   - id: t_from_gd32
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: h_from_gd32
     type: float
     restore_value: false
     initial_value: "NAN"
@@ -518,6 +521,24 @@ sensor:
   - platform: uptime
     name: "Uptime"
 
+  - platform: template
+    name: "Raw Temperature"
+    id: sensor_temp_raw
+    unit_of_measurement: "°C"
+    accuracy_decimals: 2
+    device_class: temperature
+    state_class: measurement
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Raw Humidity"
+    id: sensor_hum_raw
+    unit_of_measurement: "%"
+    accuracy_decimals: 2
+    device_class: humidity
+    state_class: measurement
+    entity_category: diagnostic
+
   - platform: htram_gd32
     co2:
       name: "CO2"
@@ -528,10 +549,11 @@ sensor:
       name: "Temperature"
       id: sensor_temp
       filters:
-        # Запам'ятовуємо те, що прийшло від GD32, і зсуваємо на підстроювання.
+        # Запам'ятовуємо сирі дані SHT30 від GD32, публікуємо сирий сенсор і зсуваємо на підстроювання.
         # Порядок важливий: вологість нижче рахується від цієї ж температури.
         - lambda: |-
             id(t_from_gd32) = x;
+            if (id(sensor_temp_raw) != nullptr) id(sensor_temp_raw)->publish_state(x);
             const float trim = id(temp_trim).state;
             return isnan(trim) ? x : x + trim;
       on_value:
@@ -542,9 +564,10 @@ sensor:
       filters:
         # Вологість власного підстроювання не має — воно випливає з
         # температурного: тепліший за повітря датчик показує нижчу RH за тієї
-        # самої кількості води. Той самий перерахунок через тиск насиченої
-        # пари, що й у GD32, тільки від уже скоригованої точки.
+        # самої кількості води. Перерахунок через тиск насиченої пари від сирої точки до кімнатної.
         - lambda: |-
+            id(h_from_gd32) = x;
+            if (id(sensor_hum_raw) != nullptr) id(sensor_hum_raw)->publish_state(x);
             const float trim = id(temp_trim).state;
             const float ts = id(t_from_gd32);
             if (isnan(trim) || isnan(ts) || trim == 0.0f) return x;
@@ -721,24 +744,20 @@ number:
             }
           }
 
-  # Залишкове підстроювання температури, поверх моделі в GD32.
-  #
-  # Сама компенсація самонагріву живе у прошивці GD32 (sensors.c): вона одна
-  # знає стан живлення і веде поправку плавно. Це число — не друга модель, а
-  # калібрування конкретного примірника: плати й кімнати трохи різні, а
-  # перепрошивати GD32 заради півградуса не варто. Нуль = нічого не робить.
-  #
-  # Додається до показу, тож для завищення потрібне від'ємне число.
+  # Компенсація внутрішнього нагріву корпусу поверх сирих показів SHT30.
+  # Дефолтне значення -8.5 °C компенсує типовий нагрів плати
+  # в зібраному корпусі (~29.5 °C на сенсорі -> ~21.0 °C у кімнаті).
+  # Додається до сирого показу, тож для заниження використовується від'ємне число.
   - platform: template
     name: "Підстроювання температури"
     id: temp_trim
     icon: "mdi:thermometer"
     entity_category: config
     unit_of_measurement: "°C"
-    min_value: -10
+    min_value: -15
     max_value: 10
     step: 0.1
-    initial_value: 0
+    initial_value: -8.5
     restore_value: true
     optimistic: true
     mode: box

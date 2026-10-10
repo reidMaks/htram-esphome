@@ -233,6 +233,14 @@ void HtramWebHandler::handleRequest(AsyncWebServerRequest *request) {
         if (std::isnan(s->state)) root["hum"] = nullptr;
         else root["hum"] = s->state;
       }
+      else if (name == "Raw Temperature" || oid == "raw_temperature" || oid == "sensor_temp_raw") {
+        if (std::isnan(s->state)) root["raw_temp"] = nullptr;
+        else root["raw_temp"] = s->state;
+      }
+      else if (name == "Raw Humidity" || oid == "raw_humidity" || oid == "sensor_hum_raw") {
+        if (std::isnan(s->state)) root["raw_hum"] = nullptr;
+        else root["raw_hum"] = s->state;
+      }
       else if (name == "Battery" || oid == "battery" || oid == "sensor_batt_level") {
         if (std::isnan(s->state)) root["batt_pct"] = nullptr;
         else root["batt_pct"] = s->state;

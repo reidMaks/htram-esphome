@@ -463,6 +463,20 @@ sensor:
     unit_of_measurement: "ppm"
 
   - platform: template
+    id: sensor_temp_raw
+    name: "Raw Temperature"
+    accuracy_decimals: 2
+    unit_of_measurement: "°C"
+    entity_category: diagnostic
+
+  - platform: template
+    id: sensor_hum_raw
+    name: "Raw Humidity"
+    accuracy_decimals: 2
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+
+  - platform: template
     id: sensor_temp
     name: "Temperature"
     accuracy_decimals: 1
@@ -619,10 +633,10 @@ number:
   - platform: template
     name: "Підстроювання температури"
     id: temp_trim
-    min_value: -10
+    min_value: -15
     max_value: 10
     step: 0.1
-    initial_value: 0
+    initial_value: -8.5
     optimistic: true
     set_action:
       - lambda: |-
