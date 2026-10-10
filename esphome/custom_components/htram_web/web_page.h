@@ -8,7 +8,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HTRAM Standalone</title>
+  <title>HTRAM</title>
   <style>
     :root {
       --bg: #090d16;
@@ -216,6 +216,16 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       gap: 10px;
       font-weight: 600;
     }
+    .safety-banner {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fef3c7;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin-bottom: 14px;
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
     .update-banner {
       background: rgba(56, 189, 248, 0.15);
       border: 1px solid var(--primary);
@@ -335,7 +345,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <div>
         <h1>HTRAM</h1>
         <div style="font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
-          <span id="device-info">Автономна станція</span>
+          <span id="device-info">Розумний годинник</span>
           <span id="save-status" class="save-status">● Збережено</span>
         </div>
       </div>
@@ -357,7 +367,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <!-- Live Sensors -->
     <div class="grid">
       <div class="card sensor-card">
-        <div class="sensor-lbl">Повітря (CO2)</div>
+        <div class="sensor-lbl">Якість повітря (CO2)</div>
         <div class="sensor-val" id="val-co2">--</div>
         <div class="sensor-unit">ppm</div>
       </div>
@@ -381,8 +391,11 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <!-- Повітряна тривога -->
     <div class="card">
       <h2>Повітряна тривога <span id="alert-status-badge" class="badge badge-clear">Відбій</span> <span id="jaam-status-badge" class="badge badge-clear">Сервер: онлайн</span></h2>
+      <div class="safety-banner">
+        ⚠️ <strong>Важливо:</strong> Не покладайтеся виключно на цей пристрій для оповіщення про небезпеку. Годинник залежить від живлення, Wi-Fi та інтернет-зв'язку. Завжди використовуйте офіційні джерела: застосунок «Повітряна тривога», сирени та канали ОВА.
+      </div>
       <div class="form-group">
-        <label for="sel-region">Регіон сповіщення (район / місто / область):</label>
+        <label for="sel-region">Регіон сповіщення:</label>
         <select id="sel-region" onchange="onRegionChange(parseInt(this.value))">
           <optgroup label="АР Крим">
             <option value="9999" data-lat="45.6857" data-lon="33.9329">АР Крим</option>
@@ -606,7 +619,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </select>
       </div>
       <div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;">
-        ℹ️ <strong>Точні районні сповіщення:</strong> завдяки JAAM Fusion пристрій реагує окремо на ваш район/громаду, а також на загальнообласні тривоги, розрізняючи дрони, ракети та артобстріл.
+        ℹ️ Сповіщення враховують загрози як для вашого району/громади, так і по всій області (дрони, ракети, тривоги).
       </div>
     </div>
 
@@ -625,7 +638,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       <!-- Пошук населеного пункту -->
       <div class="form-group" style="margin-bottom: 12px;">
-        <label for="inp-city-search">Знайти місто або село:</label>
+        <label for="inp-city-search">Місто або село:</label>
         <div class="search-container">
           <div class="search-input-wrap">
             <input type="text" id="inp-city-search" placeholder="Введіть назву (наприклад: Бровари, Умань, Яремче...)" autocomplete="off" oninput="onCitySearchInput(this.value)">
@@ -655,12 +668,12 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
       <!-- Кнопка автовизначення за IP -->
       <button type="button" class="btn btn-secondary" style="margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.9rem; padding: 10px;" onclick="autoDetectLocation()">
-        <span>📍</span> <span>Визначити локацію автоматично (по IP)</span>
+        <span>📍</span> <span>Визначити локацію автоматично</span>
       </button>
 
       <!-- Ручні координати для експертів (згорнуто) -->
       <details style="margin-top: 10px; border-top: 1px solid var(--card-border); padding-top: 10px;">
-        <summary>⚙️ Ручні координати (Lat / Lon)</summary>
+        <summary>⚙️ Вказати координати вручну</summary>
         <div class="grid" style="margin-top: 10px; margin-bottom: 0;">
           <div class="form-group">
             <label for="inp-lat">Широта (Lat):</label>
@@ -672,15 +685,11 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           </div>
         </div>
       </details>
-
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
-        Джерело: Open-Meteo API (безкоштовно, без ключів).
-      </div>
     </div>
 
     <!-- Будильник і Хвилина мовчання -->
     <div class="card">
-      <h2>Будильник та Меморіал</h2>
+      <h2>Будильник та вшанування</h2>
       <div class="switch-row">
         <span>Будильник увімкнено</span>
         <label class="switch">
@@ -728,8 +737,8 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <hr style="border: 0; border-top: 1px solid var(--card-border); margin: 14px 0;">
       <div class="switch-row">
         <div>
-          <div>Хвилина мовчання (09:00)</div>
-          <div style="font-size: 0.8rem; color: var(--text-muted);">Метроном та Гімн щодня о 09:00:00</div>
+          <div>Загальнонаціональна хвилина мовчання</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Метроном та Гімн щодня о 09:00</div>
         </div>
         <label class="switch">
           <input type="checkbox" id="chk-silence" onchange="autoSave({ silence_enabled: this.checked })">
@@ -773,8 +782,8 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       </div>
       <div class="switch-row" style="margin-top: 10px;">
         <div>
-          <div>Авто-індикація CO2 (LED)</div>
-          <div style="font-size: 0.8rem; color: var(--text-muted);">Кольори світлодіодів за рівнем CO2</div>
+          <div>Світлодіодна індикація CO2</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Підсвічування за рівнем вуглекислого газу</div>
         </div>
         <label class="switch">
           <input type="checkbox" id="chk-led-auto" onchange="onLedAutoToggle(this.checked)">
@@ -798,14 +807,9 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
       <div class="form-group" style="margin-top: 14px;">
-        <label for="inp-trim">Калібрування температури (°C):</label>
+        <label for="inp-trim">Поправка температури (°C): <span style="font-size: 0.75rem; color: var(--text-muted);">(компенсація нагріву корпусу)</span></label>
         <input type="number" step="0.1" min="-10" max="10" id="inp-trim" onchange="autoSave({ temp_trim: parseFloat(this.value) || 0.0 })">
       </div>
-    </div>
-
-    <!-- Підказка автозбереження -->
-    <div style="text-align: center; padding: 6px; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">
-      ⚡ Усі налаштування застосовуються та зберігаються миттєво
     </div>
 
     <!-- Мережа Wi-Fi -->
@@ -826,7 +830,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </div>
       </div>
       <div style="font-size: 0.8rem; color: var(--warning); margin-top: 10px; line-height: 1.4;">
-        ⚠️ <strong>Увага:</strong> після збереження годинник перезавантажиться для підключення. Якщо параметри будуть невірними або мережа недоступна, увімкнеться точка доступу <strong>HTRAM Setup</strong> для налаштування (або натисніть кнопку 4 рази).
+        ⚠️ Після збереження годинник перезавантажиться. Якщо нова мережа недоступна, увімкнеться точка <strong>HTRAM Setup</strong> (або натисніть кнопку 4 рази).
       </div>
       <button class="btn btn-secondary" style="margin-top: 14px; background: var(--primary); color: #000; font-weight: 600;" onclick="saveWifiSettings()">Зберегти та перепідключитись</button>
     </div>
@@ -834,9 +838,8 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     <!-- Оновлення та Інфо -->
     <div class="card" style="margin-top: 16px;">
       <h2>Система</h2>
-      <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
-        Версія прошивки: <strong style="color: #fff;" id="lbl-version">--</strong><br>
-        GD32 версія: <strong style="color: #fff;" id="lbl-gd32-ver">--</strong><br>
+      <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6;">
+        Версія прошивки: <strong style="color: #fff;" id="lbl-version">--</strong> (співпроцесор: <strong style="color: #fff;" id="lbl-gd32-ver">--</strong>)<br>
         IP адреса: <strong style="color: #fff;" id="lbl-ip">--</strong>
       </div>
       <button class="btn btn-secondary" onclick="checkUpdates()">Перевірити оновлення</button>
