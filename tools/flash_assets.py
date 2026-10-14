@@ -76,9 +76,9 @@ def upload_assets(target: str, repack: bool = False, image_file: Path | None = N
     sess = requests.Session()
     sess.auth = HTTPDigestAuth(username, password)
 
-    # Prime digest authentication with a cheap GET
+    # Prime digest authentication with a lightweight HEAD request
     try:
-        sess.get(f"http://{host}/", timeout=10)
+        sess.head(f"http://{host}/api/status", timeout=10)
     except requests.RequestException as e:
         print(f"[assets] Could not reach {host} to authenticate: {e}", file=sys.stderr)
         return 1

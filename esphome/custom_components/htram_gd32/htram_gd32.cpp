@@ -1149,15 +1149,41 @@ std::string HtramGd32Component::execute_ota(const std::vector<uint8_t> &firmware
 }
 
 std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t> &assets_data) {
+  return this->execute_assets_upload_chunked({assets_data});
+}
+
+std::string HtramGd32Component::execute_assets_upload_chunked(const std::vector<std::vector<uint8_t>> &chunks) {
   char buf[256];
-  if (assets_data.size() < 20 || assets_data.size() > 65536) {
-    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"invalid assets size (%d bytes)\"}", (int)assets_data.size());
+  size_t total_size = 0;
+  for (const auto &c : chunks) {
+    total_size += c.size();
+  }
+
+  if (total_size < 20 || total_size > 65536) {
+    snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"invalid assets size (%d bytes)\"}", (int)total_size);
     return buf;
   }
 
+  auto read_slice = [&chunks](size_t offset, uint8_t *dst, size_t len) {
+    size_t cur_off = 0;
+    size_t copied = 0;
+    for (const auto &c : chunks) {
+      if (offset < cur_off + c.size() && copied < len) {
+        size_t in_chunk = (offset > cur_off) ? (offset - cur_off) : 0;
+        size_t avail = c.size() - in_chunk;
+        size_t take = std::min(avail, len - copied);
+        memcpy(dst + copied, c.data() + in_chunk, take);
+        copied += take;
+      }
+      cur_off += c.size();
+      if (copied >= len)
+        break;
+    }
+  };
+
   // Validate magic: "HTRMASST" = 0x545353414D525448ULL
   uint64_t magic = 0;
-  memcpy(&magic, assets_data.data(), sizeof(magic));
+  read_slice(0, reinterpret_cast<uint8_t *>(&magic), sizeof(magic));
   if (magic != 0x545353414D525448ULL) {
     snprintf(buf, sizeof(buf), "{\"result\":\"error\",\"reason\":\"invalid assets container magic\"}");
     return buf;
@@ -1171,7 +1197,7 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
     return buf;
   }
 
-  ESP_LOGI(TAG, "[ASSETS] Starting graphic assets upload: %d bytes", (int)assets_data.size());
+  ESP_LOGI(TAG, "[ASSETS] Starting graphic assets upload: %d bytes", (int)total_size);
 
   // Suppress LVGL screen updates and light LEDs to indicate asset upload mode
   send_leds(1, 1, 0, 1);
@@ -1207,12 +1233,14 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
   }
 
   // 2. Write Chunks (up to 256 bytes each)
-  ESP_LOGI(TAG, "[ASSETS 2/3] Writing %d bytes in 256B chunks to 0x00040000...", (int)assets_data.size());
-  for (size_t offset = 0; offset < assets_data.size(); offset += 256) {
-    size_t chunk_len = std::min((size_t)256, assets_data.size() - offset);
+  ESP_LOGI(TAG, "[ASSETS 2/3] Writing %d bytes in 256B chunks to 0x00040000...", (int)total_size);
+  uint8_t page_buf[256];
+  for (size_t offset = 0; offset < total_size; offset += 256) {
+    size_t chunk_len = std::min((size_t)256, total_size - offset);
+    read_slice(offset, page_buf, chunk_len);
     this->last_flash_ack_cmd_ = 0;
     this->last_flash_ack_status_ = 0xFF;
-    this->send_flash_write_chunk(0x00040000 + offset, assets_data.data() + offset, chunk_len);
+    this->send_flash_write_chunk(0x00040000 + offset, page_buf, chunk_len);
     this->flush();
 
     uint32_t wstart = millis();
@@ -1236,10 +1264,16 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
 
   // 3. Verify CRC32
   ESP_LOGI(TAG, "[ASSETS 3/3] Verifying CRC32 on SPI Flash...");
-  uint32_t host_crc32 = crc32_ieee(assets_data.data(), assets_data.size());
+  uint32_t crc = 0xFFFFFFFFUL;
+  for (const auto &c : chunks) {
+    for (uint8_t b : c) {
+      crc = crc32_ieee_update(crc, b);
+    }
+  }
+  uint32_t host_crc32 = ~crc;
   this->last_flash_ack_cmd_ = 0;
   this->last_flash_ack_status_ = 0xFF;
-  this->send_flash_verify_crc(0x00040000, assets_data.size(), host_crc32);
+  this->send_flash_verify_crc(0x00040000, total_size, host_crc32);
   this->flush();
 
   uint32_t vstart = millis();
@@ -1259,14 +1293,14 @@ std::string HtramGd32Component::execute_assets_upload(const std::vector<uint8_t>
   }
 
   ESP_LOGI(TAG, "[ASSETS] Upload and verification SUCCESSFUL! (%d bytes, CRC32=0x%08X)",
-           (int)assets_data.size(), (unsigned)host_crc32);
+           (int)total_size, (unsigned)host_crc32);
 
   rx_buffer_.clear();
   this->set_ota_mode(false);
   resend_leds();
 
   snprintf(buf, sizeof(buf), "{\"result\":\"ok\",\"bytes_written\":%d,\"crc32\":%u}",
-           (int)assets_data.size(), (unsigned)host_crc32);
+           (int)total_size, (unsigned)host_crc32);
   return buf;
 }
 
@@ -1828,16 +1862,10 @@ bool HtramGd32Component::perform_remote_assets_update(http_request::HttpRequestC
     return false;
   }
 
-  size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-  if (largest < total_size + 2048) {
-    ESP_LOGE(TAG, "[OTA ASSETS] Not enough contiguous heap for assets (need %u, largest %u), skipping",
-             (unsigned)(total_size + 2048), (unsigned)largest);
-    container->end();
-    return false;
-  }
-
-  std::vector<uint8_t> data;
-  data.reserve(total_size);
+  static constexpr size_t CHUNK_CAP = 4096;
+  std::vector<std::vector<uint8_t>> chunks;
+  chunks.reserve(16);
+  size_t downloaded_size = 0;
 
   uint8_t buf[512];
   uint32_t last_data_time = millis();
@@ -1860,19 +1888,38 @@ bool HtramGd32Component::perform_remote_assets_update(http_request::HttpRequestC
       return false;
     }
 
-    data.insert(data.end(), buf, buf + read_bytes);
+    size_t pos = 0;
+    size_t len = (size_t)read_bytes;
+    while (pos < len) {
+      if (chunks.empty() || chunks.back().size() == CHUNK_CAP) {
+        size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        if (largest < CHUNK_CAP + 2048) {
+          ESP_LOGE(TAG, "[OTA ASSETS] Not enough heap for 4KB chunk (largest %u), skipping", (unsigned)largest);
+          container->end();
+          return false;
+        }
+        chunks.emplace_back();
+        chunks.back().reserve(CHUNK_CAP);
+      }
+      auto &cur = chunks.back();
+      size_t space = CHUNK_CAP - cur.size();
+      size_t to_copy = std::min(space, len - pos);
+      cur.insert(cur.end(), buf + pos, buf + pos + to_copy);
+      pos += to_copy;
+      downloaded_size += to_copy;
+    }
   }
 
   container->end();
 
-  if (data.size() != total_size) {
-    ESP_LOGE(TAG, "[OTA ASSETS] Size mismatch: read %u bytes, expected %u", (unsigned)data.size(), (unsigned)total_size);
+  if (downloaded_size != total_size) {
+    ESP_LOGE(TAG, "[OTA ASSETS] Size mismatch: read %u bytes, expected %u", (unsigned)downloaded_size, (unsigned)total_size);
     return false;
   }
 
-  ESP_LOGI(TAG, "[OTA ASSETS] Downloaded %u bytes. Applying to SPI Flash...", (unsigned)data.size());
-  std::string res = this->execute_assets_upload(data);
-  std::vector<uint8_t>().swap(data);
+  ESP_LOGI(TAG, "[OTA ASSETS] Downloaded %u bytes. Applying to SPI Flash...", (unsigned)downloaded_size);
+  std::string res = this->execute_assets_upload_chunked(chunks);
+  std::vector<std::vector<uint8_t>>().swap(chunks);
   ESP_LOGI(TAG, "[OTA ASSETS] Result: %s", res.c_str());
   return res.find("\"result\":\"ok\"") != std::string::npos;
 }
