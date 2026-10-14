@@ -264,6 +264,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   // Returns JSON string with result
   std::string execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery);
   std::string execute_assets_upload(const std::vector<uint8_t> &assets_data);
+  std::string execute_assets_upload_chunked(const std::vector<std::vector<uint8_t>> &chunks);
 
 #ifndef USE_ESP32
   bool perform_remote_assets_update(void *http_client = nullptr, const std::string &url = "") { return true; }
@@ -550,6 +551,8 @@ class Gd32OtaHandler : public AsyncWebHandler {
 
 class Gd32AssetsHandler : public AsyncWebHandler {
  public:
+  static constexpr size_t CHUNK_CAP = 4096;
+
   Gd32AssetsHandler(HtramGd32Component *parent) : parent_(parent) {}
 
   bool canHandle(AsyncWebServerRequest *request) const override {
@@ -560,27 +563,66 @@ class Gd32AssetsHandler : public AsyncWebHandler {
   }
 
   void handleRequest(AsyncWebServerRequest *request) override {
-    if (this->assets_data_.empty()) {
+    if (this->staging_failed_) {
+      request->send(507, "application/json",
+                    "{\"result\":\"error\",\"stage\":\"staging\","
+                    "\"reason\":\"not enough heap to stage assets\"}");
+      std::vector<std::vector<uint8_t>>().swap(this->chunks_);
+      this->total_size_ = 0;
+      return;
+    }
+    if (this->total_size_ == 0 || this->chunks_.empty()) {
       request->send(400, "application/json", "{\"result\":\"error\",\"reason\":\"no file uploaded\"}");
       return;
     }
-    std::string res = this->parent_->execute_assets_upload(this->assets_data_);
+    std::string res = this->parent_->execute_assets_upload_chunked(this->chunks_);
     request->send(200, "application/json", res.c_str());
-    std::vector<uint8_t>().swap(this->assets_data_);
+    std::vector<std::vector<uint8_t>>().swap(this->chunks_);
+    this->total_size_ = 0;
   }
 
   void handleUpload(AsyncWebServerRequest *request, const PlatformString &filename, size_t index, uint8_t *data, size_t len, bool final) override {
     if (index == 0) {
-      std::vector<uint8_t>().swap(this->assets_data_);
+      std::vector<std::vector<uint8_t>>().swap(this->chunks_);
+      this->total_size_ = 0;
+      this->staging_failed_ = false;
+      this->chunks_.reserve(16);
     }
-    if (len > 0) {
-      this->assets_data_.insert(this->assets_data_.end(), data, data + len);
+    if (this->staging_failed_)
+      return;
+    if (this->total_size_ + len > 65536) {
+      this->staging_failed_ = true;
+      std::vector<std::vector<uint8_t>>().swap(this->chunks_);
+      return;
+    }
+    size_t pos = 0;
+    while (pos < len) {
+      if (this->chunks_.empty() || this->chunks_.back().size() == CHUNK_CAP) {
+        size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        if (largest < CHUNK_CAP + 2048) {
+          ESP_LOGE("htram_gd32", "[ASSETS] refusing: need %u B chunk, largest free block is %u B",
+                   (unsigned) (CHUNK_CAP + 2048), (unsigned) largest);
+          this->staging_failed_ = true;
+          std::vector<std::vector<uint8_t>>().swap(this->chunks_);
+          return;
+        }
+        this->chunks_.emplace_back();
+        this->chunks_.back().reserve(CHUNK_CAP);
+      }
+      auto &cur = this->chunks_.back();
+      size_t space = CHUNK_CAP - cur.size();
+      size_t to_copy = std::min(space, len - pos);
+      cur.insert(cur.end(), data + pos, data + pos + to_copy);
+      pos += to_copy;
+      this->total_size_ += to_copy;
     }
   }
 
  private:
   HtramGd32Component *parent_;
-  std::vector<uint8_t> assets_data_;
+  std::vector<std::vector<uint8_t>> chunks_;
+  size_t total_size_{0};
+  bool staging_failed_{false};
 };
 #endif  // HTRAM_HAS_WEB_HANDLERS
 
