@@ -11,6 +11,8 @@
 
 substitutions:
   alert_start_rtttl: "AlertOn:d=8,o=6,b=180:a,b,c7,16p,a,b,c7"
+  alert_escalate_rtttl: "AlertUp:d=16,o=6,b=200:c7,e7,c7,e7,8p,c7,e7,c7,e7,8p,c7,e7,c7,4e7"
+  alert_deescalate_rtttl: "AlertDown:d=8,o=6,b=180:e7,a,16p,c7,a"
   alert_clear_rtttl: "AlertOff:d=8,o=6,b=180:c7,b,a"
   alert_mark_minutes: "5"
   jaam_host: "ws.jaam.net.ua"
@@ -37,14 +39,18 @@ jaam_ws:
           const bool yellow = flags & (1u << 11);
           const bool red    = flags & (1u << 12);
           const bool air    = (flags & (1u << 0)) || yellow || red;
+          const bool new_yellow = yellow && !red;
+          const bool prev_air = id(alert_active);
+          const bool prev_yellow = id(alert_yellow);
+
           id(alert_ballistic) = flags & (1u << 8);
           id(alert_kab)       = flags & (1u << 7);
           id(alert_missile)   = flags & (1u << 6);
           id(alert_drone)     = flags & (1u << 5);
           id(alert_recon)     = flags & (1u << 10);
-          id(alert_yellow)    = yellow && !red;
+          id(alert_yellow)    = new_yellow;
 
-          if (air != id(alert_active)) {
+          if (air != prev_air) {
             id(alert_active) = air;
             auto now = id(ha_time).now();
             if (!now.is_valid()) now = id(net_time).now();
@@ -52,14 +58,17 @@ jaam_ws:
             const uint32_t ts = now.is_valid() ? now.timestamp : (uint32_t) epoch;
             if (air) {
               id(alert_mark_until) = 0;
-              id(alert_mark_color) = id(alert_yellow) ? 0xFFC53D : 0xE5484D;
+              id(alert_mark_color) = new_yellow ? 0xFFC53D : 0xE5484D;
             } else {
               id(alert_mark_until) = ts + ${alert_mark_minutes} * 60;
               id(alert_mark_color) = 0x3DD68C;
             }
             id(play_alert_sound).execute(air);
           } else if (air) {
-            id(alert_mark_color) = id(alert_yellow) ? 0xFFC53D : 0xE5484D;
+            id(alert_mark_color) = new_yellow ? 0xFFC53D : 0xE5484D;
+            if (new_yellow != prev_yellow) {
+              id(play_alert_level_sound).execute(!new_yellow);
+            }
           }
           id(set_system_alert_active).execute(air);
       - script.execute: refresh_alert_marks
@@ -132,10 +141,25 @@ script:
       air: bool
     mode: restart
     then:
+      - script.stop: play_alert_level_sound
       - lambda: |-
           id(htram_arbiter_hub)->play_rtttl(40, "alert", air ? "${alert_start_rtttl}"
                                                              : "${alert_clear_rtttl}");
       - delay: 2s
+      - lambda: |-
+          id(htram_arbiter_hub)->stop_sound("alert");
+
+  - id: play_alert_level_sound
+    parameters:
+      escalated: bool
+    mode: restart
+    then:
+      - script.stop: play_alert_sound
+      - lambda: |-
+          id(htram_arbiter_hub)->play_rtttl(
+              40, "alert",
+              escalated ? "${alert_escalate_rtttl}" : "${alert_deescalate_rtttl}");
+      - delay: 2500ms
       - lambda: |-
           id(htram_arbiter_hub)->stop_sound("alert");
 

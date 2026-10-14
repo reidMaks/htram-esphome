@@ -629,3 +629,84 @@ def test_t3_07_threat_type_transition_clearing():
     arbiter.ops_log.clear()
     feature.on_screen_drawn()
     assert len(arbiter.ops_log) == 0, "No icon should be drawn after all-clear"
+
+
+def test_alert_level_change_sound_transitions():
+    """Verify that changing alert level between Yellow and Red triggers distinct escalation/de-escalation sounds."""
+    from pathlib import Path
+
+    import yaml
+
+    alert_yaml_path = Path(__file__).resolve().parents[2] / "esphome" / "features" / "alert.yaml"
+    raw_text = alert_yaml_path.read_text(encoding="utf-8")
+
+    class IgnoreTagsLoader(yaml.SafeLoader):
+        pass
+
+    IgnoreTagsLoader.add_multi_constructor(
+        "!",
+        lambda loader, suffix, node: (
+            loader.construct_scalar(node) if isinstance(node, yaml.ScalarNode) else None
+        ),
+    )
+    cfg = yaml.load(raw_text, Loader=IgnoreTagsLoader)
+    subs = cfg.get("substitutions", {})
+
+    start_rtttl = subs.get("alert_start_rtttl")
+    escalate_rtttl = subs.get("alert_escalate_rtttl")
+    deescalate_rtttl = subs.get("alert_deescalate_rtttl")
+    clear_rtttl = subs.get("alert_clear_rtttl")
+
+    assert start_rtttl, "alert_start_rtttl must be defined"
+    assert escalate_rtttl, "alert_escalate_rtttl must be defined"
+    assert deescalate_rtttl, "alert_deescalate_rtttl must be defined"
+    assert clear_rtttl, "alert_clear_rtttl must be defined"
+
+    # Must all be distinct melodies
+    assert len({start_rtttl, escalate_rtttl, deescalate_rtttl, clear_rtttl}) == 4, (
+        "Start, escalate (yellow->red), de-escalate (red->yellow), and clear RTTTL melodies must be distinct"
+    )
+    assert "play_alert_level_sound" in raw_text
+
+    # Simulate state transitions matching alert.yaml on_flags lambda
+    sounds_played: list[str] = []
+    alert_active = False
+    alert_yellow = False
+
+    def on_flags(flags: int) -> None:
+        nonlocal alert_active, alert_yellow
+        yellow = bool(flags & (1 << 11))
+        red = bool(flags & (1 << 12))
+        air = bool(flags & (1 << 0)) or yellow or red
+        new_yellow = yellow and not red
+        prev_air = alert_active
+        prev_yellow = alert_yellow
+        alert_yellow = new_yellow
+
+        if air != prev_air:
+            alert_active = air
+            sounds_played.append(start_rtttl if air else clear_rtttl)
+        elif air:
+            if new_yellow != prev_yellow:
+                sounds_played.append(escalate_rtttl if not new_yellow else deescalate_rtttl)
+
+    # 1. Start with Yellow alert (bit 11) -> plays start sound
+    on_flags(1 << 11)
+    assert sounds_played == [start_rtttl]
+
+    # 2. Escalate Yellow -> Red (bit 12) -> plays urgent escalation sound (NOT start sound)
+    on_flags(1 << 12)
+    assert sounds_played[-1] == escalate_rtttl
+    assert sounds_played[-1] != start_rtttl
+
+    # 3. Same Red level with extra threat bit (bit 6 missile) -> no duplicate sound
+    on_flags((1 << 12) | (1 << 6))
+    assert len(sounds_played) == 2
+
+    # 4. De-escalate Red -> Yellow (bit 11 only) -> plays de-escalation sound
+    on_flags(1 << 11)
+    assert sounds_played[-1] == deescalate_rtttl
+
+    # 5. All-clear (0) -> plays clear sound
+    on_flags(0)
+    assert sounds_played[-1] == clear_rtttl
