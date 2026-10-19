@@ -90,9 +90,8 @@ flowchart TD
 ### 2.2 Release Checklist
 
 #### Step 1: Version Bumps
-- **ESPHome Firmware**: Increment `firmware_version` in:
+- **ESPHome Firmware**: Increment `firmware_version` in `esphome/htram-core.yaml` (single source of truth inherited by all device configs):
   - `esphome/htram-core.yaml`: `firmware_version: "X.Y.Z"`
-  - `esphome/htram.yaml`: `firmware_version: "X.Y.Z"`
 - **GD32 Coprocessor Firmware** (if `firmware/gd32/` changed):
   - `firmware/gd32/inc/protocol.h`:
     `#define GD32_FW_VERSION 0x0132 /* v1.3.2 */`

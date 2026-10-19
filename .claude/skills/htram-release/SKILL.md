@@ -43,7 +43,7 @@ HTRAM is a dual-microcontroller system with external SPI Flash storage. Every pu
 ### Component Versioning Rules
 | Component | Source Location | Version Format | How It Is Tracked |
 | :--- | :--- | :--- | :--- |
-| **ESPHome App** | `esphome/htram-core.yaml`<br>`esphome/htram.yaml` | SemVer `2.X.Y` | `firmware_version: "2.X.Y"` |
+| **ESPHome App** | `esphome/htram-core.yaml` | SemVer `2.X.Y` | `firmware_version: "2.X.Y"` |
 | **GD32 Coprocessor** | `firmware/gd32/inc/protocol.h` | Hex SemVer `0x0132` | `#define GD32_FW_VERSION 0x0132 /* v1.3.2 */` |
 | **Graphic Assets** | `firmware/gd32/assets/` | CRC32 Container | `make pack-assets validate-assets` |
 
@@ -54,13 +54,8 @@ HTRAM is a dual-microcontroller system with external SPI Flash storage. Every pu
 ### Step 1: Version Bumps
 When preparing a release, increment the versions according to the scope of changes:
 
-1. **ESPHome Firmware**:
+1. **ESPHome Firmware** (single source of truth in `esphome/htram-core.yaml`, inherited by all device configs and `ESPHOME_PROJECT_VERSION`):
    - `esphome/htram-core.yaml`:
-     ```yaml
-     substitutions:
-       firmware_version: "2.1.3"
-     ```
-   - `esphome/htram.yaml`:
      ```yaml
      substitutions:
        firmware_version: "2.1.3"

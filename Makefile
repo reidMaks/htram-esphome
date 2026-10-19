@@ -21,12 +21,13 @@ MOCKS_DIR    := tests/mocks
 GD32_INC     := firmware/gd32/inc
 GD32_SRC     := firmware/gd32/src
 ESPHOME_COMP := esphome/custom_components/htram_gd32
+JAAM_WS_COMP := esphome/custom_components/jaam_ws
 
 CFLAGS   := -Wall -Wextra -g -O0 -fprofile-arcs -ftest-coverage \
             -I$(UNITY_DIR) -I$(MOCKS_DIR) -I$(GD32_INC)
 CXXFLAGS := -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -g -O0 \
             -fprofile-arcs -ftest-coverage \
-            -I. -I$(UNITY_DIR) -I$(MOCKS_DIR) -I$(MOCKS_DIR)/esphome -I$(ESPHOME_COMP)
+            -I. -I$(UNITY_DIR) -I$(MOCKS_DIR) -I$(MOCKS_DIR)/esphome -I$(ESPHOME_COMP) -I$(JAAM_WS_COMP)
 
 TEST_DIR := tests
 TEST_BIN_PROTOCOL := $(TEST_DIR)/test_protocol_engine_bin
@@ -143,7 +144,9 @@ $(TEST_BIN_ESPHOME): $(TEST_DIR)/esphome_component/test_htram_gd32.cpp \
                      $(MOCKS_DIR)/mock_esphome.cpp \
                      $(UNITY_DIR)/unity.c \
                      esphome/custom_components/htram_gd32/htram_gd32.cpp \
-                     esphome/custom_components/htram_gd32/htram_gd32.h
+                     esphome/custom_components/htram_gd32/htram_gd32.h \
+                     esphome/custom_components/jaam_ws/jaam_ws.cpp \
+                     esphome/custom_components/jaam_ws/jaam_ws.h
 	$(CXX) $(CXXFLAGS) $(TEST_DIR)/esphome_component/test_htram_gd32.cpp $(MOCKS_DIR)/mock_esphome.cpp $(UNITY_DIR)/unity.c -o $@
 
 # ── Python Tools Tests ──────────────────────────────────────────────────────
@@ -198,6 +201,9 @@ lint-c:
 	$(CXX) -fanalyzer -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -fsyntax-only \
 	      -I. -I$(UNITY_DIR) -I$(MOCKS_DIR) -I$(MOCKS_DIR)/esphome -I$(ESPHOME_COMP) \
 	      $(ESPHOME_COMP)/htram_gd32.cpp
+	$(CXX) -fanalyzer -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -fsyntax-only \
+	      -I. -I$(UNITY_DIR) -I$(MOCKS_DIR) -I$(MOCKS_DIR)/esphome -I$(JAAM_WS_COMP) \
+	      $(JAAM_WS_COMP)/jaam_ws.cpp
 
 lint-yaml:
 	@echo "==> Running yamllint on ESPHome configurations..."
