@@ -93,10 +93,30 @@ class JaamWsComponent : public Component {
   void restart_client();
   void clear_fusion_state();
   void touch_last_seen() {
-#ifdef USE_ESP_IDF
     this->last_seen_ms_ = millis();
-#endif
   }
+
+  std::string build_chip_id_message() const;
+  std::string build_firmware_message() const;
+
+  void on_ws_connected();
+  void notify_session_ended();
+  void on_ws_rejected();
+  void request_reconnect() { this->reconnect_requested_ = true; }
+  void schedule_reconnect(uint32_t now_ms);
+  uint32_t apply_jitter(uint32_t base_ms) const;
+
+  bool has_last_hash() const { return has_last_hash_; }
+  uint16_t last_hash() const { return last_hash_; }
+  uint32_t backoff_base_ms() const { return backoff_base_ms_; }
+  uint32_t next_reconnect_ms() const { return next_reconnect_ms_; }
+  bool is_reconnect_requested() const { return reconnect_requested_; }
+
+  static constexpr uint32_t INITIAL_BACKOFF_MS = 5000;   // 5 s initial retry delay
+  static constexpr uint32_t MAX_BACKOFF_MS     = 300000; // 300 s (5 min) max retry delay
+  static constexpr uint32_t STABLE_CONN_MS     = 60000;  // 60 s uptime required to reset backoff
+  static constexpr uint32_t DEAD_LINK_MS       = 90000;  // 90 s silence timeout (server pings every 20s)
+  static constexpr uint32_t NOTIF_TTL_MS       = 180000; // 3 min display TTL for one-shot 0xA2 events
 
   // Simulation helper: inject alert flags in tests or host environment
   void simulate_flags(uint32_t flags) {
@@ -114,6 +134,7 @@ class JaamWsComponent : public Component {
   uint16_t state_id_{31};
   int region_index_{25};
   bool connected_{false};
+  bool was_connected_{false};
 
   // Fusion state (static flat table indexed by region_id, 0 heap allocations)
   static constexpr size_t MAX_ALERT_REGIONS = 2000;
@@ -121,6 +142,22 @@ class JaamWsComponent : public Component {
   uint16_t notif_flags_region_{0};
   uint16_t notif_flags_district_{0};
   uint16_t notif_flags_state_{0};
+  uint32_t notif_expires_ms_{0};
+  bool has_last_hash_{false};
+  uint16_t last_hash_{0};
+
+  // Reconnection & backoff state (JAAM Server API compliance)
+  uint32_t backoff_base_ms_{INITIAL_BACKOFF_MS};
+  uint32_t next_reconnect_ms_{0};
+  uint32_t connected_since_ms_{0};
+  uint32_t last_seen_ms_{0};
+  volatile bool reconnect_requested_{false};
+  volatile bool session_ended_{false};
+  volatile bool penalty_max_backoff_{false};
+
+  // Binary frame reassembly buffer
+  uint8_t rx_bin_buf_[4096] = {0};
+  size_t rx_bin_len_{0};
 
   // Legacy data_v4 state
   uint8_t alerts_status_[32] = {0};
@@ -143,10 +180,6 @@ class JaamWsComponent : public Component {
 #ifdef USE_ESP_IDF
   esp_websocket_client_handle_t client_{nullptr};
   std::string rx_buf_;
-  uint8_t rx_bin_buf_[4096];
-  size_t rx_bin_len_{0};
-  uint32_t last_reconnect_attempt_ms_{0};
-  uint32_t last_seen_ms_{0};
 #endif
 };
 

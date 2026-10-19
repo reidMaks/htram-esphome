@@ -32,12 +32,13 @@ the time, and the front LED bar showing CO2 at a glance](docs/device-clock.jpg)
 - **A minute of silence at 09:00**: Exact time-synchronized national
   commemoration with 60-second metronome beeps, national emblem (Tryzub)
   blitted from SPI Flash, and the State Anthem.
-- **Air raid alerts & threat tracking**: Read straight off a [JAAM alert
-  map](https://github.com/J-A-A-M/ukraine_alarm_map) on the LAN over its
-  WebSocket — deliberately not through Home Assistant, which may be restarting
-  exactly when it matters. Displays dedicated icons for threat types (missiles,
-  drones, ballistic, guided aerial bombs / KAB, reconnaissance UAVs) and plays
-  RTTTL audio alerts.
+- **Air raid alerts & threat tracking**: Real-time alerts powered by
+  [JAAM (jaam.net.ua)](https://jaam.net.ua) over its Fusion WebSocket API
+  (`ws.jaam.net.ua/data_fusion_v1`) — deliberately not through Home Assistant,
+  which may be restarting exactly when it matters. Displays dedicated icons for
+  threat types (missiles, drones, ballistic, guided aerial bombs / KAB,
+  reconnaissance UAVs) and plays RTTTL audio alerts. Data:
+  [JAAM (jaam.net.ua)](https://jaam.net.ua).
 - **Standby** on a long press, with a charge screen the GD32 draws by itself.
 - **Cached graphic assets on SPI Flash (v1.2.0)**: 25 monochrome bitmap icons
   (weather, threats, alerts, Tryzub) reside in external SPI Flash (`0x040000`)

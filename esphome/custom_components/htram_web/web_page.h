@@ -619,7 +619,8 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </select>
       </div>
       <div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.4;">
-        ℹ️ Сповіщення враховують загрози як для вашого району/громади, так і по всій області (дрони, ракети, тривоги).
+        ℹ️ Сповіщення враховують загрози як для вашого району/громади, так і по всій області (дрони, ракети, тривоги).<br>
+        Дані: <a href="https://jaam.net.ua" target="_blank" rel="noopener" style="color: var(--primary); text-decoration: none;">JAAM (jaam.net.ua)</a>
       </div>
     </div>
 

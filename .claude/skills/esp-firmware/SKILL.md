@@ -63,7 +63,7 @@ make ota-esp DEVICE=office     # or bedroom, living, <ip>
 ## Public Releases & 1-Click Update
 
 When publishing firmware for users to download and install, do **NOT** flash physical devices manually one by one. Follow the standardized release lifecycle:
-1. Increment `firmware_version` in `esphome/htram-core.yaml` and `esphome/htram.yaml`.
+1. Increment `firmware_version` in `esphome/htram-core.yaml` (single source of truth).
 2. Increment `GD32_FW_VERSION` in `firmware/gd32/inc/protocol.h` (if GD32 changed).
 3. Document changes in `docs/RELEASE_NOTES_v<version>.md`.
 4. Validate with `make build-gd32`, `make test-gd32`, `make lint`, and `make test`.

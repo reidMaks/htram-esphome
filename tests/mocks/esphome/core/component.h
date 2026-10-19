@@ -12,12 +12,17 @@ extern uint32_t mock_esphome_millis;
 inline uint32_t millis() { return mock_esphome_millis; }
 inline void delay(uint32_t ms) { mock_esphome_millis += ms; }
 
+namespace setup_priority {
+constexpr float AFTER_WIFI = 250.0f;
+}  // namespace setup_priority
+
 class Component {
  public:
   virtual ~Component() = default;
   virtual void setup() {}
   virtual void loop() {}
   virtual void dump_config() {}
+  virtual float get_setup_priority() const { return 0.0f; }
 
   void set_timeout(const std::string &name, uint32_t timeout, std::function<void()> &&func) {
     (void)timeout;

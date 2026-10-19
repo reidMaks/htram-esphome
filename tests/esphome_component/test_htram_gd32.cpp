@@ -7,9 +7,11 @@ extern "C" {
 }
 
 #include "esphome/custom_components/htram_gd32/htram_gd32.cpp"
+#include "esphome/custom_components/jaam_ws/jaam_ws.cpp"
 
 using namespace esphome;
 using namespace esphome::htram_gd32;
+using namespace esphome::jaam_ws;
 
 class TestableHtramGd32 : public HtramGd32Component {
  public:
@@ -1271,6 +1273,164 @@ void test_setup_and_dump_config(void) {
   TEST_ASSERT_EQUAL(2, srv.handlers.size());
 }
 
+// ---------------------------------------------------------------------------
+// 16. JAAM WebSocket Server API Compliance Tests
+// ---------------------------------------------------------------------------
+void test_jaam_ws_handshake_chip_id_and_firmware(void) {
+  JaamWsComponent ws;
+  uint8_t custom_mac[6] = {0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6};
+  std::memcpy(esphome::mock_mac_address, custom_mac, 6);
+
+  std::string chip_msg = ws.build_chip_id_message();
+  TEST_ASSERT_EQUAL_STRING("chip_id:A1B2C3D4E5F6", chip_msg.c_str());
+
+  std::string fw_msg = ws.build_firmware_message();
+  TEST_ASSERT_EQUAL_INT(0, strncmp(fw_msg.c_str(), "firmware:", 9));
+  TEST_ASSERT_TRUE(fw_msg.size() > 9);
+}
+
+void test_jaam_ws_0xa1_hash_chain_and_malformed_frames(void) {
+  JaamWsComponent ws;
+  ws.set_region_id(31);  // Kyiv
+  ws.setup();
+  ws.clear_fusion_state();
+
+  // 1. Malformed 0xA1 frames (too short or body not divisible by 4) -> ignored
+  uint8_t short_a1[] = {0xA1, 0x01, 0x00};
+  ws.on_ws_binary(short_a1, sizeof(short_a1), 0, sizeof(short_a1), true);
+  TEST_ASSERT_FALSE(ws.has_last_hash());
+  TEST_ASSERT_FALSE(ws.is_reconnect_requested());
+
+  uint8_t unaligned_a1[] = {0xA1, 0x10, 0x00, 0x00, 0x00, 0x1F, 0x00, 0x01};
+  ws.on_ws_binary(unaligned_a1, sizeof(unaligned_a1), 0, sizeof(unaligned_a1), true);
+  TEST_ASSERT_FALSE(ws.has_last_hash());
+  TEST_ASSERT_FALSE(ws.is_reconnect_requested());
+
+  // 2. Initial 0xA1 packet (hash_actual=0x1234, hash_prev=0x0000, region 31 -> bit 11 yellow)
+  uint8_t init_a1[] = {
+      0xA1, 0x34, 0x12,  // hash_actual = 0x1234
+      0x00, 0x00,        // hash_previous = 0x0000 (ignored on first packet)
+      31,   0x00,        // region_id = 31
+      0x00, 0x08         // flags = (1 << 11) yellow
+  };
+  ws.on_ws_binary(init_a1, sizeof(init_a1), 0, sizeof(init_a1), true);
+  ws.loop();
+  TEST_ASSERT_TRUE(ws.has_last_hash());
+  TEST_ASSERT_EQUAL_HEX16(0x1234, ws.last_hash());
+  TEST_ASSERT_TRUE(ws.is_air_raid());
+  TEST_ASSERT_TRUE(ws.is_yellow());
+  TEST_ASSERT_FALSE(ws.is_reconnect_requested());
+
+  // 3. Valid diff 0xA1 packet (hash_actual=0x5678, hash_prev=0x1234, region 31 -> bit 12 red)
+  uint8_t diff_ok[] = {
+      0xA1, 0x78, 0x56,  // hash_actual = 0x5678
+      0x34, 0x12,        // hash_previous = 0x1234 (matches last_hash)
+      31,   0x00,        // region_id = 31
+      0x00, 0x10         // flags = (1 << 12) red
+  };
+  ws.on_ws_binary(diff_ok, sizeof(diff_ok), 0, sizeof(diff_ok), true);
+  ws.loop();
+  TEST_ASSERT_EQUAL_HEX16(0x5678, ws.last_hash());
+  TEST_ASSERT_TRUE(ws.is_red());
+  TEST_ASSERT_FALSE(ws.is_reconnect_requested());
+
+  // 4. Unknown packet types (0xA3 weather, 0xFF unknown) -> ignored without error
+  uint8_t weather_pkt[] = {0xA3, 31, 0x00, 20};
+  ws.on_ws_binary(weather_pkt, sizeof(weather_pkt), 0, sizeof(weather_pkt), true);
+  uint8_t unknown_pkt[] = {0xFF, 0x01, 0x02};
+  ws.on_ws_binary(unknown_pkt, sizeof(unknown_pkt), 0, sizeof(unknown_pkt), true);
+  TEST_ASSERT_FALSE(ws.is_reconnect_requested());
+
+  // 5. Broken hash chain 0xA1 packet (hash_prev=0x9999 != 0x5678) -> rejected & triggers reconnect!
+  uint8_t diff_broken[] = {
+      0xA1, 0xAA, 0xBB,  // hash_actual = 0xBBAA
+      0x99, 0x99,        // hash_previous = 0x9999 (mismatch!)
+      31,   0x00,        // region_id = 31
+      0x00, 0x00         // flags = 0 (clear)
+  };
+  ws.on_ws_binary(diff_broken, sizeof(diff_broken), 0, sizeof(diff_broken), true);
+  TEST_ASSERT_TRUE(ws.is_reconnect_requested());
+  // State must not be overwritten by the out-of-sync diff
+  TEST_ASSERT_EQUAL_HEX16(0x5678, ws.last_hash());
+  TEST_ASSERT_TRUE(ws.is_red());
+}
+
+void test_jaam_ws_0xa2_notifications_ttl(void) {
+  mock_esphome_millis = 10000;
+  JaamWsComponent ws;
+  ws.set_region_id(31);
+  ws.setup();
+  ws.clear_fusion_state();
+
+  // Start alert in region 31
+  uint8_t init_a1[] = {0xA1, 0x01, 0x00, 0x00, 0x00, 31, 0x00, 0x00, 0x10};
+  ws.on_ws_binary(init_a1, sizeof(init_a1), 0, sizeof(init_a1), true);
+  ws.loop();
+  TEST_ASSERT_FALSE(ws.is_ballistic());
+
+  // Receive 0xA2 ballistic notification (bit 8 = 0x0100) for region 31
+  uint8_t notif_kyiv[] = {0xA2, 31, 0x00, 0x00, 0x01};
+  ws.on_ws_binary(notif_kyiv, sizeof(notif_kyiv), 0, sizeof(notif_kyiv), true);
+  ws.loop();
+  TEST_ASSERT_TRUE(ws.is_ballistic());
+
+  // Receive 0xA2 notification for unrelated region 22 (Kharkiv) -> must NOT clear Kyiv notification
+  uint8_t notif_other[] = {0xA2, 22, 0x00, 0x20, 0x00};
+  ws.on_ws_binary(notif_other, sizeof(notif_other), 0, sizeof(notif_other), true);
+  ws.loop();
+  TEST_ASSERT_TRUE(ws.is_ballistic());
+
+  // Advance time past NOTIF_TTL_MS (180s) -> notification expires automatically
+  mock_esphome_millis += JaamWsComponent::NOTIF_TTL_MS + 1000;
+  ws.loop();
+  TEST_ASSERT_FALSE(ws.is_ballistic());
+  TEST_ASSERT_TRUE(ws.is_red());  // Base alert from 0xA1 remains active
+}
+
+void test_jaam_ws_exponential_backoff_jitter_and_1008_penalty(void) {
+  mock_esphome_millis = 1000;
+  JaamWsComponent ws;
+  ws.setup();
+
+  // Expected base progression: 5s -> 10s -> 20s -> 40s -> 80s -> 160s -> 300s -> 300s
+  const uint32_t expected_bases[] = {5000, 10000, 20000, 40000, 80000, 160000, 300000, 300000};
+  for (size_t i = 0; i < sizeof(expected_bases) / sizeof(expected_bases[0]); i++) {
+    uint32_t base = expected_bases[i];
+    TEST_ASSERT_EQUAL_UINT32(base, ws.backoff_base_ms());
+
+    // Connection drops after only 10 seconds (< 60s threshold) -> does not reset backoff
+    mock_esphome_millis += 10000;
+    ws.notify_session_ended();
+    ws.loop();
+
+    uint32_t scheduled_wait = ws.next_reconnect_ms() - mock_esphome_millis;
+    TEST_ASSERT_TRUE(scheduled_wait >= (base * 80) / 100);
+    TEST_ASSERT_TRUE(scheduled_wait <= (base * 120) / 100);
+
+    // Reconnect starts
+    mock_esphome_millis = ws.next_reconnect_ms();
+    ws.start_client();
+  }
+
+  // Now simulate a stable connection lasting >= 60s (e.g., 65s) -> resets backoff to 5s!
+  mock_esphome_millis += 65000;
+  ws.notify_session_ended();
+  ws.loop();
+  uint32_t reset_wait = ws.next_reconnect_ms() - mock_esphome_millis;
+  TEST_ASSERT_TRUE(reset_wait >= 4000 && reset_wait <= 6000);
+  TEST_ASSERT_EQUAL_UINT32(10000, ws.backoff_base_ms());
+
+  // Now simulate server policy violation (close code 1008) even after >60s -> jumps to max 300s!
+  mock_esphome_millis = ws.next_reconnect_ms();
+  ws.start_client();
+  mock_esphome_millis += 120000;
+  ws.on_ws_rejected();
+  ws.loop();
+  uint32_t penalty_wait = ws.next_reconnect_ms() - mock_esphome_millis;
+  TEST_ASSERT_TRUE(penalty_wait >= 240000 && penalty_wait <= 360000);
+  TEST_ASSERT_EQUAL_UINT32(300000, ws.backoff_base_ms());
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_batt_mv_to_pct_logic);
@@ -1303,5 +1463,9 @@ int main(void) {
   RUN_TEST(test_execute_assets_upload_success);
   RUN_TEST(test_assets_web_handler);
   RUN_TEST(test_setup_and_dump_config);
+  RUN_TEST(test_jaam_ws_handshake_chip_id_and_firmware);
+  RUN_TEST(test_jaam_ws_0xa1_hash_chain_and_malformed_frames);
+  RUN_TEST(test_jaam_ws_0xa2_notifications_ttl);
+  RUN_TEST(test_jaam_ws_exponential_backoff_jitter_and_1008_penalty);
   return UNITY_END();
 }
