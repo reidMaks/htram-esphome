@@ -1,7 +1,7 @@
 #pragma once
 
-#include "esphome/core/component.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/component.h"
 
 #ifdef USE_ESP_IDF
 #include <esp_websocket_client.h>
@@ -14,20 +14,20 @@ namespace esphome {
 namespace jaam_ws {
 
 namespace alert_bits {
-  static constexpr uint8_t AIR_LEGACY   = 0;   // Legacy air alert (deprecated in JAAM fw 5.1+)
-  static constexpr uint8_t ARTILLERY    = 1;   // Artillery threat
-  static constexpr uint8_t URBAN        = 2;   // Urban fighting
-  static constexpr uint8_t CHEMICAL     = 3;   // Chemical threat
-  static constexpr uint8_t NUCLEAR      = 4;   // Nuclear threat
-  static constexpr uint8_t DRONES       = 5;   // Strike drones / UAVs
-  static constexpr uint8_t MISSILES     = 6;   // Cruise missiles
-  static constexpr uint8_t KABS         = 7;   // Guided aerial bombs (KAB)
-  static constexpr uint8_t BALLISTIC    = 8;   // Ballistic missiles
-  static constexpr uint8_t EXPLOSION    = 9;   // Explosion reported
-  static constexpr uint8_t RECON_DRONES = 10;  // Reconnaissance drones
-  static constexpr uint8_t YELLOW       = 11;  // Yellow alert level (drones / heightened alert, fw 5.1+)
-  static constexpr uint8_t RED          = 12;  // Red alert level (missiles / immediate threat, fw 5.1+)
-}
+static constexpr uint8_t AIR_LEGACY = 0;     // Legacy air alert (deprecated in JAAM fw 5.1+)
+static constexpr uint8_t ARTILLERY = 1;      // Artillery threat
+static constexpr uint8_t URBAN = 2;          // Urban fighting
+static constexpr uint8_t CHEMICAL = 3;       // Chemical threat
+static constexpr uint8_t NUCLEAR = 4;        // Nuclear threat
+static constexpr uint8_t DRONES = 5;         // Strike drones / UAVs
+static constexpr uint8_t MISSILES = 6;       // Cruise missiles
+static constexpr uint8_t KABS = 7;           // Guided aerial bombs (KAB)
+static constexpr uint8_t BALLISTIC = 8;      // Ballistic missiles
+static constexpr uint8_t EXPLOSION = 9;      // Explosion reported
+static constexpr uint8_t RECON_DRONES = 10;  // Reconnaissance drones
+static constexpr uint8_t YELLOW = 11;        // Yellow alert level (drones / heightened alert, fw 5.1+)
+static constexpr uint8_t RED = 12;           // Red alert level (missiles / immediate threat, fw 5.1+)
+}  // namespace alert_bits
 
 struct AlertEntry {
   uint16_t region_id;
@@ -41,9 +41,9 @@ class JaamWsComponent : public Component {
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
-  void set_host(const std::string &host) { host_ = host; }
+  void set_host(const std::string& host) { host_ = host; }
   void set_port(uint16_t port) { port_ = port; }
-  void set_path(const std::string &path) { path_ = path; }
+  void set_path(const std::string& path) { path_ = path; }
 
   // Modern region_id API (e.g. 31 = Kyiv, 75 = Buchanskyi, 14 = Kyiv oblast)
   void set_region_id(uint16_t rid);
@@ -58,9 +58,7 @@ class JaamWsComponent : public Component {
   bool is_upstream_mode() const { return path_ == "/data_v4"; }
   bool is_fusion_mode() const { return path_ == "/data_fusion_v1"; }
 
-  void add_on_flags_callback(std::function<void(uint32_t)> &&cb) {
-    this->flags_callback_.add(std::move(cb));
-  }
+  void add_on_flags_callback(std::function<void(uint32_t)>&& cb) { this->flags_callback_.add(std::move(cb)); }
 
   bool connected() const { return connected_; }
   uint32_t flags() const { return flags_; }
@@ -71,30 +69,37 @@ class JaamWsComponent : public Component {
   bool is_air_raid() const {
     return flags_ & ((1u << alert_bits::AIR_LEGACY) | (1u << alert_bits::YELLOW) | (1u << alert_bits::RED));
   }
+  bool is_any_alert() const {
+    return flags_ & ((1u << alert_bits::AIR_LEGACY) | (1u << alert_bits::ARTILLERY) | (1u << alert_bits::URBAN) |
+                     (1u << alert_bits::CHEMICAL) | (1u << alert_bits::NUCLEAR) | (1u << alert_bits::YELLOW) |
+                     (1u << alert_bits::RED));
+  }
   bool is_drone() const { return flags_ & (1u << alert_bits::DRONES); }
   bool is_missile() const { return flags_ & (1u << alert_bits::MISSILES); }
   bool is_kab() const { return flags_ & (1u << alert_bits::KABS); }
   bool is_ballistic() const { return flags_ & (1u << alert_bits::BALLISTIC); }
   bool is_artillery() const { return flags_ & (1u << alert_bits::ARTILLERY); }
+  bool is_urban() const { return flags_ & (1u << alert_bits::URBAN); }
+  bool is_chemical() const { return flags_ & (1u << alert_bits::CHEMICAL); }
+  bool is_nuclear() const { return flags_ & (1u << alert_bits::NUCLEAR); }
+  bool is_explosion() const { return flags_ & (1u << alert_bits::EXPLOSION); }
   bool is_recon() const { return flags_ & (1u << alert_bits::RECON_DRONES); }
 
-  void on_ws_data(const char *data, size_t len);
-  void on_ws_binary(const uint8_t *data, size_t len, int offset, int total_len, bool fin);
-  void parse_binary_packet(const uint8_t *data, size_t len);
+  void on_ws_data(const char* data, size_t len);
+  void on_ws_binary(const uint8_t* data, size_t len, int offset, int total_len, bool fin);
+  void parse_binary_packet(const uint8_t* data, size_t len);
   void set_connected(bool c) { connected_ = c; }
   void update_flags_from_upstream();
   void update_flags_from_fusion();
 
-  void send_text(const char *msg);
+  void send_text(const char* msg);
 
   // Client lifecycle management & supervision
   void start_client();
   void stop_client();
   void restart_client();
   void clear_fusion_state();
-  void touch_last_seen() {
-    this->last_seen_ms_ = millis();
-  }
+  void touch_last_seen() { this->last_seen_ms_ = millis(); }
 
   std::string build_chip_id_message() const;
   std::string build_firmware_message() const;
@@ -112,11 +117,11 @@ class JaamWsComponent : public Component {
   uint32_t next_reconnect_ms() const { return next_reconnect_ms_; }
   bool is_reconnect_requested() const { return reconnect_requested_; }
 
-  static constexpr uint32_t INITIAL_BACKOFF_MS = 5000;   // 5 s initial retry delay
-  static constexpr uint32_t MAX_BACKOFF_MS     = 300000; // 300 s (5 min) max retry delay
-  static constexpr uint32_t STABLE_CONN_MS     = 60000;  // 60 s uptime required to reset backoff
-  static constexpr uint32_t DEAD_LINK_MS       = 90000;  // 90 s silence timeout (server pings every 20s)
-  static constexpr uint32_t NOTIF_TTL_MS       = 180000; // 3 min display TTL for one-shot 0xA2 events
+  static constexpr uint32_t INITIAL_BACKOFF_MS = 5000;  // 5 s initial retry delay
+  static constexpr uint32_t MAX_BACKOFF_MS = 300000;    // 300 s (5 min) max retry delay
+  static constexpr uint32_t STABLE_CONN_MS = 60000;     // 60 s uptime required to reset backoff
+  static constexpr uint32_t DEAD_LINK_MS = 90000;       // 90 s silence timeout (server pings every 20s)
+  static constexpr uint32_t NOTIF_TTL_MS = 180000;      // 3 min display TTL for one-shot 0xA2 events
 
   // Simulation helper: inject alert flags in tests or host environment
   void simulate_flags(uint32_t flags) {
@@ -129,7 +134,7 @@ class JaamWsComponent : public Component {
   std::string host_{"ws.jaam.net.ua"};
   uint16_t port_{80};
   std::string path_{"/data_fusion_v1"};
-  uint16_t region_id_{31}; // default Kyiv
+  uint16_t region_id_{31};  // default Kyiv
   uint16_t district_id_{31};
   uint16_t state_id_{31};
   int region_index_{25};
@@ -185,7 +190,7 @@ class JaamWsComponent : public Component {
 
 class JaamFlagsTrigger : public Trigger<uint32_t> {
  public:
-  explicit JaamFlagsTrigger(JaamWsComponent *parent) {
+  explicit JaamFlagsTrigger(JaamWsComponent* parent) {
     parent->add_on_flags_callback([this](uint32_t flags) { this->trigger(flags); });
   }
 };

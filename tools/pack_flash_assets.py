@@ -104,6 +104,11 @@ CANONICAL_ASSETS = [
     (44, "comfort_mold_spots", "comfort_mold_spots_mask.png"),
     (45, "no_net", "no_net_mask.png"),
     (46, "no_time", "no_time_mask.png"),
+    (47, "threat_artillery", "threat_artillery_mask.png"),
+    (48, "threat_urban", "threat_urban_mask.png"),
+    (49, "threat_chemical", "threat_chemical_mask.png"),
+    (50, "threat_nuclear", "threat_nuclear_mask.png"),
+    (51, "threat_explosion", "threat_explosion_mask.png"),
 ]
 
 
