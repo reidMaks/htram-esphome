@@ -584,27 +584,19 @@ async def run_test_suite() -> bool:
             assert png_yellow.exists() and png_yellow.stat().st_size > 1000
             colors_digits = count_clock_digit_colors(png_yellow)
             colors_icon = count_pocket_icon_pixels(png_yellow)
-            if colors_digits.get("yellows", 0) > 400:
-                assert colors_icon.get("yellows", 0) > 10, (
-                    f"Expected yellow drone icon in pocket, got {colors_icon}"
+            assert colors_digits.get("yellows", 0) > 400, (
+                f"Expected yellow clock digits during yellow alert, got {colors_digits}"
+            )
+            assert colors_icon.get("yellows", 0) > 10, (
+                f"Expected yellow drone icon in pocket, got {colors_icon}"
+            )
+            results.append(
+                (
+                    "07b_alert_yellow_threat",
+                    True,
+                    "Yellow alert threat: amber/yellow clock digits + yellow drone icon",
                 )
-                results.append(
-                    (
-                        "07b_alert_yellow_threat",
-                        True,
-                        "Yellow alert threat: amber/yellow clock digits + yellow drone icon",
-                    )
-                )
-            else:
-                assert colors_digits.get("reds", 0) > 400 or colors_digits.get("yellows", 0) > 50
-                assert colors_icon.get("reds", 0) > 10 or colors_icon.get("yellows", 0) > 10
-                results.append(
-                    (
-                        "07b_alert_yellow_threat",
-                        True,
-                        "Yellow alert threat: active alert with drone threat icon",
-                    )
-                )
+            )
             # Clear alert and reset marks
             await harness.simulate_alert(flags=0)
             await harness.reset_alert_marks()
