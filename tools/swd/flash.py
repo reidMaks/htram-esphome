@@ -432,7 +432,7 @@ def main() -> int:
             # on an empty GET leaves the session holding a nonce, so the POST
             # below goes out signed, once.
             try:
-                sess.get(f"http://{target_host}/", timeout=10)
+                sess.get(f"http://{target_host}/", headers={"Connection": "close"}, timeout=10)
             except requests.RequestException as e:
                 print(f"[ota] Could not reach the device to authenticate: {e}", file=sys.stderr)
                 return 1
@@ -454,7 +454,12 @@ def main() -> int:
             # update failed will retry into a write that is still in flight.
             #
             # A connect timeout is safe: nothing has been erased yet.
-            resp = sess.post(url, files={"file": ("firmware.bin", img)}, timeout=(10, None))
+            resp = sess.post(
+                url,
+                files={"file": ("firmware.bin", img)},
+                headers={"Connection": "close"},
+                timeout=(10, None),
+            )
         except requests.RequestException as e:
             print(f"[ota] Request failed: {e}", file=sys.stderr)
             print(

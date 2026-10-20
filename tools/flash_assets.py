@@ -76,9 +76,9 @@ def upload_assets(target: str, repack: bool = False, image_file: Path | None = N
     sess = requests.Session()
     sess.auth = HTTPDigestAuth(username, password)
 
-    # Prime digest authentication with a lightweight HEAD request
+    # Prime digest authentication with a lightweight GET request (Connection: close avoids reusing half-closed httpd sockets)
     try:
-        sess.head(f"http://{host}/api/status", timeout=10)
+        sess.get(f"http://{host}/api/status", headers={"Connection": "close"}, timeout=10)
     except requests.RequestException as e:
         print(f"[assets] Could not reach {host} to authenticate: {e}", file=sys.stderr)
         return 1
@@ -88,7 +88,8 @@ def upload_assets(target: str, repack: bool = False, image_file: Path | None = N
         resp = sess.post(
             url,
             files={"file": ("flash_assets.bin", bin_data)},
-            timeout=(10, 30),
+            headers={"Connection": "close"},
+            timeout=(10, 60),
         )
     except requests.RequestException as e:
         print(f"[assets] Request failed: {e}", file=sys.stderr)
