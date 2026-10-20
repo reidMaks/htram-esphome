@@ -33,8 +33,14 @@
 # Збірка образу
 ./tools/devcontainer.sh build
 
-# Запуск інтерактивного shell
+# Запуск контейнера та автоматичне відкриття чату (agy --dangerously-skip-permissions)
 ./tools/devcontainer.sh run
+
+# Відкриття звичайного bash без автозапуску agy
+./tools/devcontainer.sh shell
+
+# Керування фоновим демоном Remote Control (start|stop|restart|status|logs)
+./tools/devcontainer.sh remote-control status
 
 # Запуск окремої команди
 ./tools/devcontainer.sh exec make test

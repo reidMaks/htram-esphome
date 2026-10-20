@@ -56,10 +56,32 @@ RUN usermod -aG sudo,dialout,plugdev ubuntu && \
 USER ubuntu
 WORKDIR /workspace
 
-ENV PATH="/home/ubuntu/.local/bin:/workspace/.venv/bin:${PATH}"
+ENV PATH="/home/ubuntu/.gemini/bin:/home/ubuntu/.local/bin:/host-bin:/workspaces/htram-esphome/.venv/bin:/workspace/.venv/bin:${PATH}"
 
 # Install Antigravity CLI (agy) if installer is reachable
 RUN curl -fsSL https://antigravity.google/install.sh -o /tmp/install-agy.sh 2>/dev/null && \
     (bash /tmp/install-agy.sh || true) && rm -f /tmp/install-agy.sh || true
+
+# Auto-start Remote Control daemon and Antigravity CLI chat on interactive terminal startup
+RUN cat << 'EOF' >> /home/ubuntu/.bashrc
+
+# --- HTRAM Dev Container: PATH & Auto-start Antigravity CLI ---
+export PATH="/home/ubuntu/.gemini/bin:/home/ubuntu/.local/bin:/host-bin:/workspaces/htram-esphome/.venv/bin:${PATH}"
+
+if [ -t 0 ] && [ -t 1 ] && [ -z "${NO_AUTO_AGY:-}" ] && [ -z "${AGY_AUTO_STARTED:-}" ]; then
+    case "$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || true)" in
+        *agy*) ;;
+        *)
+            export AGY_AUTO_STARTED=1
+            if [ -x /workspaces/htram-esphome/tools/remote-control.sh ]; then
+                /workspaces/htram-esphome/tools/remote-control.sh start >/dev/null 2>&1 || true
+            fi
+            if command -v agy >/dev/null 2>&1; then
+                agy --dangerously-skip-permissions
+            fi
+            ;;
+    esac
+fi
+EOF
 
 CMD ["/bin/bash"]
