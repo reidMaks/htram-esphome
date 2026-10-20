@@ -38,13 +38,42 @@ get_daemon_pid() {
     pgrep -f "agy remote-control serve" 2>/dev/null | head -n 1 || true
 }
 
-start_daemon() {
-    local pid
-    pid="$(get_daemon_pid)"
-    if [ -n "${pid}" ]; then
-        echo "Antigravity Remote Control daemon is already running (PID: ${pid})."
+is_daemon_stale() {
+    local pid="$1"
+    local agy_bin="$2"
+    local proc_exe
+    proc_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+    if [ -z "${proc_exe}" ]; then
+        return 1
+    fi
+    case "${proc_exe}" in
+        *"(deleted)"*|*".old."*)
+            return 0
+            ;;
+    esac
+    local real_agy
+    real_agy="$(readlink -f "${agy_bin}" 2>/dev/null || echo "${agy_bin}")"
+    if [ "${proc_exe}" != "${real_agy}" ]; then
         return 0
     fi
+    return 1
+}
+
+ensure_inotify_limits() {
+    local current_instances
+    current_instances="$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || echo 128)"
+    if [ "${current_instances}" -lt 1024 ] 2>/dev/null; then
+        sudo -n sysctl -w fs.inotify.max_user_instances=1024 >/dev/null 2>&1 || true
+    fi
+}
+
+find_daemon_log() {
+    local pid="$1"
+    grep -l "Starting language server process with pid ${pid}\$" "${LOG_DIR}/log"/cli-*.log 2>/dev/null | tail -n 1 || true
+}
+
+start_daemon() {
+    ensure_inotify_limits
 
     local agy_bin
     if ! agy_bin="$(find_agy)"; then
@@ -52,13 +81,25 @@ start_daemon() {
         return 1
     fi
 
+    local pid
+    pid="$(get_daemon_pid)"
+    if [ -n "${pid}" ]; then
+        if is_daemon_stale "${pid}" "${agy_bin}"; then
+            echo "Antigravity Remote Control daemon (PID: ${pid}) is running an outdated binary after auto-update. Restarting..."
+            stop_daemon
+        else
+            echo "Antigravity Remote Control daemon is already running (PID: ${pid})."
+            return 0
+        fi
+    fi
+
     mkdir -p "${LOG_DIR}"
     echo "Starting Antigravity Remote Control daemon (${agy_bin})..."
-    nohup "${agy_bin}" remote-control serve > "${LOG_FILE}" 2>&1 &
+    setsid "${agy_bin}" remote-control serve > "${LOG_FILE}" 2>&1 < /dev/null &
     local new_pid=$!
     echo "${new_pid}" > "${PID_FILE}"
 
-    sleep 1.5
+    sleep 2
     if kill -0 "${new_pid}" 2>/dev/null; then
         echo "Antigravity Remote Control daemon started successfully (PID: ${new_pid})."
         local hostname=""
@@ -112,32 +153,53 @@ status_daemon() {
         echo "Status: RUNNING (PID: ${pid})"
         ps -p "${pid}" -o pid,user,%cpu,%mem,etime,command 2>/dev/null || true
 
+        local agy_bin
+        agy_bin="$(find_agy 2>/dev/null || true)"
+        local proc_exe
+        proc_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+        if [ -n "${agy_bin}" ] && is_daemon_stale "${pid}" "${agy_bin}"; then
+            echo "Binary:   ${proc_exe} (STALE - run '$0 restart' to update to ${agy_bin})"
+        elif [ -n "${proc_exe}" ]; then
+            echo "Binary:   ${proc_exe} (up-to-date)"
+        fi
+
         local hostname=""
         if [ -f "${HOME}/.gemini/config/config.json" ]; then
             hostname="$(grep -o '"cliRemoteControlHostname": "[^"]*"' "${HOME}/.gemini/config/config.json" | cut -d'"' -f4 || true)"
         fi
         if [ -n "${hostname}" ]; then
             echo "Instance: ${hostname} (accessible at https://antigravity.google.com)"
+            echo "Project:  CLI Project (/workspaces/htram-esphome)"
         fi
 
-        local latest_cli_log
-        latest_cli_log="$(ls -t "${LOG_DIR}/log"/cli-*.log 2>/dev/null | head -n 1 || true)"
-        if [ -n "${latest_cli_log}" ] && [ -f "${latest_cli_log}" ]; then
+        local daemon_log
+        daemon_log="$(find_daemon_log "${pid}")"
+        if [ -n "${daemon_log}" ] && [ -f "${daemon_log}" ]; then
+            local ls_ver
+            ls_ver="$(grep -E "Language server version:" "${daemon_log}" | tail -n 1 || true)"
+            if [ -n "${ls_ver}" ]; then
+                echo "Version:  ${ls_ver}"
+            fi
             local conn_status
-            conn_status="$(grep -E "Connection status:" "${latest_cli_log}" | tail -n 1 || true)"
+            conn_status="$(grep -E "Connection status:" "${daemon_log}" | tail -n 1 || true)"
             if [ -n "${conn_status}" ]; then
                 echo "Channel:  ${conn_status}"
+            fi
+            local sync_status
+            sync_status="$(grep -E "\[Summaries\] reconcile checked" "${daemon_log}" | tail -n 1 || true)"
+            if [ -n "${sync_status}" ]; then
+                echo "Synced:   ${sync_status}"
             fi
         fi
 
         echo ""
-        if [ -f "${LOG_FILE}" ]; then
-            echo "--- Latest daemon output (${LOG_FILE}) ---"
+        if [ -f "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ]; then
+            echo "--- Latest daemon stdout/stderr (${LOG_FILE}) ---"
             tail -n 5 "${LOG_FILE}"
         fi
     else
         echo "Status: STOPPED"
-        if [ -f "${LOG_FILE}" ]; then
+        if [ -f "${LOG_FILE}" ] && [ -s "${LOG_FILE}" ]; then
             echo ""
             echo "--- Last known daemon output (${LOG_FILE}) ---"
             tail -n 5 "${LOG_FILE}"

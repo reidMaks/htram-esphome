@@ -41,7 +41,8 @@ find_running_container() {
 run_container() {
     local cid
     if cid="$(find_running_container)"; then
-        echo "==> Attaching interactive shell to running container (${cid})..."
+        docker exec "${cid}" bash /workspaces/htram-esphome/tools/remote-control.sh start >/dev/null 2>&1 || true
+        echo "==> Attaching to running container (${cid}) with agy --dangerously-skip-permissions..."
         docker exec -it -w /workspaces/htram-esphome "${cid}" bash
         return 0
     fi
@@ -70,8 +71,18 @@ run_container() {
     fi
     docker exec "${CONTAINER_NAME}" bash /workspaces/htram-esphome/tools/remote-control.sh start >/dev/null 2>&1 || true
 
-    echo "==> Attaching interactive shell to ${CONTAINER_NAME}..."
+    echo "==> Attaching to ${CONTAINER_NAME} with agy --dangerously-skip-permissions..."
     docker exec -it -w /workspaces/htram-esphome "${CONTAINER_NAME}" bash
+}
+
+shell_container() {
+    local cid
+    if ! cid="$(find_running_container)"; then
+        echo "Error: No running container found. Run '$0 run' first." >&2
+        return 1
+    fi
+    echo "==> Attaching plain bash shell to running container (${cid})..."
+    docker exec -it -e NO_AUTO_AGY=1 -w /workspaces/htram-esphome "${cid}" bash
 }
 
 exec_command() {
@@ -96,11 +107,12 @@ stop_container() {
 }
 
 usage() {
-    echo "Usage: $0 {build|run|exec <cmd>|stop|remote-control <subcommand>}"
+    echo "Usage: $0 {build|run|shell|exec <cmd>|stop|remote-control <subcommand>}"
     echo ""
     echo "Commands:"
     echo "  build                   Build the htram-dev Docker image"
-    echo "  run                     Start container (if not running) and open an interactive bash shell"
+    echo "  run                     Start container (if not running) and open agy chat (--dangerously-skip-permissions)"
+    echo "  shell                   Open a plain interactive bash shell without auto-starting agy"
     echo "  exec <cmd>              Execute a command inside the running container"
     echo "  remote-control <cmd>    Manage Antigravity Remote Control (start|stop|restart|status|logs)"
     echo "  stop                    Stop and remove the container"
@@ -113,6 +125,9 @@ case "${1:-}" in
         ;;
     run)
         run_container
+        ;;
+    shell)
+        shell_container
         ;;
     exec)
         shift
