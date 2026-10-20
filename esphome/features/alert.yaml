@@ -43,7 +43,7 @@ jaam_ws:
           // 11 жовтий рівень (дрон-загроза), 12 червоний рівень (ракети).
           const bool yellow    = flags & (1u << 11);
           const bool red       = flags & (1u << 12);
-          const bool red_air   = (flags & (1u << 0)) || red;
+          const bool red_air   = red || ((flags & (1u << 0)) && !yellow);
           const bool air       = red_air || yellow;
           const bool artillery = flags & (1u << 1);
           const bool urban     = flags & (1u << 2);

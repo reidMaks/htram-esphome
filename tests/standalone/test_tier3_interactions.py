@@ -677,8 +677,9 @@ def test_alert_level_change_sound_transitions():
         nonlocal alert_active, alert_yellow
         yellow = bool(flags & (1 << 11))
         red = bool(flags & (1 << 12))
-        air = bool(flags & (1 << 0)) or yellow or red
-        new_yellow = yellow and not red
+        red_air = red or (bool(flags & (1 << 0)) and not yellow)
+        air = red_air or yellow
+        new_yellow = yellow and not red_air
         prev_air = alert_active
         prev_yellow = alert_yellow
         alert_yellow = new_yellow
@@ -690,22 +691,25 @@ def test_alert_level_change_sound_transitions():
             if new_yellow != prev_yellow:
                 sounds_played.append(escalate_rtttl if not new_yellow else deescalate_rtttl)
 
-    # 1. Start with Yellow alert (bit 11) -> plays start sound
-    on_flags(1 << 11)
+    # 1. Start with Yellow alert (bit 0 + bit 11, real JAAM fusion format 0x0801) -> plays start sound
+    on_flags((1 << 0) | (1 << 11))
     assert sounds_played == [start_rtttl]
+    assert alert_yellow is True
 
-    # 2. Escalate Yellow -> Red (bit 12) -> plays urgent escalation sound (NOT start sound)
-    on_flags(1 << 12)
+    # 2. Escalate Yellow -> Red (bit 0 + bit 12 = 0x1001) -> plays urgent escalation sound (NOT start sound)
+    on_flags((1 << 0) | (1 << 12))
     assert sounds_played[-1] == escalate_rtttl
     assert sounds_played[-1] != start_rtttl
+    assert alert_yellow is False
 
     # 3. Same Red level with extra threat bit (bit 6 missile) -> no duplicate sound
-    on_flags((1 << 12) | (1 << 6))
+    on_flags((1 << 0) | (1 << 12) | (1 << 6))
     assert len(sounds_played) == 2
 
-    # 4. De-escalate Red -> Yellow (bit 11 only) -> plays de-escalation sound
-    on_flags(1 << 11)
+    # 4. De-escalate Red -> Yellow (bit 0 + bit 11 = 0x0801) -> plays de-escalation sound
+    on_flags((1 << 0) | (1 << 11))
     assert sounds_played[-1] == deescalate_rtttl
+    assert alert_yellow is True
 
     # 5. All-clear (0) -> plays clear sound
     on_flags(0)
@@ -777,7 +781,7 @@ def test_full_jaam_threat_priorities_colors_and_sounds():
         """Returns (asset_id, icon_color, digit_color)."""
         yellow = bool(flags & (1 << 11))
         red = bool(flags & (1 << ALERT_BIT_RED))
-        red_air = bool(flags & (1 << 0)) or red
+        red_air = red or (bool(flags & (1 << 0)) and not yellow)
         air = red_air or yellow
         artillery = bool(flags & (1 << ALERT_BIT_ARTILLERY))
         urban = bool(flags & (1 << ALERT_BIT_URBAN))
@@ -873,4 +877,16 @@ def test_full_jaam_threat_priorities_colors_and_sounds():
         ASSET_ID_THREAT_RECON,
         COLOR_YELLOW,
         0xF0EAE0,
+    )
+    # 7. Yellow alert from JAAM server (0x0801 = bit 0 AIR_LEGACY | bit 11 YELLOW) -> yellow icon + yellow digits
+    assert resolve_threat_ui((1 << 0) | (1 << 11)) == (
+        2,
+        COLOR_YELLOW,
+        COLOR_YELLOW,
+    )
+    # 8. Yellow alert with drones (0x0821 = bit 0 | bit 5 | bit 11) -> yellow drone icon + yellow digits
+    assert resolve_threat_ui((1 << 0) | (1 << ALERT_BIT_DRONES) | (1 << 11)) == (
+        ASSET_ID_THREAT_DRONE,
+        COLOR_YELLOW,
+        COLOR_YELLOW,
     )
