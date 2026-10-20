@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" width="160" height="100">
+  <!-- Long 155mm main barrel (elevated ~32 deg) -->
+  <polygon points="56,54 142,10 146,17 60,61" fill="#000000"/>
+  <!-- Upper recuperator / recoil cylinder housing along lower/upper barrel -->
+  <polygon points="52,46 102,21 106,29 56,54" fill="#000000"/>
+  <!-- Lower cradle / recoil cylinder under barrel -->
+  <polygon points="62,60 108,36 111,43 65,67" fill="#000000"/>
+  <!-- Signature M777 double-baffle muzzle brake + tow lug at tip -->
+  <polygon points="138,7 152,0 158,12 144,19" fill="#000000"/>
+  <polygon points="145,4 150,2 155,11 150,14" fill="#FFFFFF"/>
+  <polygon points="140,9 144,7 148,15 144,17" fill="#FFFFFF"/>
+  <polygon points="136,8 156,18 152,23 133,13" fill="#000000"/>
+  <!-- Breech block, trunnion & elevation mechanism -->
+  <polygon points="38,48 64,42 70,68 42,72" fill="#000000"/>
+  <!-- Gunner sight / shield detail -->
+  <polygon points="46,36 58,34 60,46 46,48" fill="#000000"/>
+  <!-- Rear split trail leg extending low to the left + rear ground spade -->
+  <polygon points="44,68 8,86 10,94 50,76" fill="#000000"/>
+  <polygon points="2,80 14,82 14,98 2,98" fill="#000000"/>
+  <!-- Front stabilizer outrigger leg extending right-down -->
+  <polygon points="66,70 96,88 92,95 60,76" fill="#000000"/>
+  <rect x="88" y="90" width="16" height="7" fill="#000000"/>
+  <!-- Main road wheel (with white rim gap and solid hub) -->
+  <circle cx="58" cy="76" r="20" fill="#FFFFFF"/>
+  <circle cx="58" cy="76" r="17" fill="#000000"/>
+  <circle cx="58" cy="76" r="8" fill="#FFFFFF"/>
+  <circle cx="58" cy="76" r="4" fill="#000000"/>
+</svg>

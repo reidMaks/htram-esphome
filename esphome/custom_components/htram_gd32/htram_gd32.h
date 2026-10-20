@@ -1,11 +1,11 @@
 #pragma once
 
-#include "esphome/core/component.h"
-#include "esphome/components/uart/uart.h"
-#include "esphome/components/sensor/sensor.h"
-#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/switch/switch.h"
+#include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/uart/uart.h"
+#include "esphome/core/component.h"
 #ifndef USE_HOST
 #include "esphome/components/web_server_base/web_server_base.h"
 #define HTRAM_HAS_WEB_HANDLERS 1
@@ -18,13 +18,16 @@
 #else
 #ifndef MALLOC_CAP_8BIT
 #define MALLOC_CAP_8BIT 1
-inline size_t heap_caps_get_largest_free_block(uint32_t) { return 65536; }
+inline size_t heap_caps_get_largest_free_block(uint32_t) {
+  return 65536;
+}
 #endif
 #endif
+#include <sys/time.h>
+
+#include <ctime>
 #include <string>
 #include <vector>
-#include <sys/time.h>
-#include <ctime>
 
 namespace esphome {
 #ifdef USE_ESP32
@@ -82,7 +85,12 @@ enum FlashAssetId : uint16_t {
   ASSET_ID_COMFORT_MOLD_SPOTS = 44,
   ASSET_ID_NO_NET = 45,
   ASSET_ID_NO_TIME = 46,
-  ASSET_ID_COUNT = 47
+  ASSET_ID_THREAT_ARTILLERY = 47,
+  ASSET_ID_THREAT_URBAN = 48,
+  ASSET_ID_THREAT_CHEMICAL = 49,
+  ASSET_ID_THREAT_NUCLEAR = 50,
+  ASSET_ID_THREAT_EXPLOSION = 51,
+  ASSET_ID_COUNT = 52
 };
 
 struct FlashAssetMeta {
@@ -91,57 +99,62 @@ struct FlashAssetMeta {
 };
 
 static constexpr FlashAssetMeta FLASH_ASSET_METAS[ASSET_ID_COUNT] = {
-  {72, 100},  // 0: ASSET_ID_TRYZUB
-  {30, 40},   // 1: ASSET_ID_BELL
-  {44, 40},   // 2: ASSET_ID_ALERT
-  {19, 17},   // 3: ASSET_ID_ALERT_SMALL
-  {40, 40},   // 4: ASSET_ID_THREAT_BALLISTIC
-  {32, 40},   // 5: ASSET_ID_THREAT_KAB
-  {39, 40},   // 6: ASSET_ID_THREAT_MISSILE
-  {53, 40},   // 7: ASSET_ID_THREAT_DRONE
-  {56, 40},   // 8: ASSET_ID_THREAT_RECON
-  {36, 36},   // 9: ASSET_ID_WEATHER_SUNNY
-  {36, 28},   // 10: ASSET_ID_WEATHER_PARTLYCLOUDY_SUN
-  {36, 28},   // 11: ASSET_ID_WEATHER_PARTLYCLOUDY_CLOUD
-  {36, 20},   // 12: ASSET_ID_WEATHER_CLOUDY
-  {36, 34},   // 13: ASSET_ID_WEATHER_RAINY_CLOUD
-  {36, 34},   // 14: ASSET_ID_WEATHER_RAINY_DROPS
-  {36, 35},   // 15: ASSET_ID_WEATHER_LIGHTNING_CLOUD
-  {36, 35},   // 16: ASSET_ID_WEATHER_LIGHTNING_BOLT
-  {36, 33},   // 17: ASSET_ID_WEATHER_SNOWY_CLOUD
-  {36, 33},   // 18: ASSET_ID_WEATHER_SNOWY_FLAKES
-  {36, 26},   // 19: ASSET_ID_WEATHER_FOG
-  {36, 30},   // 20: ASSET_ID_WEATHER_WINDY
-  {36, 34},   // 21: ASSET_ID_WEATHER_RAINY
-  {36, 28},   // 22: ASSET_ID_WEATHER_PARTLYCLOUDY
-  {36, 35},   // 23: ASSET_ID_WEATHER_LIGHTNING
-  {36, 33},   // 24: ASSET_ID_WEATHER_SNOWY
-  {36, 36},   // 25: ASSET_ID_WEATHER_CLEARNIGHT
-  {36, 29},   // 26: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_MOON
-  {36, 29},   // 27: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_CLOUD
-  {36, 29},   // 28: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT
-  {72, 72},   // 29: ASSET_ID_COMFORT_DISC
-  {72, 72},   // 30: ASSET_ID_COMFORT_HAPPY_FACE
-  {72, 72},   // 31: ASSET_ID_COMFORT_NEUTRAL_FACE
-  {72, 72},   // 32: ASSET_ID_COMFORT_STUFFY_FACE
-  {72, 72},   // 33: ASSET_ID_COMFORT_STUFFY_DROP
-  {72, 72},   // 34: ASSET_ID_COMFORT_HOT_FACE
-  {72, 72},   // 35: ASSET_ID_COMFORT_HOT_DROPS
-  {72, 72},   // 36: ASSET_ID_COMFORT_COLD_BODY
-  {72, 72},   // 37: ASSET_ID_COMFORT_COLD_FACE
-  {72, 72},   // 38: ASSET_ID_COMFORT_COLD_ICE
-  {72, 72},   // 39: ASSET_ID_COMFORT_DRY_BODY
-  {72, 72},   // 40: ASSET_ID_COMFORT_DRY_ACCENTS
-  {72, 72},   // 41: ASSET_ID_COMFORT_DIZZY_FACE
-  {72, 72},   // 42: ASSET_ID_COMFORT_MOLD_STEM
-  {72, 72},   // 43: ASSET_ID_COMFORT_MOLD_CAP
-  {72, 72},   // 44: ASSET_ID_COMFORT_MOLD_SPOTS
-  {20, 20},   // 45: ASSET_ID_NO_NET
-  {20, 20},   // 46: ASSET_ID_NO_TIME
+    {72, 100},  // 0: ASSET_ID_TRYZUB
+    {30, 40},   // 1: ASSET_ID_BELL
+    {44, 40},   // 2: ASSET_ID_ALERT
+    {19, 17},   // 3: ASSET_ID_ALERT_SMALL
+    {40, 40},   // 4: ASSET_ID_THREAT_BALLISTIC
+    {32, 40},   // 5: ASSET_ID_THREAT_KAB
+    {39, 40},   // 6: ASSET_ID_THREAT_MISSILE
+    {53, 40},   // 7: ASSET_ID_THREAT_DRONE
+    {56, 40},   // 8: ASSET_ID_THREAT_RECON
+    {36, 36},   // 9: ASSET_ID_WEATHER_SUNNY
+    {36, 28},   // 10: ASSET_ID_WEATHER_PARTLYCLOUDY_SUN
+    {36, 28},   // 11: ASSET_ID_WEATHER_PARTLYCLOUDY_CLOUD
+    {36, 20},   // 12: ASSET_ID_WEATHER_CLOUDY
+    {36, 34},   // 13: ASSET_ID_WEATHER_RAINY_CLOUD
+    {36, 34},   // 14: ASSET_ID_WEATHER_RAINY_DROPS
+    {36, 35},   // 15: ASSET_ID_WEATHER_LIGHTNING_CLOUD
+    {36, 35},   // 16: ASSET_ID_WEATHER_LIGHTNING_BOLT
+    {36, 33},   // 17: ASSET_ID_WEATHER_SNOWY_CLOUD
+    {36, 33},   // 18: ASSET_ID_WEATHER_SNOWY_FLAKES
+    {36, 26},   // 19: ASSET_ID_WEATHER_FOG
+    {36, 30},   // 20: ASSET_ID_WEATHER_WINDY
+    {36, 34},   // 21: ASSET_ID_WEATHER_RAINY
+    {36, 28},   // 22: ASSET_ID_WEATHER_PARTLYCLOUDY
+    {36, 35},   // 23: ASSET_ID_WEATHER_LIGHTNING
+    {36, 33},   // 24: ASSET_ID_WEATHER_SNOWY
+    {36, 36},   // 25: ASSET_ID_WEATHER_CLEARNIGHT
+    {36, 29},   // 26: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_MOON
+    {36, 29},   // 27: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT_CLOUD
+    {36, 29},   // 28: ASSET_ID_WEATHER_PARTLYCLOUDY_NIGHT
+    {72, 72},   // 29: ASSET_ID_COMFORT_DISC
+    {72, 72},   // 30: ASSET_ID_COMFORT_HAPPY_FACE
+    {72, 72},   // 31: ASSET_ID_COMFORT_NEUTRAL_FACE
+    {72, 72},   // 32: ASSET_ID_COMFORT_STUFFY_FACE
+    {72, 72},   // 33: ASSET_ID_COMFORT_STUFFY_DROP
+    {72, 72},   // 34: ASSET_ID_COMFORT_HOT_FACE
+    {72, 72},   // 35: ASSET_ID_COMFORT_HOT_DROPS
+    {72, 72},   // 36: ASSET_ID_COMFORT_COLD_BODY
+    {72, 72},   // 37: ASSET_ID_COMFORT_COLD_FACE
+    {72, 72},   // 38: ASSET_ID_COMFORT_COLD_ICE
+    {72, 72},   // 39: ASSET_ID_COMFORT_DRY_BODY
+    {72, 72},   // 40: ASSET_ID_COMFORT_DRY_ACCENTS
+    {72, 72},   // 41: ASSET_ID_COMFORT_DIZZY_FACE
+    {72, 72},   // 42: ASSET_ID_COMFORT_MOLD_STEM
+    {72, 72},   // 43: ASSET_ID_COMFORT_MOLD_CAP
+    {72, 72},   // 44: ASSET_ID_COMFORT_MOLD_SPOTS
+    {20, 20},   // 45: ASSET_ID_NO_NET
+    {20, 20},   // 46: ASSET_ID_NO_TIME
+    {54, 34},   // 47: ASSET_ID_THREAT_ARTILLERY
+    {40, 40},   // 48: ASSET_ID_THREAT_URBAN
+    {35, 40},   // 49: ASSET_ID_THREAT_CHEMICAL
+    {43, 40},   // 50: ASSET_ID_THREAT_NUCLEAR
+    {40, 40},   // 51: ASSET_ID_THREAT_EXPLOSION
 };
 
-size_t encode_tga_rle_rgb565(const uint16_t *pixels, size_t num_pixels, uint8_t *out, size_t max_out);
-size_t decode_tga_rle_rgb565(const uint8_t *in, size_t in_len, uint16_t *out, size_t max_out_pixels);
+size_t encode_tga_rle_rgb565(const uint16_t* pixels, size_t num_pixels, uint8_t* out, size_t max_out);
+size_t decode_tga_rle_rgb565(const uint8_t* in, size_t in_len, uint16_t* out, size_t max_out_pixels);
 
 class HtramGd32Display;
 
@@ -150,12 +163,12 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void setup() override;
   void loop() override;
 
-  void set_display(HtramGd32Display *display);
-  HtramGd32Display *get_display() const { return this->display_; }
+  void set_display(HtramGd32Display* display);
+  HtramGd32Display* get_display() const { return this->display_; }
 
   void set_simulation_mode(bool sim);
   bool is_simulation_mode() const { return this->simulation_mode_; }
-  bool dump_ppm(const std::string &path) const;
+  bool dump_ppm(const std::string& path) const;
 
   /* The GD32 asks us to hold the pixel stream while it does something that
      blocks longer than its 2 KB RX ring can absorb (a CO2 Modbus poll). There
@@ -164,23 +177,24 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   void wait_for_flow(uint32_t timeout_ms);
   void dump_config() override;
 
-  void set_co2_sensor(sensor::Sensor *s) { co2_sensor_ = s; }
-  void set_temperature_sensor(sensor::Sensor *s) { temp_sensor_ = s; }
-  void set_humidity_sensor(sensor::Sensor *s) { hum_sensor_ = s; }
-  void set_battery_sensor(sensor::Sensor *s) { batt_sensor_ = s; }
-  void set_battery_level_sensor(sensor::Sensor *s) { batt_level_sensor_ = s; }
-  void set_fw_version_sensor(text_sensor::TextSensor *s) { fw_version_sensor_ = s; }
-  void set_spi_flash_sensor(text_sensor::TextSensor *s) { spi_flash_sensor_ = s; }
-  void set_usb_binary_sensor(binary_sensor::BinarySensor *s) { usb_sensor_ = s; }
-  void set_charging_binary_sensor(binary_sensor::BinarySensor *s) { charging_sensor_ = s; }
-  void set_led_switch(uint8_t channel, switch_::Switch *s) {
-    if (channel < 3) led_switch_[channel] = s;
+  void set_co2_sensor(sensor::Sensor* s) { co2_sensor_ = s; }
+  void set_temperature_sensor(sensor::Sensor* s) { temp_sensor_ = s; }
+  void set_humidity_sensor(sensor::Sensor* s) { hum_sensor_ = s; }
+  void set_battery_sensor(sensor::Sensor* s) { batt_sensor_ = s; }
+  void set_battery_level_sensor(sensor::Sensor* s) { batt_level_sensor_ = s; }
+  void set_fw_version_sensor(text_sensor::TextSensor* s) { fw_version_sensor_ = s; }
+  void set_spi_flash_sensor(text_sensor::TextSensor* s) { spi_flash_sensor_ = s; }
+  void set_usb_binary_sensor(binary_sensor::BinarySensor* s) { usb_sensor_ = s; }
+  void set_charging_binary_sensor(binary_sensor::BinarySensor* s) { charging_sensor_ = s; }
+  void set_led_switch(uint8_t channel, switch_::Switch* s) {
+    if (channel < 3)
+      led_switch_[channel] = s;
   }
 
   void send_get_flash_info();
   void send_flash_erase_sector(uint32_t addr);
   void send_flash_erase_block(uint32_t addr);
-  void send_flash_write_chunk(uint32_t addr, const uint8_t *data, size_t len);
+  void send_flash_write_chunk(uint32_t addr, const uint8_t* data, size_t len);
   void send_flash_verify_crc(uint32_t addr, uint32_t len, uint32_t expected_crc32);
   void send_flash_read(uint32_t addr, uint16_t len);
 
@@ -189,28 +203,35 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   uint32_t last_flash_ack_addr() const { return last_flash_ack_addr_; }
   uint8_t last_flash_read_status() const { return last_flash_read_status_; }
   uint32_t last_flash_read_addr() const { return last_flash_read_addr_; }
-  const std::vector<uint8_t> &last_flash_read_data() const { return last_flash_read_data_; }
+  const std::vector<uint8_t>& last_flash_read_data() const { return last_flash_read_data_; }
 
   void send_beep(uint16_t freq, uint16_t dur);
   void send_backlight(uint8_t brightness);
   void send_leds(uint8_t r, uint8_t y, uint8_t g, uint8_t brightness);
   void send_enter_bootloader();
   // Stream a note sequence to the GD32 (non-blocking playback there).
-  void send_melody(const uint16_t *freqs, const uint16_t *durs, uint8_t count);
+  void send_melody(const uint16_t* freqs, const uint16_t* durs, uint8_t count);
   void send_stop();                          // silence / cancel current melody
-  void play_rtttl(const std::string &song);  // parse RTTTL, stream to GD32
-  void send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *pixel_data, size_t len);
-  void send_draw_rect_rle(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *rle_data, size_t len);
+  void play_rtttl(const std::string& song);  // parse RTTTL, stream to GD32
+  void send_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* pixel_data, size_t len);
+  void send_draw_rect_rle(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t* rle_data, size_t len);
   bool supports_rle() const { return this->simulation_mode_ || this->raw_fw_ver_ >= 0x0130; }
   void set_raw_fw_ver(uint16_t ver) { this->raw_fw_ver_ = ver; }
-  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
-  void send_draw_cached_asset_raw(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 0);
-  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 0) {
-    this->send_draw_cached_asset(asset_id, x, y, display::ColorUtil::color_to_565(fg_color), display::ColorUtil::color_to_565(bg_color), flags);
+  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0,
+                              uint8_t flags = 0);
+  void send_draw_cached_asset_raw(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color = 0,
+                                  uint8_t flags = 0);
+  void send_draw_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y, Color fg_color, Color bg_color = Color(0, 0, 0),
+                              uint8_t flags = 0) {
+    this->send_draw_cached_asset(asset_id, x, y, display::ColorUtil::color_to_565(fg_color),
+                                 display::ColorUtil::color_to_565(bg_color), flags);
   }
-  void send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy, uint16_t fg_color, uint16_t bg_color = 0, uint8_t flags = 1);
-  void send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy, Color fg_color, Color bg_color = Color(0, 0, 0), uint8_t flags = 1) {
-    this->send_draw_cached_asset_centered(asset_id, cx, cy, display::ColorUtil::color_to_565(fg_color), display::ColorUtil::color_to_565(bg_color), flags);
+  void send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy, uint16_t fg_color, uint16_t bg_color = 0,
+                                       uint8_t flags = 1);
+  void send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy, Color fg_color,
+                                       Color bg_color = Color(0, 0, 0), uint8_t flags = 1) {
+    this->send_draw_cached_asset_centered(asset_id, cx, cy, display::ColorUtil::color_to_565(fg_color),
+                                          display::ColorUtil::color_to_565(bg_color), flags);
   }
   void send_clear_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y);
   void send_clear_cached_asset_centered(uint16_t asset_id, int cx, int cy);
@@ -258,23 +279,27 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   // Called by HtramLedSwitch on user command: channel 0=red 1=yellow 2=green.
   void set_led(uint8_t channel, bool state);
 
-  void set_button_binary_sensor(binary_sensor::BinarySensor *s) { button_sensor_ = s; }
-  void set_button_action_sensor(text_sensor::TextSensor *s) { button_action_sensor_ = s; }
+  void set_button_binary_sensor(binary_sensor::BinarySensor* s) { button_sensor_ = s; }
+  void set_button_action_sensor(text_sensor::TextSensor* s) { button_action_sensor_ = s; }
 
   // Returns JSON string with result
-  std::string execute_ota(const std::vector<uint8_t> &firmware, bool allow_on_battery);
-  std::string execute_assets_upload(const std::vector<uint8_t> &assets_data);
-  std::string execute_assets_upload_chunked(const std::vector<std::vector<uint8_t>> &chunks);
+  std::string execute_ota(const std::vector<uint8_t>& firmware, bool allow_on_battery);
+  std::string execute_assets_upload(const std::vector<uint8_t>& assets_data);
+  std::string execute_assets_upload_chunked(const std::vector<std::vector<uint8_t>>& chunks);
 
 #ifndef USE_ESP32
-  bool perform_remote_assets_update(void *http_client = nullptr, const std::string &url = "") { return true; }
-  bool perform_remote_gd32_update(void *http_client = nullptr, bool allow_on_battery = false, const std::string &url = "") { return true; }
+  bool perform_remote_assets_update(void* http_client = nullptr, const std::string& url = "") { return true; }
+  bool perform_remote_gd32_update(void* http_client = nullptr, bool allow_on_battery = false,
+                                  const std::string& url = "") {
+    return true;
+  }
 #else
-  bool perform_remote_assets_update(http_request::HttpRequestComponent *http_client,
-                                   const std::string &url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/flash_assets.bin");
-  bool perform_remote_gd32_update(http_request::HttpRequestComponent *http_client,
-                                 bool allow_on_battery = false,
-                                 const std::string &url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/gd32_firmware.bin");
+  bool perform_remote_assets_update(
+      http_request::HttpRequestComponent* http_client,
+      const std::string& url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/flash_assets.bin");
+  bool perform_remote_gd32_update(
+      http_request::HttpRequestComponent* http_client, bool allow_on_battery = false,
+      const std::string& url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/gd32_firmware.bin");
 #endif
 
  protected:
@@ -283,20 +308,20 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   size_t head_packet_len_();
   void pump_rx_(bool flow_only);
 
-  sensor::Sensor *co2_sensor_{nullptr};
-  sensor::Sensor *temp_sensor_{nullptr};
-  sensor::Sensor *hum_sensor_{nullptr};
-  sensor::Sensor *batt_sensor_{nullptr};
-  sensor::Sensor *batt_level_sensor_{nullptr};
-  text_sensor::TextSensor *fw_version_sensor_{nullptr};
-  text_sensor::TextSensor *spi_flash_sensor_{nullptr};
-  text_sensor::TextSensor *button_action_sensor_{nullptr};
-  binary_sensor::BinarySensor *usb_sensor_{nullptr};
-  binary_sensor::BinarySensor *charging_sensor_{nullptr};
-  binary_sensor::BinarySensor *button_sensor_{nullptr};
+  sensor::Sensor* co2_sensor_{nullptr};
+  sensor::Sensor* temp_sensor_{nullptr};
+  sensor::Sensor* hum_sensor_{nullptr};
+  sensor::Sensor* batt_sensor_{nullptr};
+  sensor::Sensor* batt_level_sensor_{nullptr};
+  text_sensor::TextSensor* fw_version_sensor_{nullptr};
+  text_sensor::TextSensor* spi_flash_sensor_{nullptr};
+  text_sensor::TextSensor* button_action_sensor_{nullptr};
+  binary_sensor::BinarySensor* usb_sensor_{nullptr};
+  binary_sensor::BinarySensor* charging_sensor_{nullptr};
+  binary_sensor::BinarySensor* button_sensor_{nullptr};
   uint8_t click_count_{0};
   bool long_press_fired_{false};
-  switch_::Switch *led_switch_[3]{nullptr, nullptr, nullptr};  // 0=red 1=yellow 2=green
+  switch_::Switch* led_switch_[3]{nullptr, nullptr, nullptr};  // 0=red 1=yellow 2=green
   bool led_state_[3]{false, false, false};
   uint16_t raw_fw_ver_{0};
   std::string fw_version_;  // last published, to avoid redundant updates
@@ -307,7 +332,7 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   uint8_t last_flash_read_status_{0};
   uint32_t last_flash_read_addr_{0};
   std::vector<uint8_t> last_flash_read_data_;
-  HtramGd32Display *display_{nullptr};
+  HtramGd32Display* display_{nullptr};
   bool simulation_mode_{false};
 
   std::vector<uint8_t> rx_buffer_;
@@ -316,13 +341,13 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
   bool ota_mode_{false};
   bool needs_display_refresh_{false};
 
-  void process_packet_(const uint8_t *data, size_t len);
+  void process_packet_(const uint8_t* data, size_t len);
 
   // ROM Bootloader helpers
   bool rom_sync(int attempt);
   bool rom_send_command(uint8_t cmd);
-  bool rom_erase(std::string &err_msg);
-  bool rom_write_memory(uint32_t address, const uint8_t *data, size_t len, std::string &err_msg);
+  bool rom_erase(std::string& err_msg);
+  bool rom_write_memory(uint32_t address, const uint8_t* data, size_t len, std::string& err_msg);
   bool rom_go(uint32_t address);
 };
 
@@ -330,21 +355,22 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
 // go to the GD32 via set_led(), and the real state is re-published from telemetry.
 class HtramLedSwitch : public switch_::Switch, public Component {
  public:
-  void set_parent(HtramGd32Component *parent) { parent_ = parent; }
+  void set_parent(HtramGd32Component* parent) { parent_ = parent; }
   void set_channel(uint8_t channel) { channel_ = channel; }
 
  protected:
   void write_state(bool state) override {
     this->publish_state(state);
-    if (this->parent_ != nullptr) this->parent_->set_led(this->channel_, state);
+    if (this->parent_ != nullptr)
+      this->parent_->set_led(this->channel_, state);
   }
-  HtramGd32Component *parent_{nullptr};
+  HtramGd32Component* parent_{nullptr};
   uint8_t channel_{0};
 };
 
 class HtramGd32Display : public display::Display {
  public:
-  void set_parent(HtramGd32Component *parent) {
+  void set_parent(HtramGd32Component* parent) {
     this->parent_ = parent;
     if (parent != nullptr) {
       parent->set_display(this);
@@ -358,7 +384,7 @@ class HtramGd32Display : public display::Display {
   void update() override;
 
   void draw_pixel_at(int x, int y, Color color) override;
-  void draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
+  void draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t* ptr, display::ColorOrder order,
                       display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad) override;
 
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_COLOR; }
@@ -366,21 +392,20 @@ class HtramGd32Display : public display::Display {
   void set_simulation_mode(bool sim) { this->simulation_mode_ = sim; }
   bool is_simulation_mode() const { return this->simulation_mode_; }
 
-  void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
+  void draw_cached_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color,
+                               uint8_t flags);
   void clear_rect_fb(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint16_t color = 0);
 
 #ifndef USE_ESP32
-  const uint16_t *get_framebuffer() const { return this->framebuffer_; }
-  bool dump_ppm(const std::string &path) const;
+  const uint16_t* get_framebuffer() const { return this->framebuffer_; }
+  bool dump_ppm(const std::string& path) const;
   void render_asset_to_fb(uint16_t asset_id, uint8_t x, uint8_t y, uint16_t fg_color, uint16_t bg_color, uint8_t flags);
 #endif
-  void clear_cached_assets() {
-    this->cached_assets_.clear();
-  }
+  void clear_cached_assets() { this->cached_assets_.clear(); }
   void clear_persistent_asset() {
     this->clear_cached_assets();
 #ifndef USE_ESP32
-    std::fill_n(this->framebuffer_, 240 * 240, (uint16_t) 0);
+    std::fill_n(this->framebuffer_, 240 * 240, (uint16_t)0);
 #endif
   }
 
@@ -399,7 +424,7 @@ class HtramGd32Display : public display::Display {
   };
 
   std::vector<CachedAsset> cached_assets_;
-  HtramGd32Component *parent_{nullptr};
+  HtramGd32Component* parent_{nullptr};
   std::vector<uint8_t> chunk_buffer_;
   std::vector<uint16_t> rle_pixels_;
   std::vector<uint8_t> rle_encoded_;
@@ -409,7 +434,7 @@ class HtramGd32Display : public display::Display {
   bool simulation_mode_{false};
 };
 
-inline void HtramGd32Component::set_display(HtramGd32Display *display) {
+inline void HtramGd32Component::set_display(HtramGd32Display* display) {
   this->display_ = display;
   if (this->simulation_mode_ && this->display_ != nullptr) {
     this->display_->set_simulation_mode(true);
@@ -423,7 +448,7 @@ inline void HtramGd32Component::set_simulation_mode(bool sim) {
   }
 }
 
-inline bool HtramGd32Component::dump_ppm(const std::string &path) const {
+inline bool HtramGd32Component::dump_ppm(const std::string& path) const {
 #ifndef USE_ESP32
   if (this->display_ != nullptr) {
     return this->display_->dump_ppm(path);
@@ -444,45 +469,50 @@ inline void HtramGd32Component::clear_cached_assets() {
   }
 }
 
-inline void HtramGd32Component::send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy,
-                                                               uint16_t fg_color, uint16_t bg_color,
-                                                               uint8_t flags) {
-  if (asset_id >= ASSET_ID_COUNT) return;
+inline void HtramGd32Component::send_draw_cached_asset_centered(uint16_t asset_id, int cx, int cy, uint16_t fg_color,
+                                                                uint16_t bg_color, uint8_t flags) {
+  if (asset_id >= ASSET_ID_COUNT)
+    return;
   auto meta = FLASH_ASSET_METAS[asset_id];
-  int x = cx - (int) meta.width / 2;
-  int y = cy - (int) meta.height / 2;
-  if (x < 0) x = 0;
-  if (y < 0) y = 0;
-  this->send_draw_cached_asset(asset_id, (uint8_t) x, (uint8_t) y, fg_color, bg_color, flags);
+  int x = cx - (int)meta.width / 2;
+  int y = cy - (int)meta.height / 2;
+  if (x < 0)
+    x = 0;
+  if (y < 0)
+    y = 0;
+  this->send_draw_cached_asset(asset_id, (uint8_t)x, (uint8_t)y, fg_color, bg_color, flags);
 }
 
 inline void HtramGd32Component::send_clear_cached_asset(uint16_t asset_id, uint8_t x, uint8_t y) {
-  this->send_draw_cached_asset(asset_id, x, y, (uint16_t) 0, (uint16_t) 0, (uint8_t) 0);
+  this->send_draw_cached_asset(asset_id, x, y, (uint16_t)0, (uint16_t)0, (uint8_t)0);
 }
 
 inline void HtramGd32Component::send_clear_cached_asset_centered(uint16_t asset_id, int cx, int cy) {
-  if (asset_id >= ASSET_ID_COUNT) return;
+  if (asset_id >= ASSET_ID_COUNT)
+    return;
   auto meta = FLASH_ASSET_METAS[asset_id];
-  int x = cx - (int) meta.width / 2;
-  int y = cy - (int) meta.height / 2;
-  if (x < 0) x = 0;
-  if (y < 0) y = 0;
-  this->send_clear_cached_asset(asset_id, (uint8_t) x, (uint8_t) y);
+  int x = cx - (int)meta.width / 2;
+  int y = cy - (int)meta.height / 2;
+  if (x < 0)
+    x = 0;
+  if (y < 0)
+    y = 0;
+  this->send_clear_cached_asset(asset_id, (uint8_t)x, (uint8_t)y);
 }
 
 #ifdef HTRAM_HAS_WEB_HANDLERS
 class Gd32OtaHandler : public AsyncWebHandler {
  public:
-  Gd32OtaHandler(HtramGd32Component *parent) : parent_(parent) {}
+  Gd32OtaHandler(HtramGd32Component* parent) : parent_(parent) {}
 
-  bool canHandle(AsyncWebServerRequest *request) const override {
+  bool canHandle(AsyncWebServerRequest* request) const override {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     return request->url() == "/gd32_ota" && request->method() == HTTP_POST;
 #pragma GCC diagnostic pop
   }
 
-  void handleRequest(AsyncWebServerRequest *request) override {
+  void handleRequest(AsyncWebServerRequest* request) override {
     if (this->staging_failed_) {
       request->send(507, "application/json",
                     "{\"result\":\"error\",\"stage\":\"staging\","
@@ -502,7 +532,8 @@ class Gd32OtaHandler : public AsyncWebHandler {
     std::vector<uint8_t>().swap(this->firmware_);
   }
 
-  void handleUpload(AsyncWebServerRequest *request, const PlatformString &filename, size_t index, uint8_t *data, size_t len, bool final) override {
+  void handleUpload(AsyncWebServerRequest* request, const PlatformString& filename, size_t index, uint8_t* data,
+                    size_t len, bool final) override {
     if (index == 0) {
       // Reserve what this upload needs, not the whole 64 KB of GD32 flash.
       //
@@ -530,7 +561,7 @@ class Gd32OtaHandler : public AsyncWebHandler {
       size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
       if (largest < want + 1024) {
         ESP_LOGE("htram_gd32", "[OTA] refusing: need %u B contiguous, largest free block is %u B",
-                 (unsigned) (want + 1024), (unsigned) largest);
+                 (unsigned)(want + 1024), (unsigned)largest);
         this->staging_failed_ = true;
         return;
       }
@@ -544,7 +575,7 @@ class Gd32OtaHandler : public AsyncWebHandler {
   }
 
  private:
-  HtramGd32Component *parent_;
+  HtramGd32Component* parent_;
   std::vector<uint8_t> firmware_;
   bool staging_failed_{false};
 };
@@ -553,16 +584,16 @@ class Gd32AssetsHandler : public AsyncWebHandler {
  public:
   static constexpr size_t CHUNK_CAP = 4096;
 
-  Gd32AssetsHandler(HtramGd32Component *parent) : parent_(parent) {}
+  Gd32AssetsHandler(HtramGd32Component* parent) : parent_(parent) {}
 
-  bool canHandle(AsyncWebServerRequest *request) const override {
+  bool canHandle(AsyncWebServerRequest* request) const override {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     return request->url() == "/gd32_assets" && request->method() == HTTP_POST;
 #pragma GCC diagnostic pop
   }
 
-  void handleRequest(AsyncWebServerRequest *request) override {
+  void handleRequest(AsyncWebServerRequest* request) override {
     if (this->staging_failed_) {
       request->send(507, "application/json",
                     "{\"result\":\"error\",\"stage\":\"staging\","
@@ -581,7 +612,8 @@ class Gd32AssetsHandler : public AsyncWebHandler {
     this->total_size_ = 0;
   }
 
-  void handleUpload(AsyncWebServerRequest *request, const PlatformString &filename, size_t index, uint8_t *data, size_t len, bool final) override {
+  void handleUpload(AsyncWebServerRequest* request, const PlatformString& filename, size_t index, uint8_t* data,
+                    size_t len, bool final) override {
     if (index == 0) {
       std::vector<std::vector<uint8_t>>().swap(this->chunks_);
       this->total_size_ = 0;
@@ -601,7 +633,7 @@ class Gd32AssetsHandler : public AsyncWebHandler {
         size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
         if (largest < CHUNK_CAP + 2048) {
           ESP_LOGE("htram_gd32", "[ASSETS] refusing: need %u B chunk, largest free block is %u B",
-                   (unsigned) (CHUNK_CAP + 2048), (unsigned) largest);
+                   (unsigned)(CHUNK_CAP + 2048), (unsigned)largest);
           this->staging_failed_ = true;
           std::vector<std::vector<uint8_t>>().swap(this->chunks_);
           return;
@@ -609,7 +641,7 @@ class Gd32AssetsHandler : public AsyncWebHandler {
         this->chunks_.emplace_back();
         this->chunks_.back().reserve(CHUNK_CAP);
       }
-      auto &cur = this->chunks_.back();
+      auto& cur = this->chunks_.back();
       size_t space = CHUNK_CAP - cur.size();
       size_t to_copy = std::min(space, len - pos);
       cur.insert(cur.end(), data + pos, data + pos + to_copy);
@@ -619,7 +651,7 @@ class Gd32AssetsHandler : public AsyncWebHandler {
   }
 
  private:
-  HtramGd32Component *parent_;
+  HtramGd32Component* parent_;
   std::vector<std::vector<uint8_t>> chunks_;
   size_t total_size_{0};
   bool staging_failed_{false};

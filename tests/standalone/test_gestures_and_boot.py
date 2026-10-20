@@ -172,7 +172,10 @@ class StandaloneSimHarness:
         self.call_service("inject_button", {"action": action})
 
     def capture_screenshot(self, name: str, out_dir: Path | None = None) -> Path:
-        target_dir = out_dir or (REPO_ROOT / "docs/screenshots")
+        default_dir = (
+            Path(self._pref_dir.name) if self._pref_dir else (REPO_ROOT / "docs/screenshots")
+        )
+        target_dir = out_dir or default_dir
         target_dir.mkdir(parents=True, exist_ok=True)
         ppm_path = target_dir / f"{name}.ppm"
         png_path = target_dir / f"{name}.png"
@@ -394,6 +397,7 @@ class TestPhysicalGesturesSnapshots:
         sim.call_service("simulate_alert", {"flags": 257})
         time.sleep(0.2)
         sim.call_service("simulate_alert", {"flags": 0})
+        time.sleep(0.2)
         sim.call_service("reset_alert_marks")
         time.sleep(0.2)
 

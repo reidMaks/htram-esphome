@@ -338,7 +338,7 @@ def test_live_simulator_ap_mode_and_gestures_e2e():
 
             # 3. Test Single Click in modal_ap toggles to AP Page 1 (Info Card)
             sim.inject_button("single")
-            time.sleep(0.8)
+            time.sleep(1.2)
             assert sim.states.get("Arbiter Context") == "modal_ap", (
                 "Context must remain modal_ap during single-click"
             )

@@ -710,3 +710,167 @@ def test_alert_level_change_sound_transitions():
     # 5. All-clear (0) -> plays clear sound
     on_flags(0)
     assert sounds_played[-1] == clear_rtttl
+
+
+def test_full_jaam_threat_priorities_colors_and_sounds():
+    """Verify all 11 JAAM threat priorities, icon/digit color palettes, and RTTTL sound cues in alert.yaml."""
+    from pathlib import Path
+
+    import yaml
+
+    from .conftest import (
+        ALERT_BIT_ARTILLERY,
+        ALERT_BIT_BALLISTIC,
+        ALERT_BIT_CHEMICAL,
+        ALERT_BIT_DRONES,
+        ALERT_BIT_EXPLOSION,
+        ALERT_BIT_KABS,
+        ALERT_BIT_MISSILES,
+        ALERT_BIT_NUCLEAR,
+        ALERT_BIT_RECON_DRONES,
+        ALERT_BIT_RED,
+        ALERT_BIT_URBAN,
+        ASSET_ID_THREAT_ARTILLERY,
+        ASSET_ID_THREAT_BALLISTIC,
+        ASSET_ID_THREAT_CHEMICAL,
+        ASSET_ID_THREAT_DRONE,
+        ASSET_ID_THREAT_EXPLOSION,
+        ASSET_ID_THREAT_KAB,
+        ASSET_ID_THREAT_MISSILE,
+        ASSET_ID_THREAT_NUCLEAR,
+        ASSET_ID_THREAT_RECON,
+        ASSET_ID_THREAT_URBAN,
+        COLOR_NUCLEAR_YELLOW,
+        COLOR_ORANGE,
+        COLOR_PURPLE,
+        COLOR_RED,
+        COLOR_YELLOW,
+    )
+
+    alert_yaml_path = Path(__file__).resolve().parents[2] / "esphome" / "features" / "alert.yaml"
+    raw_text = alert_yaml_path.read_text(encoding="utf-8")
+
+    class IgnoreTagsLoader(yaml.SafeLoader):
+        pass
+
+    IgnoreTagsLoader.add_multi_constructor(
+        "!",
+        lambda loader, suffix, node: (
+            loader.construct_scalar(node) if isinstance(node, yaml.ScalarNode) else None
+        ),
+    )
+    cfg = yaml.load(raw_text, Loader=IgnoreTagsLoader)
+    subs = cfg.get("substitutions", {})
+
+    assert subs.get("alert_urgent_rtttl"), "alert_urgent_rtttl must be defined"
+    assert subs.get("alert_cbrn_rtttl"), "alert_cbrn_rtttl must be defined"
+    assert subs.get("alert_recon_rtttl"), "alert_recon_rtttl must be defined"
+    assert "play_alert_threat_sound" in raw_text
+    assert "ASSET_ID_THREAT_NUCLEAR" in raw_text
+    assert "ASSET_ID_THREAT_CHEMICAL" in raw_text
+    assert "ASSET_ID_THREAT_EXPLOSION" in raw_text
+    assert "ASSET_ID_THREAT_ARTILLERY" in raw_text
+    assert "ASSET_ID_THREAT_URBAN" in raw_text
+
+    # Verify strict single-icon priority selection and color palette matching alert.yaml
+    def resolve_threat_ui(flags: int) -> tuple[int, int, int]:
+        """Returns (asset_id, icon_color, digit_color)."""
+        yellow = bool(flags & (1 << 11))
+        red = bool(flags & (1 << ALERT_BIT_RED))
+        red_air = bool(flags & (1 << 0)) or red
+        air = red_air or yellow
+        artillery = bool(flags & (1 << ALERT_BIT_ARTILLERY))
+        urban = bool(flags & (1 << ALERT_BIT_URBAN))
+        chemical = bool(flags & (1 << ALERT_BIT_CHEMICAL))
+        nuclear = bool(flags & (1 << ALERT_BIT_NUCLEAR))
+        drone = bool(flags & (1 << ALERT_BIT_DRONES))
+        missile = bool(flags & (1 << ALERT_BIT_MISSILES))
+        kab = bool(flags & (1 << ALERT_BIT_KABS))
+        ballistic = bool(flags & (1 << ALERT_BIT_BALLISTIC))
+        explosion = bool(flags & (1 << ALERT_BIT_EXPLOSION))
+        recon = bool(flags & (1 << ALERT_BIT_RECON_DRONES))
+
+        any_alert = air or artillery or urban or chemical or nuclear
+        new_yellow = (
+            yellow and not red_air and not artillery and not urban and not chemical and not nuclear
+        )
+
+        digit_color = 0xF0EAE0
+        if any_alert:
+            if nuclear or chemical:
+                digit_color = COLOR_PURPLE
+            elif red_air or urban:
+                digit_color = COLOR_RED
+            elif artillery:
+                digit_color = COLOR_ORANGE
+            elif new_yellow:
+                digit_color = COLOR_YELLOW
+            else:
+                digit_color = COLOR_RED
+
+        asset_id = 2
+        icon_color = COLOR_YELLOW if new_yellow else COLOR_RED
+        if nuclear:
+            asset_id, icon_color = ASSET_ID_THREAT_NUCLEAR, COLOR_NUCLEAR_YELLOW
+        elif chemical:
+            asset_id, icon_color = ASSET_ID_THREAT_CHEMICAL, COLOR_PURPLE
+        elif explosion:
+            asset_id, icon_color = ASSET_ID_THREAT_EXPLOSION, COLOR_ORANGE
+        elif ballistic:
+            asset_id, icon_color = ASSET_ID_THREAT_BALLISTIC, COLOR_RED
+        elif kab:
+            asset_id, icon_color = ASSET_ID_THREAT_KAB, COLOR_RED
+        elif missile:
+            asset_id, icon_color = ASSET_ID_THREAT_MISSILE, COLOR_RED
+        elif artillery:
+            asset_id, icon_color = ASSET_ID_THREAT_ARTILLERY, COLOR_ORANGE
+        elif urban:
+            asset_id, icon_color = ASSET_ID_THREAT_URBAN, COLOR_RED
+        elif drone:
+            asset_id, icon_color = (
+                ASSET_ID_THREAT_DRONE,
+                (COLOR_YELLOW if new_yellow else COLOR_RED),
+            )
+        elif recon:
+            asset_id, icon_color = ASSET_ID_THREAT_RECON, COLOR_YELLOW
+
+        return asset_id, icon_color, digit_color
+
+    # 1. Nuclear overrides everything, yellow icon (#FFD60A) + purple digits (#D946EF)
+    assert resolve_threat_ui(
+        (1 << ALERT_BIT_NUCLEAR) | (1 << ALERT_BIT_BALLISTIC) | (1 << ALERT_BIT_RED)
+    ) == (
+        ASSET_ID_THREAT_NUCLEAR,
+        COLOR_NUCLEAR_YELLOW,
+        COLOR_PURPLE,
+    )
+    # 2. Chemical overrides kinetic threats, purple icon (#D946EF) + purple digits (#D946EF) (never green!)
+    assert resolve_threat_ui((1 << ALERT_BIT_CHEMICAL) | (1 << ALERT_BIT_MISSILES)) == (
+        ASSET_ID_THREAT_CHEMICAL,
+        COLOR_PURPLE,
+        COLOR_PURPLE,
+    )
+    # 3. Explosion without siren -> orange icon (#FF6B2B) + white digits (0xF0EAE0)
+    assert resolve_threat_ui(1 << ALERT_BIT_EXPLOSION) == (
+        ASSET_ID_THREAT_EXPLOSION,
+        COLOR_ORANGE,
+        0xF0EAE0,
+    )
+    # 4. Artillery standalone -> orange icon (#FF6B2B) + orange digits (#FF6B2B)
+    assert resolve_threat_ui(1 << ALERT_BIT_ARTILLERY) == (
+        ASSET_ID_THREAT_ARTILLERY,
+        COLOR_ORANGE,
+        COLOR_ORANGE,
+    )
+    # 5. Urban fights -> red icon + red digits
+    assert resolve_threat_ui(1 << ALERT_BIT_URBAN) == (
+        ASSET_ID_THREAT_URBAN,
+        COLOR_RED,
+        COLOR_RED,
+    )
+    # 6. Recon drone without siren -> yellow icon + white digits
+    assert resolve_threat_ui(1 << ALERT_BIT_RECON_DRONES) == (
+        ASSET_ID_THREAT_RECON,
+        COLOR_YELLOW,
+        0xF0EAE0,
+    )

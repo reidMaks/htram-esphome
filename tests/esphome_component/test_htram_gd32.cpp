@@ -1367,6 +1367,7 @@ void test_jaam_ws_0xa2_notifications_ttl(void) {
   ws.on_ws_binary(init_a1, sizeof(init_a1), 0, sizeof(init_a1), true);
   ws.loop();
   TEST_ASSERT_FALSE(ws.is_ballistic());
+  TEST_ASSERT_FALSE(ws.is_explosion());
 
   // Receive 0xA2 ballistic notification (bit 8 = 0x0100) for region 31
   uint8_t notif_kyiv[] = {0xA2, 31, 0x00, 0x00, 0x01};
@@ -1374,17 +1375,50 @@ void test_jaam_ws_0xa2_notifications_ttl(void) {
   ws.loop();
   TEST_ASSERT_TRUE(ws.is_ballistic());
 
-  // Receive 0xA2 notification for unrelated region 22 (Kharkiv) -> must NOT clear Kyiv notification
+  // 10s later, receive 0xA2 explosion notification (bit 9 = 0x0200) for region 31
+  // Must accumulate via |= so BOTH ballistic and explosion remain active!
+  mock_esphome_millis += 10000;
+  uint8_t notif_explosion[] = {0xA2, 31, 0x00, 0x00, 0x02};
+  ws.on_ws_binary(notif_explosion, sizeof(notif_explosion), 0, sizeof(notif_explosion), true);
+  ws.loop();
+  TEST_ASSERT_TRUE(ws.is_ballistic());
+  TEST_ASSERT_TRUE(ws.is_explosion());
+
+  // Receive 0xA2 notification for unrelated region 22 (Kharkiv) -> must NOT clear Kyiv notifications
   uint8_t notif_other[] = {0xA2, 22, 0x00, 0x20, 0x00};
   ws.on_ws_binary(notif_other, sizeof(notif_other), 0, sizeof(notif_other), true);
   ws.loop();
   TEST_ASSERT_TRUE(ws.is_ballistic());
+  TEST_ASSERT_TRUE(ws.is_explosion());
 
-  // Advance time past NOTIF_TTL_MS (180s) -> notification expires automatically
+  // Advance time past NOTIF_TTL_MS (180s) -> notifications expire automatically
   mock_esphome_millis += JaamWsComponent::NOTIF_TTL_MS + 1000;
   ws.loop();
   TEST_ASSERT_FALSE(ws.is_ballistic());
+  TEST_ASSERT_FALSE(ws.is_explosion());
   TEST_ASSERT_TRUE(ws.is_red());  // Base alert from 0xA1 remains active
+}
+
+void test_jaam_ws_all_threat_bits(void) {
+  mock_esphome_millis = 1000;
+  JaamWsComponent ws;
+  ws.set_region_id(31);
+  ws.setup();
+  ws.clear_fusion_state();
+
+  TEST_ASSERT_FALSE(ws.is_any_alert());
+
+  // 0xA1 with artillery (bit 1), urban (bit 2), chemical (bit 3), nuclear (bit 4) -> 0x001E
+  uint8_t a1_cbrn_ground[] = {0xA1, 0x01, 0x00, 0x00, 0x00, 31, 0x00, 0x1E, 0x00};
+  ws.on_ws_binary(a1_cbrn_ground, sizeof(a1_cbrn_ground), 0, sizeof(a1_cbrn_ground), true);
+  ws.loop();
+
+  TEST_ASSERT_TRUE(ws.is_any_alert());
+  TEST_ASSERT_FALSE(ws.is_air_raid());  // Air raid bits (0/11/12) are not set
+  TEST_ASSERT_TRUE(ws.is_artillery());
+  TEST_ASSERT_TRUE(ws.is_urban());
+  TEST_ASSERT_TRUE(ws.is_chemical());
+  TEST_ASSERT_TRUE(ws.is_nuclear());
 }
 
 void test_jaam_ws_exponential_backoff_jitter_and_1008_penalty(void) {
@@ -1466,6 +1500,7 @@ int main(void) {
   RUN_TEST(test_jaam_ws_handshake_chip_id_and_firmware);
   RUN_TEST(test_jaam_ws_0xa1_hash_chain_and_malformed_frames);
   RUN_TEST(test_jaam_ws_0xa2_notifications_ttl);
+  RUN_TEST(test_jaam_ws_all_threat_bits);
   RUN_TEST(test_jaam_ws_exponential_backoff_jitter_and_1008_penalty);
   return UNITY_END();
 }
