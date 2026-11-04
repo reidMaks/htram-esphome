@@ -78,8 +78,8 @@ a(f'<text x="{PX}" y="46" font-size="30" font-weight="700" fill="{C["ink"]}">'
   'SWD: Pico → GD32</text>')
 a(f'<text x="{PX}" y="75" font-size="17" fill="{C["mute"]}">'
   'зворот плати · '
-  'етапи <tspan font-weight="700">probe / unlock / flash</tspan> · '
-  'паяти на знеструм'
+  'етапи <tspan font-weight="700">probe / esp / dump / unlock / flash</tspan> · '
+  'паяти один раз на знеструм'
   'леній платі</text>')
 
 # ----------------------------------------------------------- board photo ----

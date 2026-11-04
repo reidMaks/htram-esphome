@@ -1,4 +1,4 @@
-"""Generate the two ESP-side wiring diagrams over the real board photo."""
+"""Generate docs/wiring/esp-uart0.svg - ESP32 UART0 wiring diagram over the real board photo."""
 import base64, io, os
 from PIL import Image
 import sys, pathlib as _pl
@@ -161,49 +161,25 @@ def build(fname, title, subtitle, links, gpio0, cross_note, extra):
 
 build('esp-uart0.svg',
       'UART0: заливка ESPHome в ESP32',
-      'етап <tspan font-weight="700">esp</tspan> · перехрестя ПОТРІБНЕ · паяти на знеструмленій платі',
+      'етап <tspan font-weight="700">esp</tspan> · перехрестя ПОТРІБНЕ · паяти один раз на знеструмленій платі',
       [(6, 34, C['tx'], -104, 'GP4 · жовтий|GP4 = UART TX → GPIO3 (RXD0)'),
        (7, 35, C['rx'],  104, 'GP5 · помаранч.|GP5 = UART RX → GPIO1 (TXD0)'),
        (8, 38, C['gnd'], -62, 'GND · чорний|GND · чорний · pin 8 → пад 38 (GND модуля)')],
-      25,
+      None,
       ('#eaf6ee', '#a8cdb5', '#1f5c3a',
        '<tspan font-weight="700">Перехрестя тут потрібне:</tspan> Pico виступає хостом, '
        'а не ESP. TX Pico йде на RXD0, RX Pico — на TXD0.'),
-      [('#fdecec', '#e0a3a3', '#8a2b2b',
+      [('#eaf6ee', '#a8cdb5', '#1f5c3a',
+        [('GPIO0 (пад 25) та SW1 НЕ потрібні', True),
+         ('convert.py автоматично переводить', False),
+         ('ESP32 у Download Mode через SWD:', False),
+         ('тримає PA1 = 0 на GD32 під час', False),
+         ('подачі живлення PB3 / PF7.', False)]),
+       ('#fdecec', '#e0a3a3', '#8a2b2b',
         [('EN не чіпати взагалі', True),
          ('ні замикати, ні смикати.', False)]),
-       ('#f6f0fb', '#c9b0de', '#5b3580',
-        [('GPIO0 = пад 25', True),
-         ('притиснути до GND і тримати — це', False),
-         ('і є вхід у download mode. Цілитись', False),
-         ('у пін не треба: тисни просто на', False),
-         ('металеву кришку ESP, вона земля.', False),
-         ('Power-cycle ESP роби кнопкою,', False),
-         ('не micro-USB — рейку гейтить GD32.', False)]),
        ('#eef4fa', '#a9c3dc', '#274b6d',
         [('GND: пад 38 або екран micro-USB', True),
          ('док називає екран; пад 38 —', False),
          ('той самий вузол і ближче.', False)])])
 
-build('esp-linkuart.svg',
-      'Міжчиповий UART: Pico вдає ESP',
-      'етапи <tspan font-weight="700">probe / dump / flash</tspan> · перехрестя НЕ потрібне',
-      [(6, 28, C['tx'], -104, 'GP4 · жовтий|GP4 = UART TX → GPIO17 → GD32 PA3 (RX)'),
-       (7, 27, C['rx'],  104, 'GP5 · помаранч.|GP5 = UART RX → GPIO16 → GD32 PA2 (TX)'),
-       (8, 38, C['gnd'], -62, 'GND · чорний|GND · чорний · pin 8 → пад 38 (GND модуля)')],
-      None,
-      ('#fdecec', '#e0a3a3', '#8a2b2b',
-       '<tspan font-weight="700">НЕ перехрещувати</tspan> — на відміну від етапу esp. Pico тут '
-       'заміняє ESP, а перехрестя вже зроблене на боці GD32 (PA3=RX, PA2=TX).'),
-      [('#eef4fa', '#a9c3dc', '#274b6d',
-        [('Ті самі два дроти, інші пади', True),
-         ('з етапу esp вони переїжджають', False),
-         ('з пари 34/35 на пару 27/28.', False)]),
-       ('#eaf6ee', '#a8cdb5', '#1f5c3a',
-        [('ESP не заважає', True),
-         ('ESPHome лишає GPIO16/17 входами', False),
-         ('(high-Z), конфлікту на лінії немає.', False)]),
-       ('#fff6e6', '#e0b46c', '#7a5312',
-        [('Альтернатива', True),
-         ('можна паяти прямо до ніг GD32', False),
-         ('PA2/PA3 — електрично той самий вузол.', False)])])
