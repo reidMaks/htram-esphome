@@ -42,12 +42,32 @@ def test_dump_via_swd_mem_protocol(tmp_path: Path) -> None:
         class DP:
             def __init__(self) -> None:
                 self.dp_writes: list[tuple[int, int]] = []
+                self.powered_down = 0
 
             def write_reg(self, addr: int, val: int) -> None:
                 self.dp_writes.append((addr, val))
 
             def flush(self) -> None:
                 pass
+
+            def power_up_debug(self) -> bool:
+                return True
+
+            def power_down_debug(self) -> bool:
+                self.powered_down += 1
+                self.dp_writes.append((0x04, 0x00000000))
+                cmd = int.from_bytes(sram[0x404:0x408], "little")
+                if cmd == 1:
+                    chunk_addr = int.from_bytes(sram[0x40C:0x410], "little")
+                    chunk_len = int.from_bytes(sram[0x410:0x414], "little")
+                    flash_off = chunk_addr - 0x08000000
+                    chunk = bytes(fake_flash[flash_off : flash_off + chunk_len])
+                    sram[0x418 : 0x418 + chunk_len] = chunk
+                    crc = flash.crc16_ccitt(chunk)
+                    sram[0x414:0x418] = crc.to_bytes(4, "little")
+                    sram[0x404:0x408] = (0).to_bytes(4, "little")  # cmd = 0
+                    sram[0x408:0x40C] = (1).to_bytes(4, "little")  # status = 1 (DONE)
+                return True
 
         class Core:
             def write_core_register_raw(self, reg: str, val: int) -> None:
@@ -66,18 +86,6 @@ def test_dump_via_swd_mem_protocol(tmp_path: Path) -> None:
 
         def resume(self) -> None:
             self.halted = False
-            # Simulate swd_flash_dump.c executing after resume()
-            cmd = int.from_bytes(sram[0x404:0x408], "little")
-            if cmd == 1:
-                chunk_addr = int.from_bytes(sram[0x40C:0x410], "little")
-                chunk_len = int.from_bytes(sram[0x410:0x414], "little")
-                flash_off = chunk_addr - 0x08000000
-                chunk = bytes(fake_flash[flash_off : flash_off + chunk_len])
-                sram[0x418 : 0x418 + chunk_len] = chunk
-                crc = flash.crc16_ccitt(chunk)
-                sram[0x414:0x418] = crc.to_bytes(4, "little")
-                sram[0x404:0x408] = (0).to_bytes(4, "little")  # cmd = 0
-                sram[0x408:0x40C] = (1).to_bytes(4, "little")  # status = 1 (DONE)
 
         def write_memory_block8(self, addr: int, data: list[int]) -> None:
             off = addr - 0x20000000
@@ -88,10 +96,14 @@ def test_dump_via_swd_mem_protocol(tmp_path: Path) -> None:
             return list(sram[off : off + size])
 
         def read32(self, addr: int) -> int:
+            if not (0x20000000 <= addr < 0x20002000):
+                return 0
             off = addr - 0x20000000
             return int.from_bytes(sram[off : off + 4], "little")
 
         def write32(self, addr: int, val: int) -> None:
+            if not (0x20000000 <= addr < 0x20002000):
+                return
             off = addr - 0x20000000
             sram[off : off + 4] = val.to_bytes(4, "little")
 

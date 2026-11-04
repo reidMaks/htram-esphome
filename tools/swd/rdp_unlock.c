@@ -208,7 +208,7 @@ void main(void)
     USART1_BAUD = 0x0045;               /* 8 MHz / 115200 */
     USART1_CTL0 = UEN | TEN;
 
-    delay(50000);
+    delay(5000);
     uart_puts("\r\n=== GD32 RDP unlock ===\r\n");
     report("[before]");
 

@@ -53,12 +53,13 @@ typedef struct {
 
 #define mb (*(volatile dump_mailbox_t *)MAILBOX_ADDR)
 
-static void delay(volatile uint32_t n)
+static void delay(uint32_t n)
 {
+    FWDGT_CTL = FWDGT_KEY_RELOAD;
     while (n--) {
-        FWDGT_CTL = FWDGT_KEY_RELOAD;
-        __asm__ volatile("");
+        __asm__ volatile("nop");
     }
+    FWDGT_CTL = FWDGT_KEY_RELOAD;
 }
 
 void main(void)
@@ -117,10 +118,10 @@ void main(void)
             mb.status = 0U; /* BUSY */
 
             /*
-             * Wait ~80 ms at 8 MHz HSI for host's `writedp 0x4 0x0`
+             * Wait ~15 ms at 8 MHz HSI for host's debug power-down
              * (clearing CDBGPWRUPREQ) to take effect before reading Flash.
              */
-            delay(300000U);
+            delay(15000U);
 
             uint32_t addr = mb.addr;
             uint32_t len = mb.len;
