@@ -4,7 +4,7 @@
 - Always use the project virtual environment (`.venv`) or `uv run`. `esphome` is not installed globally in PATH.
 - Preferred command invocation: `uv run esphome ...` or `source .venv/bin/activate && esphome ...`.
 - Python scripts in `tools/` should be executed via `uv run python3 tools/...`.
-- Interact with device REST APIs using `tools/device.py` or Makefile targets (`make device-status DEVICE=<alias>`, `make device-silence DEVICE=<alias>`, etc.) instead of raw curl. Recognized aliases: `office` (`192.168.0.78`), `bedroom` (`192.168.0.159`), `living` / `c1da24` (`192.168.0.185`).
+- Interact with device REST APIs using `tools/device.py` or Makefile targets (`make device-status DEVICE=<alias>`, `make device-silence DEVICE=<alias>`, etc.) instead of raw curl. Recognized aliases: `office` (`192.168.0.90`), `bedroom` (`192.168.0.159`), `living` / `c1da24` (`192.168.0.185`).
 
 ## ESP32 Flash & DRAM Memory Constraints
 - The ESP32 partition scheme allocates 0x1C0000 (~1.75 MB) per OTA app partition.
@@ -14,7 +14,7 @@
 
 
 ## Multi-Device Fleet Operations
-- The physical fleet consists of three primary nodes: `office` (`192.168.0.78`), `bedroom` (`192.168.0.159`), `living` (`192.168.0.185`).
+- The physical fleet consists of three primary nodes: `office` (`192.168.0.90`), `bedroom` (`192.168.0.159`), `living` (`192.168.0.185`).
 - When deploying firmware fixes or updates across all devices, use `make update-all` (or `make ota-esp-all`) instead of manual single-device commands.
 - For GD32 firmware and graphic assets, use `make ota-gd32-all` and `make flash-assets-all`.
 - Always inspect fleet telemetry with `make status-all` or `tools/device.py <alias> status`.

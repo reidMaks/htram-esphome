@@ -4,8 +4,8 @@ from tools.device import HtramClient, load_credentials, resolve_device_address
 
 
 def test_resolve_device_address():
-    assert resolve_device_address("office") == "192.168.0.78"
-    assert resolve_device_address("кабінет") == "192.168.0.78"
+    assert resolve_device_address("office") == "192.168.0.90"
+    assert resolve_device_address("кабінет") == "192.168.0.90"
     assert resolve_device_address("bedroom") == "192.168.0.159"
     assert resolve_device_address("спальня") == "192.168.0.159"
     assert resolve_device_address("living") == "192.168.0.185"

@@ -265,19 +265,25 @@ build-gd32:
 
 TARGET_DEVICE := $(strip $(if $(DEVICE),$(DEVICE),$(if $(HOST),$(HOST),$(IP))))
 ifeq ($(TARGET_DEVICE),office)
-  override TARGET_DEVICE := 192.168.0.78
+  override TARGET_DEVICE := 192.168.0.90
 endif
 ifeq ($(TARGET_DEVICE),кабінет)
-  override TARGET_DEVICE := 192.168.0.78
+  override TARGET_DEVICE := 192.168.0.90
 endif
 ifeq ($(TARGET_DEVICE),cabinet)
-  override TARGET_DEVICE := 192.168.0.78
+  override TARGET_DEVICE := 192.168.0.90
 endif
 ifeq ($(TARGET_DEVICE),9436b0)
-  override TARGET_DEVICE := 192.168.0.78
+  override TARGET_DEVICE := 192.168.0.90
 endif
 ifeq ($(TARGET_DEVICE),htram-9436b0)
-  override TARGET_DEVICE := 192.168.0.78
+  override TARGET_DEVICE := 192.168.0.90
+endif
+ifeq ($(TARGET_DEVICE),11514c)
+  override TARGET_DEVICE := 192.168.0.90
+endif
+ifeq ($(TARGET_DEVICE),htram-11514c)
+  override TARGET_DEVICE := 192.168.0.90
 endif
 ifeq ($(TARGET_DEVICE),bedroom)
   override TARGET_DEVICE := 192.168.0.159
@@ -309,7 +315,7 @@ endif
 
 TARGET_CONFIG ?= $(CONFIG)
 ifeq ($(TARGET_CONFIG),)
-  ifeq ($(TARGET_DEVICE),192.168.0.78)
+  ifeq ($(TARGET_DEVICE),192.168.0.90)
     override TARGET_CONFIG := esphome/htram-9436b0.yaml
   endif
   ifeq ($(TARGET_DEVICE),192.168.0.159)
