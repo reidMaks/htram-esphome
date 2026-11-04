@@ -212,6 +212,298 @@ def build_swd_writer() -> tuple[Path, int]:
     return binf, pc
 
 
+def build_swd_dumper() -> tuple[Path, int]:
+    """Build swd_flash_dump.c for SRAM exec; return (bin path, thumb entry PC int)."""
+    elf, binf = SWD / "swd_flash_dump.elf", SWD / "swd_flash_dump.bin"
+    subprocess.run(
+        [
+            "arm-none-eabi-gcc",
+            "-mcpu=cortex-m3",
+            "-mthumb",
+            "-Os",
+            "-nostdlib",
+            "-nostartfiles",
+            "-ffreestanding",
+            "-T",
+            str(SWD / "sram.ld"),
+            "-Wl,--entry=main",
+            "-o",
+            str(elf),
+            str(SWD / "swd_flash_dump.c"),
+        ],
+        check=True,
+    )
+    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
+    nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
+    entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
+    pc = int(entry, 16) | 1
+    print(f"[build] swd_dumper {binf.stat().st_size} B, entry 0x{pc:08X}")
+    return binf, pc
+
+
+def build_rdp_unlocker() -> tuple[Path, int]:
+    """Build rdp_unlock.c for SRAM exec; return (bin path, thumb entry PC int)."""
+    elf, binf = SWD / "rdp_unlock.elf", SWD / "rdp_unlock.bin"
+    subprocess.run(
+        [
+            "arm-none-eabi-gcc",
+            "-mcpu=cortex-m3",
+            "-mthumb",
+            "-Os",
+            "-nostdlib",
+            "-nostartfiles",
+            "-ffreestanding",
+            "-T",
+            str(SWD / "sram.ld"),
+            "-Wl,--entry=main",
+            "-o",
+            str(elf),
+            str(SWD / "rdp_unlock.c"),
+        ],
+        check=True,
+    )
+    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
+    nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
+    entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
+    pc = int(entry, 16) | 1
+    print(f"[build] rdp_unlocker {binf.stat().st_size} B, entry 0x{pc:08X}")
+    return binf, pc
+
+
+def dump_via_swd_mem(out_path: Path = FACTORY_IMAGE, total_size: int = 65536) -> int:
+    """Dump 64 KB main flash under RDP1 purely over SWD using SRAM mailbox + CDBGPWRUPREQ clear."""
+    from pyocd.core.helpers import ConnectHelper
+
+    binf, pc = build_swd_dumper()
+    bin_data = list(binf.read_bytes())
+
+    MAILBOX_ADDR = 0x20000400
+    DUMP_MAGIC = 0x44554D50
+    CHUNK_SIZE = 4096
+    FLASH_BASE = 0x08000000
+
+    out_buf = bytearray()
+    t_start = time.time()
+
+    for off in range(0, total_size, CHUNK_SIZE):
+        chunk_len = min(CHUNK_SIZE, total_size - off)
+        target_addr = FLASH_BASE + off
+        chunk_ok = False
+
+        for attempt in range(1, 5):
+            # 1. Attach, reset+halt (stops any running watchdog), load stub + mailbox,
+            #    resume, and immediately drop CDBGPWRUPREQ (writedp 0x4 0x0) so the
+            #    GD32 FMC permits SRAM code to read RDP1-protected Flash.
+            s = None
+            try:
+                s = ConnectHelper.session_with_chosen_probe(
+                    target_override="cortex_m",
+                    options={"connect_mode": "attach", "frequency": 100000},
+                )
+                s.open()
+                target = s.board.target
+                target.reset_and_halt()
+                target.write_memory_block8(0x20000000, bin_data)
+                target.write32(MAILBOX_ADDR + 0x00, DUMP_MAGIC)
+                target.write32(MAILBOX_ADDR + 0x08, 0)  # status = BUSY
+                target.write32(MAILBOX_ADDR + 0x0C, target_addr)
+                target.write32(MAILBOX_ADDR + 0x10, chunk_len)
+                target.write32(MAILBOX_ADDR + 0x14, 0)
+                target.write32(MAILBOX_ADDR + 0x04, 1)  # cmd = DUMP_CHUNK
+
+                core = target.selected_core
+                core.write_core_register_raw("sp", 0x20002000)
+                core.write_core_register_raw("pc", pc)
+                core.write_core_register_raw("xpsr", 0x01000000)
+                target.resume()
+
+                # GigaVulnerability #2: drop CDBGPWRUPREQ so SRAM stub can read Flash
+                target.dp.write_reg(0x04, 0x00000000)
+                target.dp.flush()
+            except Exception as e:
+                print(
+                    f"\n[swd-dump] chunk 0x{target_addr:08X} start attempt {attempt} failed ({e})",
+                    file=sys.stderr,
+                )
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                time.sleep(0.3)
+                continue
+            finally:
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+
+            # 2. Wait for the SRAM stub (~80 ms delay + 4 KB copy + CRC-16)
+            time.sleep(0.22)
+
+            # 3. Re-attach (without reset!) to read the 4 KB buffer from SRAM
+            s_read = None
+            try:
+                s_read = ConnectHelper.session_with_chosen_probe(
+                    target_override="cortex_m",
+                    options={"connect_mode": "attach", "frequency": 100000},
+                )
+                s_read.open()
+                target_r = s_read.board.target
+                magic = target_r.read32(MAILBOX_ADDR + 0x00)
+                cmd = target_r.read32(MAILBOX_ADDR + 0x04)
+                status = target_r.read32(MAILBOX_ADDR + 0x08)
+                crc_seq = target_r.read32(MAILBOX_ADDR + 0x14)
+                dev_crc = crc_seq & 0xFFFF
+
+                if magic != DUMP_MAGIC or cmd != 0 or status != 1:
+                    raise RuntimeError(
+                        f"mailbox not ready (magic=0x{magic:08X}, cmd={cmd}, status={status})"
+                    )
+
+                raw_chunk = bytes(target_r.read_memory_block8(MAILBOX_ADDR + 0x18, chunk_len))
+                calc_crc = crc16_ccitt(raw_chunk)
+                if calc_crc != dev_crc:
+                    raise RuntimeError(
+                        f"CRC mismatch on chunk 0x{target_addr:08X}: "
+                        f"host=0x{calc_crc:04X} != dev=0x{dev_crc:04X}"
+                    )
+
+                if off == 0 and (
+                    raw_chunk == b"\xff" * chunk_len or raw_chunk == b"\x00" * chunk_len
+                ):
+                    raise RuntimeError(
+                        "chunk 0 at 0x08000000 read back blank (RDP still blocking read)"
+                    )
+
+                out_buf.extend(raw_chunk)
+                chunk_ok = True
+                break
+            except Exception as e:
+                print(
+                    f"\n[swd-dump] chunk 0x{target_addr:08X} read attempt {attempt} failed ({e})",
+                    file=sys.stderr,
+                )
+                time.sleep(0.3)
+            finally:
+                if s_read is not None:
+                    try:
+                        s_read.close()
+                    except Exception:
+                        pass
+
+        if not chunk_ok:
+            print(
+                f"\n[swd-dump] ERROR: failed to dump chunk at 0x{target_addr:08X} after 4 attempts",
+                file=sys.stderr,
+            )
+            return 1
+
+        done_bytes = len(out_buf)
+        print(
+            f"\r[swd-dump] Dumped {done_bytes}/{total_size} bytes ({done_bytes * 100 // total_size}%)",
+            end="",
+            flush=True,
+        )
+
+    print()
+    dt = time.time() - t_start
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(bytes(out_buf))
+    full_crc = crc16_ccitt(bytes(out_buf))
+    print(
+        f"[swd-dump] Saved {len(out_buf)} bytes to {out_path} in {dt:.2f}s "
+        f"(CRC16=0x{full_crc:04X})"
+    )
+    return 0
+
+
+def unlock_via_swd_mem() -> int:
+    """Run rdp_unlock.c in SRAM over SWD and verify status via mailbox (no UART needed)."""
+    from pyocd.core.helpers import ConnectHelper
+
+    binf, pc = build_rdp_unlocker()
+    bin_data = list(binf.read_bytes())
+
+    UNLOCK_MAILBOX_ADDR = 0x20001000
+    UNLOCK_MAGIC = 0x554E4C4B
+
+    session = None
+    for attempt in range(1, 6):
+        s = None
+        try:
+            print(f"[pyocd] connecting via SWD @ 100kHz (attempt {attempt}/5)...")
+            s = ConnectHelper.session_with_chosen_probe(
+                target_override="cortex_m",
+                options={"connect_mode": "attach", "frequency": 100000},
+            )
+            s.open()
+            target = s.board.target
+            target.reset_and_halt()
+            session = s
+            break
+        except Exception as e:
+            print(f"[pyocd] attempt {attempt} failed ({e}), retrying...")
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            time.sleep(0.4)
+
+    if not session:
+        print("[pyocd] Failed to connect to target after 5 attempts", file=sys.stderr)
+        return 1
+
+    try:
+        target = session.board.target
+        print(f"[pyocd] loading rdp_unlocker ({len(bin_data)} B) to 0x20000000...")
+        target.write_memory_block8(0x20000000, bin_data)
+        target.write32(UNLOCK_MAILBOX_ADDR + 0x00, 0)
+        target.write32(UNLOCK_MAILBOX_ADDR + 0x04, 0)
+
+        core = target.selected_core
+        core.write_core_register_raw("sp", 0x20002000)
+        core.write_core_register_raw("pc", pc)
+        core.write_core_register_raw("xpsr", 0x01000000)
+        target.resume()
+
+        t0 = time.time()
+        while time.time() - t0 < 5.0:
+            magic = target.read32(UNLOCK_MAILBOX_ADDR + 0x00)
+            status = target.read32(UNLOCK_MAILBOX_ADDR + 0x04)
+            if magic == UNLOCK_MAGIC and status != 0:
+                err_step = target.read32(UNLOCK_MAILBOX_ADDR + 0x08)
+                fmc_stat = target.read32(UNLOCK_MAILBOX_ADDR + 0x0C)
+                fmc_ctl = target.read32(UNLOCK_MAILBOX_ADDR + 0x10)
+                fmc_obstat = target.read32(UNLOCK_MAILBOX_ADDR + 0x14)
+                print(
+                    f"[rdp-unlock] STAT=0x{fmc_stat:08X} CTL=0x{fmc_ctl:08X} "
+                    f"OBSTAT=0x{fmc_obstat:08X}"
+                )
+                if status == 1:
+                    print(
+                        "[ok] Option bytes erased and RDP=0xA5 programmed! "
+                        "Power-cycle the board (POR) to apply mass-erase."
+                    )
+                    return 0
+                if status == 2:
+                    print("[info] SPC already clear -- flash is already unprotected.")
+                    return 0
+                print(
+                    f"[rdp-unlock] ERROR at step {err_step} (FMC_STAT=0x{fmc_stat:08X})",
+                    file=sys.stderr,
+                )
+                return 1
+            time.sleep(0.05)
+
+        print("[rdp-unlock] Timeout waiting for rdp_unlocker mailbox", file=sys.stderr)
+        return 1
+    finally:
+        session.close()
+
+
 def flash_via_swd_mem(img: bytes, no_reset: bool, host_crc: int) -> int:
     from pyocd.core.helpers import ConnectHelper
 
@@ -378,6 +670,23 @@ def main() -> int:
         "--swd-mem", action="store_true", help="flash via SWD memory mailbox (no UART required)"
     )
     ap.add_argument(
+        "--no-reset",
+        action="store_true",
+        help="do not reset the target after flashing",
+    )
+    ap.add_argument(
+        "--dump",
+        nargs="?",
+        const=str(FACTORY_IMAGE),
+        metavar="OUT",
+        help="dump 64 KB factory flash over SWD mailbox (no UART required; default: tools/swd/gd32_flash.bin)",
+    )
+    ap.add_argument(
+        "--rdp-unlock",
+        action="store_true",
+        help="remove RDP1 read-protection (mass erase) over SWD mailbox (no UART required)",
+    )
+    ap.add_argument(
         "--status", metavar="HOST", help="query live device telemetry and services over Native API"
     )
     ap.add_argument(
@@ -394,6 +703,12 @@ def main() -> int:
         from tools.flash_assets import upload_assets
 
         return upload_assets(resolve_device_address(args.assets))
+
+    if args.dump:
+        return dump_via_swd_mem(Path(args.dump))
+
+    if args.rdp_unlock:
+        return unlock_via_swd_mem()
 
     if args.factory:
         img_path = FACTORY_IMAGE

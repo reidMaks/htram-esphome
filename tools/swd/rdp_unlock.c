@@ -38,8 +38,30 @@
 
 #define GPIOB_BASE    0x48000400
 #define GPIOC_BASE    0x48000800
+#define GPIOF_BASE    0x48001400
 #define GPIO_CTL(b)   (*(volatile uint32_t *)((b) + 0x00))
 #define GPIO_BOP(b)   (*(volatile uint32_t *)((b) + 0x18))
+
+#define FWDGT_BASE       0x40003000
+#define FWDGT_CTL        (*(volatile uint32_t *)(FWDGT_BASE + 0x00))
+#define FWDGT_PSC        (*(volatile uint32_t *)(FWDGT_BASE + 0x04))
+#define FWDGT_RLD        (*(volatile uint32_t *)(FWDGT_BASE + 0x08))
+#define FWDGT_KEY_RELOAD 0xAAAA
+#define FWDGT_KEY_ACCESS 0x5555
+
+#define UNLOCK_MAILBOX_ADDR 0x20001000U
+#define UNLOCK_MAGIC        0x554E4C4BU /* "UNLK" */
+
+typedef struct {
+    volatile uint32_t magic;      /* +0x00: 0x554E4C4B ("UNLK") */
+    volatile uint32_t status;     /* +0x04: 0=busy, 1=programmed_ok, 2=already_unprotected, 3=err */
+    volatile uint32_t err_step;   /* +0x08: 0=none, 1=obwen, 2=ober, 3=obpg */
+    volatile uint32_t fmc_stat;   /* +0x0C: final FMC_STAT */
+    volatile uint32_t fmc_ctl;    /* +0x10: final FMC_CTL */
+    volatile uint32_t fmc_obstat; /* +0x14: final FMC_OBSTAT */
+} unlock_mailbox_t;
+
+#define umb (*(volatile unlock_mailbox_t *)UNLOCK_MAILBOX_ADDR)
 
 #define USART1_BASE   0x40004400
 #define USART1_CTL0   (*(volatile uint32_t *)(USART1_BASE + 0x00))
@@ -77,8 +99,10 @@
 
 static void delay(volatile uint32_t n)
 {
-    while (n--)
+    while (n--) {
+        FWDGT_CTL = FWDGT_KEY_RELOAD;
         __asm__ volatile("");
+    }
 }
 
 static void uart_putc(uint8_t c)
@@ -106,8 +130,18 @@ static void uart_hex32(uint32_t v)
 static void fmc_wait_idle(void)
 {
     uint32_t guard = 2000000;
-    while ((FMC_STAT & STAT_BUSY) && --guard)
-        ;
+    while ((FMC_STAT & STAT_BUSY) && --guard) {
+        FWDGT_CTL = FWDGT_KEY_RELOAD;
+    }
+}
+
+static void sync_mailbox(uint32_t status, uint32_t err_step)
+{
+    umb.fmc_stat = FMC_STAT;
+    umb.fmc_ctl = FMC_CTL;
+    umb.fmc_obstat = FMC_OBSTAT;
+    umb.err_step = err_step;
+    umb.status = status;
 }
 
 static void report(const char *label)
@@ -124,11 +158,27 @@ static void report(const char *label)
 
 void main(void)
 {
-    RCU_AHBEN  |= (1 << 17) | (1 << 18) | (1 << 19);
+    /* Disable interrupts and SysTick so flash operations do not vector to Flash */
+    __asm__ volatile("cpsid i");
+    *(volatile uint32_t *)0xE000E010 = 0;          /* SysTick CTL */
+    *(volatile uint32_t *)0xE000E180 = 0xFFFFFFFF; /* NVIC ICER */
+    *(volatile uint32_t *)0xE000E280 = 0xFFFFFFFF; /* NVIC ICPR */
+
+    /* Extend Watchdog to maximum ~26 seconds and freeze during debug */
+    FWDGT_CTL = FWDGT_KEY_ACCESS;
+    FWDGT_PSC = 7;
+    FWDGT_RLD = 0x0FFF;
+    FWDGT_CTL = FWDGT_KEY_RELOAD;
+    *(volatile uint32_t *)0x40015804 |= (1 << 8);
+
+    umb.magic = UNLOCK_MAGIC;
+    sync_mailbox(0, 0); /* BUSY */
+
+    RCU_AHBEN  |= (1 << 17) | (1 << 18) | (1 << 19) | (1 << 22);
     RCU_APB1EN |= (1 << 17);
     delay(1000);
 
-    /* Hold the main power latch so the board does not cut its own supply. */
+    /* Hold the main power latches so the board does not cut its own supply. */
     {
         uint32_t ctl = GPIO_CTL(GPIOC_BASE);
         ctl &= ~(3U << (15 * 2));
@@ -141,6 +191,12 @@ void main(void)
         ctl |=  (1U << (3 * 2));
         GPIO_CTL(GPIOB_BASE) = ctl;
         GPIO_BOP(GPIOB_BASE) = (1 << 3);
+
+        ctl = GPIO_CTL(GPIOF_BASE);
+        ctl &= ~(3U << (7 * 2));
+        ctl |=  (1U << (7 * 2));
+        GPIO_CTL(GPIOF_BASE) = ctl;
+        GPIO_BOP(GPIOF_BASE) = (1 << 7);
     }
 
     /* PA2 = USART1 TX (AF1) */
@@ -152,14 +208,15 @@ void main(void)
     USART1_BAUD = 0x0045;               /* 8 MHz / 115200 */
     USART1_CTL0 = UEN | TEN;
 
-    delay(200000);
+    delay(50000);
     uart_puts("\r\n=== GD32 RDP unlock ===\r\n");
     report("[before]");
 
     if (!(FMC_OBSTAT & (1 << 1))) {
+        sync_mailbox(2, 0);
         uart_puts("[info] SPC already clear -- flash is NOT protected. Aborting.\r\n");
         while (1)
-            ;
+            delay(100000);
     }
 
     /* 1. Unlock FMC */
@@ -176,9 +233,10 @@ void main(void)
     report("[ob unlocked]");
 
     if (!(FMC_CTL & CTL_OBWEN)) {
+        sync_mailbox(3, 1);
         uart_puts("[FAIL] OBWEN not set -- option-byte unlock rejected. Aborting.\r\n");
         while (1)
-            ;
+            delay(100000);
     }
 
     /* 3. Erase option bytes -> all fields 0xFF (safe defaults) */
@@ -190,9 +248,10 @@ void main(void)
     report("[ob erased]");
 
     if (FMC_STAT & (STAT_PGERR | STAT_WPERR)) {
+        sync_mailbox(3, 2);
         uart_puts("[FAIL] error during OB erase. Aborting.\r\n");
         while (1)
-            ;
+            delay(100000);
     }
     FMC_STAT = STAT_ENDF | STAT_PGERR | STAT_WPERR; /* clear flags */
 
@@ -205,11 +264,13 @@ void main(void)
     report("[rdp=A5 programmed]");
 
     if (FMC_STAT & (STAT_PGERR | STAT_WPERR)) {
+        sync_mailbox(3, 3);
         uart_puts("[FAIL] error programming RDP. Aborting.\r\n");
         while (1)
-            ;
+            delay(100000);
     }
 
+    sync_mailbox(1, 0);
     uart_puts("\r\n[OK] Option bytes written. RDP set to 0xA5 (unprotected).\r\n");
     uart_puts("[OK] Now POWER-CYCLE the board: at power-on the option bytes\r\n");
     uart_puts("     reload, the chip MASS-ERASES main flash and clears protection.\r\n");
@@ -217,5 +278,5 @@ void main(void)
     uart_puts("=== done ===\r\n");
 
     while (1)
-        ;
+        delay(100000);
 }

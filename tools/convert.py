@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Drive a stock HTRAM through to this firmware, one stage at a time.
+"""Drive a stock HTRAM through to this firmware, one stage at a time (or all at once).
 
-The conversion is mostly physical -- soldering, tweezers on GPIO0, a power-on
-order that matters -- so this does not pretend to automate it. What it does is
-know the order, check what the device actually is before each step, run the
-scripts that already exist, and refuse to reach the one irreversible step
-(RDP removal mass-erases the factory image) until this device's factory image
-is safely on disk.
+With SWD-mailbox stubs for `dump`, `unlock`, and `flash`, the entire conversion
+uses a single one-time 5-wire hookup (or 6-pin pogo-pin jig) with zero resoldering:
+  - Pico GP2 (SWCLK) -> TP16 (GD32 PA14)
+  - Pico GP3 (SWDIO) -> TP17 (GD32 PA13)
+  - Pico GP4 (TX)    -> ESP32 GPIO3 / RXD0 (pad 34)
+  - Pico GP5 (RX)    -> ESP32 GPIO1 / TXD0 (pad 35)
+  - Pico GND         -> GND (ESP32 pad 38 / micro-USB shield)
+  - Jumper           -> ESP32 GPIO0 (pad 25) to GND (pad 38)
 
-Note there are two different UART hookups at two different times, on different
-pads and with opposite crossovers: the ESP's own UART0 for stage `esp`, then
-the inter-chip UART (GD32 USART1) for `dump` and `flash`.
+The inter-chip UART (GPIO16/GPIO17, pads 27/28) is never touched.
 
 State is read from the hardware, never from a file. `--status` is therefore
 always true, including after an interrupted run or on someone else's machine.
@@ -20,12 +20,12 @@ different device.
 
 Stages, in order:
     prep     host toolchain, secrets, GD32 build
-    esp      Pico UART on the ESP's own UART0, flash base ESPHome
-    probe    Pico on SWD, UART wires moved to the inter-chip pads
-    dump     read the factory GD32 image out from under RDP1
-    unlock   remove RDP -- MASS ERASE, needs a valid dump first
+    probe    one-time Pico hookup (SWD + ESP UART0 + GPIO0->GND), power-on check
+    esp      flash base ESPHome over UART0 (auto-enters bootloader via SWD PB3)
+    dump     read the 64 KB factory GD32 image out from under RDP1 over SWD
+    unlock   remove RDP over SWD -- MASS ERASE, needs a valid dump first
     flash    write our GD32 firmware over SWD
-    verify   confirm HELLO and hand over to OTA
+    verify   remove wires/jumper, confirm Wi-Fi + HELLO, and hand over to OTA
 """
 from __future__ import annotations
 
@@ -215,7 +215,7 @@ def probe_attached() -> tuple[str, str]:
     return _PROBE_SEEN
 
 
-def swd_alive(val: int | None = _UNREAD) -> tuple[str, str]:
+def swd_alive(val: int | None | object = _UNREAD) -> tuple[str, str]:
     """Prove the DAP answers, without disturbing the running firmware.
 
     Reads the Cortex-M CPUID -- always present, always readable, and a
@@ -227,14 +227,14 @@ def swd_alive(val: int | None = _UNREAD) -> tuple[str, str]:
         return NO, "пробник не під'єднано"
     if val is _UNREAD:
         val = read32(SCB_CPUID)
-    if val is None:
+    if not isinstance(val, int):
         return NO, ("DAP не відповідає — плата під живленням? порядок увімкнення? "
                     "або ядро зупинене попередньою сесією (`--resume`), "
                     "або standby гейтить debug-клок (GD32_HARDWARE_MAP §6.9)")
     return OK, f"DAP відповідає (CPUID=0x{val:08X})"
 
 
-def core_state(val: int | None = _UNREAD) -> tuple[str, str]:
+def core_state(val: int | None | object = _UNREAD) -> tuple[str, str]:
     """Running or halted, read from the target rather than assumed.
 
     Added after a --status on unit 2 left the factory firmware stopped: the
@@ -244,7 +244,7 @@ def core_state(val: int | None = _UNREAD) -> tuple[str, str]:
     """
     if val is _UNREAD:
         val = read32(DHCSR)
-    if val is None:
+    if not isinstance(val, int):
         return HUH, "не прочитано (потрібен пробник і жива плата)"
     if val & DHCSR_S_HALT:
         return NO, f"ЗУПИНЕНЕ (DHCSR=0x{val:08X}) — зняти: tools/convert.py --resume"
@@ -306,11 +306,11 @@ def read32(addr: int) -> int | None:
     return parse_read32(out, addr)
 
 
-def rdp_state(val: int | None = _UNREAD) -> tuple[str, str]:
+def rdp_state(val: int | None | object = _UNREAD) -> tuple[str, str]:
     """RDP on = factory-protected, still convertible. RDP off = already opened."""
     if val is _UNREAD:
         val = read32(FMC_OBSTAT)
-    if val is None:
+    if not isinstance(val, int):
         return HUH, "не прочитано (потрібен пробник і жива плата)"
     if val & (1 << 1):
         return NO, f"RDP УВІМКНЕНО (OBSTAT=0x{val:08X}) — заводський захист на місці"
@@ -360,6 +360,60 @@ def read32_many(addrs: list[int]) -> list[int | None]:
     if rc != 0:
         return [None] * len(addrs)
     return [parse_read32(out, a) for a in addrs]
+
+
+def swd_power_cycle_esp() -> bool:
+    """Power-cycle the ESP32 rail via GD32 PB3/PF7 over SWD (-M attach).
+
+    Follows the exact factory firmware ESP power-off/on sequence
+    (0x08007582..0x080076f6 in tools/swd/factory_pins.py):
+      1. Set PA2/PA3 (USART1 TX/RX) to INPUT so PA2 cannot back-power the
+         ESP32 through GPIO16's ESD diode while PB3 is low (avoiding the
+         brown-out latch documented in GD32_HARDWARE_MAP §6.6).
+      2. Drop PB3 (ESP32 rail) low/input for 600 ms so ESP32 VDD reaches 0V.
+      3. Enable RCU_AHBEN (PAEN | PBEN | PFEN), drive PF7 and PB3 HIGH, and
+         restore PA2/PA3.
+
+    When GPIO0 (pad 25) is strapped to GND (pad 38), this cleanly boots the
+    ESP32 directly into ROM Download Mode with zero button presses.
+    """
+    ahben, pa_ctl, pb_ctl, pf_ctl = read32_many([
+        0x40021014,  # RCU_AHBEN
+        0x48000000,  # GPIOA_CTL
+        0x48000400,  # GPIOB_CTL
+        0x48001400,  # GPIOF_CTL
+    ])
+    if any(v is None for v in (ahben, pa_ctl, pb_ctl, pf_ctl)):
+        return False
+    assert ahben is not None and pa_ctl is not None and pb_ctl is not None and pf_ctl is not None
+
+    pa_ctl_off = pa_ctl & ~((3 << 4) | (3 << 6))  # PA2, PA3 -> INPUT
+    pb_ctl_off = pb_ctl & ~(3 << 6)               # PB3 -> INPUT
+    rc1, _ = _run([
+        str(PYOCD), "cmd", "-t", "cortex_m", "-f", "100k", "-M", "attach",
+        "-c", f"write32 0x48000000 0x{pa_ctl_off:08X}",
+        "-c", "write32 0x48000028 0x0000000C",
+        "-c", "write32 0x48000428 0x00000008",
+        "-c", f"write32 0x48000400 0x{pb_ctl_off:08X}",
+    ], timeout=SWD_PROBE_TIMEOUT)
+    if rc1 != 0:
+        return False
+
+    time.sleep(0.6)
+
+    ahben_on = ahben | (1 << 17) | (1 << 18) | (1 << 22)  # PAEN | PBEN | PFEN
+    pf_ctl_on = (pf_ctl & ~(3 << 14)) | (1 << 14)         # PF7 -> OUTPUT
+    pb_ctl_on = (pb_ctl & ~(3 << 6)) | (1 << 6)           # PB3 -> OUTPUT
+    rc2, _ = _run([
+        str(PYOCD), "cmd", "-t", "cortex_m", "-f", "100k", "-M", "attach",
+        "-c", f"write32 0x40021014 0x{ahben_on:08X}",
+        "-c", f"write32 0x48001400 0x{pf_ctl_on:08X}",
+        "-c", "write32 0x48001418 0x00000080",
+        "-c", f"write32 0x48000400 0x{pb_ctl_on:08X}",
+        "-c", "write32 0x48000418 0x00000008",
+        "-c", f"write32 0x48000000 0x{pa_ctl:08X}",
+    ], timeout=SWD_PROBE_TIMEOUT)
+    return rc2 == 0
 
 
 _UID_SEEN: str | None = None
@@ -473,7 +527,7 @@ def discover_esp(timeout: float = 6.0) -> list[str]:
     try:
         listener = _Listener()
         for svc in ("_esphomelib._tcp.local.", "_http._tcp.local."):
-            ServiceBrowser(zc, svc, listener)
+            ServiceBrowser(zc, svc, listener)  # type: ignore[arg-type]
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(0.2)
@@ -580,7 +634,7 @@ def resolve_local(host: str) -> str | None:
     try:
         listener = _Listener()
         for svc in ("_esphomelib._tcp.local.", "_http._tcp.local."):
-            ServiceBrowser(zc, svc, listener)
+            ServiceBrowser(zc, svc, listener)  # type: ignore[arg-type]
         deadline = time.time() + 4
         while time.time() < deadline and not addrs:
             time.sleep(0.2)
@@ -650,6 +704,49 @@ def stage_prep(args) -> int:
     return 0
 
 
+def stage_probe(args) -> int:
+    if probe_attached()[0] == OK and swd_alive()[0] == OK and serial_ports():
+        say("probe", f"пробник і SWD уже активні ({swd_alive()[1]}), "
+                     f"UART-порт: {', '.join(serial_ports())}")
+        return 0
+    physical([
+        "ОДНОРАЗОВЕ ПІДКЛЮЧЕННЯ (паяння один раз або накладка з пого-пінами).",
+        "Жодні дроти під час конверсії перепаювати НЕ доведеться.",
+        "",
+        "Спершу паяння (плата ЗНЕСТРУМЛЕНА, Pico ВІД'ЄДНАНО від USB):",
+        "  SWD (тильна сторона, тестпоінти під U5 GD32):",
+        "              Pico GP2       → TP16 (PA14, SWCLK)",
+        "              Pico GP3       → TP17 (PA13, SWDIO)",
+        "  UART0 ESP32 (лицьова сторона, кастельовані пади модуля U6):",
+        "              Pico GP4 (TX)  → GPIO3 (RXD0, пад 34)",
+        "              Pico GP5 (RX)  → GPIO1 (TXD0, пад 35)",
+        "              Pico GND       → GND   (пад 38 або екран micro-USB)",
+        "  Перемичка для завантажувача ESP32 (лицьова сторона U6):",
+        "              GPIO0 (пад 25) → GND   (пад 38)",
+        "",
+        "  Пін EN не чіпати взагалі. Міжчиповий UART (GPIO16/17, пади 27/28)",
+        "  НЕ підключається — дамп, unlock і flash GD32 йдуть чисто по SWD.",
+        "",
+        "Потім увімкнення, саме в цьому порядку (docs/BENCH.md:23):",
+        "  1. Живлення плати — акумулятор або micro-USB У ЗАРЯДКУ, не в цей ПК.",
+        "  2. Переконатись, що плата працює.",
+        "  3. ТІЛЬКИ ПІСЛЯ ЦЬОГО — USB-кабель Pico в комп'ютер.",
+        "",
+        "Якщо при під'єднанні пробника пищить зумер, а світлодіод Pico не",
+        "горить — плата знеструмлена й живиться паразитно. Негайно від'єднати.",
+    ])
+    input("  Enter, коли зроблено… ")
+    st, note = probe_attached()
+    say("probe", f"пробник: {note}")
+    if st != OK:
+        return 1
+    ports = serial_ports()
+    say("probe", f"послідовні порти: {', '.join(ports) if ports else 'нема'}")
+    st, note = swd_alive()
+    say("probe", f"SWD: {note}")
+    return 0 if st == OK else 1
+
+
 def stage_esp(args) -> int:
     if getattr(args, "esp_recorded", False):
         say("esp", f"ESP цього пристрою вже прошито — {args.host} записано "
@@ -672,29 +769,21 @@ def stage_esp(args) -> int:
             say("esp", "гаразд, вважаю етап пройденим")
             return 0
         say("esp", "тоді шиємо ESP цього пристрою")
-    physical([
-        "ТЗ §3.1 — docs/CUSTOM_FIRMWARE_SPEC.md:80. Це UART0 ЕСП, не міжчиповий:",
-        "міжчиповий (GPIO16/17) знадобиться пізніше, на етапі probe.",
-        "",
-        "Паяти на ЗНЕСТРУМЛЕНОМУ пристрої, Pico від'єднаний від USB:",
-        "     Pico GP4 (TX) → GPIO3  (RXD0, пад 34)",
-        "     Pico GP5 (RX) → GPIO1  (TXD0, пад 35)",
-        "     Pico GND      → GND (екран micro-USB)",
-        "  Тут перехрестя ПОТРІБНЕ — Pico виступає хостом, а не ESP.",
-        "",
-        "Пін EN не чіпати взагалі. На землю йде GPIO0, і тільки він.",
-    ])
-    physical([
-        "Скидання ESP робиться кнопкою, а не висмикуванням живлення.",
-        "Рейку ESP гейтить PB3 від GD32, а заводське «вимкнено» — це standby,",
-        "де утримання кнопки вмикає й вимикає периферію (HARDWARE_MAP §6.9).",
-        "",
-        "Зараз потрібне тільки одне: плата під живленням і заводська працює.",
-        "Танець із кнопкою й GPIO0 буде після збірки.",
-    ])
-    if not ask("Дроти підпаяно?"):
-        say("esp", "перервано — нічого не зроблено")
-        return 1
+
+    if swd_alive()[0] != OK:
+        physical([
+            "Підключення UART0 ESP32 (якщо ще не підпаяно на етапі probe):",
+            "     Pico GP4 (TX)  → GPIO3 (RXD0, пад 34)",
+            "     Pico GP5 (RX)  → GPIO1 (TXD0, пад 35)",
+            "     Pico GND       → GND   (пад 38 або екран micro-USB)",
+            "     GPIO0 (пад 25) → GND   (пад 38)",
+            "",
+            "Рекомендовано також одразу під'єднати SWD (GP2→TP16, GP3→TP17):",
+            "тоді скрипт сам перезапустить ESP32 у Download Mode через PB3 по SWD.",
+        ])
+        if not ask("Дроти підпаяно?"):
+            say("esp", "перервано — нічого не зроблено")
+            return 1
 
     port = pick_serial_port(args.port)
     if port is None:
@@ -716,69 +805,40 @@ def stage_esp(args) -> int:
         return 1
     say("esp", f"образ: {image.relative_to(REPO_ROOT)} ({image.stat().st_size} Б)")
 
-    physical([
-        "Тепер руками, і поспішати не треба — тул чекатиме скільки завгодно:",
-        "",
-        "  1. Затиснути кнопку до входу в standby — ESP гасне.",
-        "  2. Притиснути GPIO0 до GND і тримати.",
-        "  3. Затиснути кнопку ще раз. GD32 підніме PB3, ESP стартує з GPIO0",
-        "     на землі й потрапить у download mode.",
-        "  4. Крапки зміняться на chip id і піде запис — тоді відпустити GPIO0.",
-    ])
+    if swd_alive()[0] == OK:
+        say("esp", "SWD активний — автоматично перезапускаю живлення ESP32 "
+                   "(PB3/PF7) для входу в Download Mode (GPIO0 має бути на GND)...")
+        if swd_power_cycle_esp():
+            say("esp", "рейку ESP32 перезапущено по SWD; починаю запис по UART0")
+        else:
+            say("esp", "авто-скидання по SWD не вдалося — використай кнопку SW1 вручну")
+    else:
+        physical([
+            "Якщо перемичка GPIO0 → GND ще не стоїть, переведи ESP у download mode:",
+            "  1. Затиснути кнопку SW1 до входу в standby — ESP гасне.",
+            "  2. Притиснути GPIO0 (пад 25) до GND (пад 38) і тримати.",
+            "  3. Затиснути кнопку SW1 ще раз — ESP стартує в download mode.",
+        ])
+
     if not flash_esp_serial(port, image):
         say("esp", "заливка не вдалася")
-        say("esp", "порядок: standby (ESP гасне) → GPIO0 на GND → кнопка ще раз")
-        say("esp", "ESP не піднявся сам? Бачили застряглий brown-out після PB3 — "
-                   "допомагає повний power-cycle батареєю (HARDWARE_MAP §6.6)")
+        say("esp", "перевір, що GPIO0 (пад 25) з'єднано з GND (пад 38), "
+                   "а GP4→пад 34 (RXD0), GP5→пад 35 (TXD0)")
         return 1
     host = remember_esp_host(port)
     if host:
+        args.host = host
+        if device_uid():
+            args.host_trusted = True
+            args.esp_recorded = True
         say("esp", f"цей пристрій відтепер відомий як {host} "
                    f"(записано в {HOST_FILE.relative_to(REPO_ROOT)})")
     else:
         say("esp", "MAC прочитати не вдалось — далі доведеться передавати --host вручну")
 
-    physical([
-        "Зняти перемичку з GPIO0 і перезапустити плату штатно.",
-        "Дроти UART НЕ викидати: на етапі probe вони переїдуть",
-        "з пари GPIO1/GPIO3 на пару GPIO16/GPIO17.",
-    ])
-    say("esp", "перевір мережу: tools/convert.py --status")
+    say("esp", "ESP32 прошито! Перепаювати чи знімати дроти НЕ потрібно — "
+               "переходимо одразу до дампа GD32 по SWD.")
     return 0
-
-
-def stage_probe(args) -> int:
-    physical([
-        "docs/BENCH.md:23 — ПОРЯДОК УВІМКНЕННЯ, порушувати не можна.",
-        "",
-        "Спершу паяння (плата ЗНЕСТРУМЛЕНА, Pico ВІД'ЄДНАНО від USB):",
-        "  SWD:        Pico GP2 → TP16 (PA14, SWCLK)",
-        "              Pico GP3 → TP17 (PA13, SWDIO)",
-        "              Pico GND → GND (екран micro-USB)",
-        "  Міжчиповий UART — ті самі два дроти, що були на GPIO1/GPIO3, тепер:",
-        "              Pico GP4 (TX) → пад ESP GPIO17 (28) → GD32 PA3",
-        "              Pico GP5 (RX) → пад ESP GPIO16 (27) → GD32 PA2",
-        "  ТУТ НЕ ПЕРЕХРЕЩУВАТИ — на відміну від етапу esp. Pico заміняє собою",
-        "  ESP, а перехрестя вже зроблене на боці GD32 (PA3=RX, PA2=TX).",
-        "",
-        "Потім увімкнення, саме в цьому порядку:",
-        "  1. Живлення плати — акумулятор або micro-USB У ЗАРЯДКУ, не в цей ПК.",
-        "  2. Переконатись, що плата працює.",
-        "  3. ТІЛЬКИ ПІСЛЯ ЦЬОГО — USB-кабель Pico в комп'ютер.",
-        "",
-        "Якщо при під'єднанні пробника пищить зумер, а світлодіод Pico не",
-        "горить — плата знеструмлена й живиться паразитно. Негайно від'єднати.",
-    ])
-    input("  Enter, коли зроблено… ")
-    st, note = probe_attached()
-    say("probe", f"пробник: {note}")
-    if st != OK:
-        return 1
-    ports = serial_ports()
-    say("probe", f"послідовні порти: {', '.join(ports) if ports else 'нема'}")
-    st, note = swd_alive()
-    say("probe", f"SWD: {note}")
-    return 0 if st == OK else 1
 
 
 def archive_dump(uid: str | None, label: str) -> Path:
@@ -801,18 +861,7 @@ def archive_dump(uid: str | None, label: str) -> Path:
 
 
 def ensure_esp_quiet(args) -> bool:
-    """Get the ESP off the inter-chip line before the probe drives it.
-
-    The conversion flashes the ESP first, and that config declares
-    `uart: tx_pin: GPIO17` -- the very line the probe's GP4 is soldered to.
-    Two push-pull outputs on one node is contention whenever the ESP
-    transmits, and BENCH.md's claim that the ESP "leaves GPIO16/17 high-Z" was
-    written for a minimal config that no longer resembles what we flash.
-
-    Only the dump needs this. By the time `flash` runs, RDP has been lifted,
-    the GD32 is blank, and a blank GD32 drives no PB3 -- so the ESP has no
-    power and no way to interfere.
-    """
+    """Legacy helper for --legacy-uart-dump: get ESP off GPIO17 before UART dump."""
     if esp_online(args.host)[0] != OK:
         say("dump", "ESP не в мережі — лінію вона не займає, продовжую")
         return True
@@ -872,41 +921,41 @@ def stage_dump(args) -> int:
         say("dump", "RDP уже знято — заводський флеш стерто, знімати нічого")
         say("dump", "якщо gd32_flash.bin немає, відкату до заводської вже не буде")
         return 1
-    ports = serial_ports()
-    if "/dev/ttyACM0" not in ports:
-        say("dump", f"run_flash_dump.sh чекає /dev/ttyACM0, а є: {ports or 'нічого'}")
-        return 1
-    if len(ports) > 1:
-        say("dump", f"портів кілька ({', '.join(ports)}) — скрипт візьме /dev/ttyACM0; "
-                    "якщо міст на іншому, дамп прийде порожній")
-    # The wiring gate belongs here, not in `probe`. `probe` counts itself done
-    # on "probe visible + SWD answers", and both are true the moment SWD is
-    # soldered -- which on unit 2 was from the very start, so --status jumped
-    # straight here with the UART still on the ESP's own pads. Software cannot
-    # see where two wires are soldered; the only honest check is to ask.
-    physical([
-        "Дамп читається через МІЖЧИПОВИЙ UART, не через UART0 ESP.",
-        "Якщо дроти ще на парі з етапу esp — перенести:",
-        "",
-        "     Pico GP4 (TX) → пад ESP GPIO17 (28) → GD32 PA3",
-        "     Pico GP5 (RX) → пад ESP GPIO16 (27) → GD32 PA2",
-        "",
-        "  ТУТ НЕ ПЕРЕХРЕЩУВАТИ — на відміну від етапу esp. Pico заміняє собою",
-        "  ESP, а перехрестя вже зроблене на боці GD32 (PA3=RX, PA2=TX).",
-        "  Паяти на знеструмленій платі, Pico від'єднаний.",
-    ])
-    if not ask("Дроти на GPIO17/GPIO16, без перехрестя?"):
-        say("dump", "без цього дамп прийде порожній — переносити й повертатись сюди")
-        return 1
-    physical([
-        "Читання йде під RDP1 через SRAM-стаб (tools/swd/README.md:63).",
-        "Триває близько двох хвилин. Не від'єднувати нічого.",
-    ])
-    if not ask("Почати зняття заводського образу?"):
-        return 1
-    if not ensure_esp_quiet(args):
-        return 1
-    rc, _ = _run_streaming(["./run_flash_dump.sh"], cwd=SWD_DIR)
+
+    if getattr(args, "legacy_uart_dump", False):
+        ports = serial_ports()
+        if "/dev/ttyACM0" not in ports:
+            say("dump", f"run_flash_dump.sh чекає /dev/ttyACM0, а є: {ports or 'нічого'}")
+            return 1
+        if len(ports) > 1:
+            say("dump", f"портів кілька ({', '.join(ports)}) — скрипт візьме /dev/ttyACM0; "
+                        "якщо міст на іншому, дамп прийде порожній")
+        physical([
+            "Дамп читається через МІЖЧИПОВИЙ UART, не через UART0 ESP.",
+            "     Pico GP4 (TX) → пад ESP GPIO17 (28) → GD32 PA3",
+            "     Pico GP5 (RX) → пад ESP GPIO16 (27) → GD32 PA2",
+        ])
+        if not ask("Дроти на GPIO17/GPIO16, без перехрестя?"):
+            say("dump", "без цього дамп прийде порожній — переносити й повертатись сюди")
+            return 1
+        if not ask("Почати зняття заводського образу?"):
+            return 1
+        if not ensure_esp_quiet(args):
+            return 1
+        rc, _ = _run_streaming(["./run_flash_dump.sh"], cwd=SWD_DIR)
+    else:
+        say("dump", "читання 64 КБ заводської прошивки під RDP1 через SWD-mailbox "
+                    "(TP16/TP17, без UART і без перепаювання, ~15 с)")
+        if not ask("Почати зняття заводського образу по SWD?"):
+            return 1
+        rc, _ = _run_streaming(
+            [str(VENV_PYTHON), str(SWD_DIR / "flash.py"), "--dump", str(FACTORY_IMAGE)],
+            cwd=REPO_ROOT,
+        )
+        if rc != 0:
+            say("dump", "зняття дампа по SWD не вдалося")
+            return 1
+
     st, note = dump_state()
     if st != OK:
         say("dump", f"результат: {note}")
@@ -974,17 +1023,16 @@ def stage_unlock(args) -> int:
     if typed != "стерти":
         say("unlock", "не підтверджено — нічого не зроблено")
         return 1
-    say("unlock", "вантажу rdp_unlock.c у SRAM; він програмує байти опцій і зупиняється")
-    # --duration, or this never returns. bench.py keeps listening to the UART
-    # until Ctrl+C, and the stub goes quiet after a second or two -- so the
-    # stage sat there looking hung with the option bytes already written.
-    # Bounding the LISTEN is safe: the write happens on the target and is over
-    # before the last line arrives. Nothing here times out a write.
-    rc, _ = _run_streaming([str(REPO_ROOT / "tools" / "bench.py"), "run",
-                            str(SWD_DIR / "rdp_unlock.c"), "--duration", "30"],
-                           cwd=REPO_ROOT)
+    say("unlock", "вантажу rdp_unlock.c у SRAM через SWD; він програмує байти опцій")
+    rc, _ = _run_streaming(
+        [str(VENV_PYTHON), str(SWD_DIR / "flash.py"), "--rdp-unlock"],
+        cwd=REPO_ROOT,
+    )
+    if rc != 0:
+        say("unlock", "помилка програмування байтів опцій по SWD")
+        return 1
     physical([
-        "Стаб лише записав байти опцій. Вони застосовуються на",
+        "Стаб записав байти опцій (SPC=0xA5). Вони застосовуються на",
         "ПОВНОМУ ПЕРЕЗАПУСКУ ЖИВЛЕННЯ (POR), не на звичайному reset.",
         "",
         "  1. Від'єднати USB Pico.",
@@ -1014,17 +1062,8 @@ def stage_flash(args) -> int:
     say("flash", "заливка йде без таймауту — обірваний запис цеглить GD32")
     if not ask("Залити прошивку по SWD?"):
         return 1
-    # --swd-mem, not the UART writer, and this is structural rather than a
-    # preference. At this point in the conversion the GD32 is blank, so it does
-    # not drive PB3, so the ESP has no power -- and an unpowered ESP32 clamps
-    # the shared GPIO17 node through its ESD diodes. The GD32's RX then sits at
-    # a permanent break and manufactures 0x00 bytes: on unit 2 the writer stub
-    # read a length out of that noise, "received" a chunk of nothing and
-    # reported DONE before the host had sent a single byte. The dump never
-    # exposed this because it only ever streams device -> host.
-    #
-    # swd_flash_writer.c talks through a mailbox in SRAM over the AHB-AP, so no
-    # wire between the chips is involved at all.
+    # --swd-mem talks through a mailbox in SRAM over the AHB-AP, so no wire
+    # between the chips is involved at all.
     rc, _ = _run_streaming([str(VENV_PYTHON), str(SWD_DIR / "flash.py"),
                             "--swd-mem"], cwd=REPO_ROOT)
     if rc != 0:
@@ -1034,56 +1073,47 @@ def stage_flash(args) -> int:
 
 
 def stage_verify(args) -> int:
-    # Before anything else: get the probe's TX off GPIO17.
-    #
-    # The real config drives GPIO17 as its UART TX, and the probe's GP4 is
-    # soldered to that same pad -- two push-pull outputs on one node, with the
-    # ESP hammering telemetry and pixels into it at 921600. ensure_esp_quiet()
-    # covers this for the dump, but it is skipped when the ESP is dark, which
-    # is exactly what happens on a conversion; and after `flash` the ESP comes
-    # back up with the UART live while the wire is still there. On unit 2 that
-    # left the contention in place for half an hour and the ESP fell off the
-    # network for good.
     physical([
-        "СПЕРШУ ЗНЯТИ UART-МІСТ. Конфіг, який зараз працює, драйвить GPIO17",
-        "як свій TX, а туди ж припаяний GP4 пробника — теж вихід.",
+        "Прошивку ESP32 та GD32 записано! Тепер від'єднай стенд / зніми накладку:",
         "",
-        "  1. Знеструмити плату.",
-        "  2. Від'єднати Pico від USB.",
-        "  3. Відпаяти дріт з GPIO17 (GP4). GP5 — вхід, але й він тут зайвий.",
-        "  4. Подати живлення назад.",
-        "",
-        "SWD можна лишити: PA13/PA14 нікому не заважають.",
+        "  1. Від'єднати Pico від USB комп'ютера.",
+        "  2. Знеструмити плату.",
+        "  3. Зняти перемичку GPIO0 → GND (пад 25 → пад 38) та відпаяти дроти",
+        "     (або зняти плату з пого-пінів).",
+        "  4. Увімкнути живлення плати штатно.",
     ])
-    input("  Enter, коли міст знято й плата ввімкнена… ")
+    input("  Enter, коли дроти/перемичку знято й плата ввімкнена… ")
 
-    st, note = esp_online(args.host)
+    st, note = NO, ""
+    for attempt in range(6):
+        st, note = esp_online(args.host)
+        if st == OK:
+            break
+        if attempt < 5:
+            say("verify", f"чекаю, поки ESP32 підніметься у Wi-Fi ({attempt + 1}/6)...")
+            time.sleep(3)
     say("verify", f"ESP: {note}")
 
-    # The dump left the quiet config on the ESP -- no uart, no component, no
-    # face. Put the real one back before calling the conversion done, or the
-    # device ends up finished but mute.
-    if st == OK and not getattr(args, "host_trusted", False):
-        # An OTA is a write, and this is the last place a stale name can send
-        # one into a device in daily use.
-        say("verify", f"{args.host} не підтверджено як ESP цього пристрою")
-        if not ask(f"Заливати саме в {args.host}?"):
-            say("verify", "передай правильний через --host")
-            return 1
-    if st == OK and ask(f"Повернути справжній конфіг ({YAML.name})?"):
-        rc, _ = _run_streaming([str(ESPHOME), "run", str(YAML),
-                                "--device", args.host, "--no-logs"])
-        if rc != 0:
-            say("verify", "не вдалося залити — пристрій лишився з тихим конфігом")
-            return 1
+    if getattr(args, "legacy_uart_dump", False) and st == OK:
+        if not getattr(args, "host_trusted", False):
+            say("verify", f"{args.host} не підтверджено як ESP цього пристрою")
+            if not ask(f"Заливати саме в {args.host}?"):
+                say("verify", "передай правильний через --host")
+                return 1
+        if ask(f"Повернути справжній конфіг ({YAML.name}) поверх тихого?"):
+            rc, _ = _run_streaming([str(ESPHOME), "run", str(YAML),
+                                    "--device", args.host, "--no-logs"])
+            if rc != 0:
+                say("verify", "не вдалося залити — пристрій лишився з тихим конфігом")
+                return 1
 
     physical([
         "GD32 після старту шле HELLO зі своїм build epoch і git-хешем.",
         "Подивитись у логах ESP:",
-        f"    .venv/bin/esphome logs {YAML.relative_to(REPO_ROOT)}",
+        f"    .venv/bin/esphome logs {YAML.relative_to(REPO_ROOT)} --device {args.host}",
         "",
-        "Немає HELLO — образ записався, але працює погано.",
-        "Є HELLO — пробник можна відпаювати, далі все по OTA:",
+        "Далі всі оновлення прошивки та графічних асетів ідуть по повітрю (OTA):",
+        f"    make flash-assets DEVICE={args.host}",
         f"    .venv/bin/python tools/swd/flash.py --ota {args.host}",
     ])
     return 0 if st == OK else 1
@@ -1098,24 +1128,19 @@ def _run_streaming(cmd, cwd=None) -> tuple[int, str]:
 
 STAGES = [
     ("prep", "Хост: тулчейн, secrets, збірка GD32", stage_prep),
-    ("esp", "ESP32: паяння USB-UART і базовий ESPHome", stage_esp),
-    ("probe", "Pico: SWD + UART-міст, порядок увімкнення", stage_probe),
-    ("dump", "Заводський образ GD32 → gd32_flash.bin", stage_dump),
-    ("unlock", "Зняття RDP (НЕЗВОРОТНО: mass erase)", stage_unlock),
+    ("probe", "Pico: одноразове підключення (SWD + UART0 ESP) і живлення", stage_probe),
+    ("esp", "ESP32: прошивка базового ESPHome через UART0", stage_esp),
+    ("dump", "Заводський образ GD32 по SWD → gd32_flash.bin", stage_dump),
+    ("unlock", "Зняття RDP по SWD (НЕЗВОРОТНО: mass erase)", stage_unlock),
     ("flash", "Наша прошивка GD32 по SWD", stage_flash),
-    ("verify", "HELLO і передача на OTA", stage_verify),
+    ("verify", "Зняття дротів, перевірка Wi-Fi та HELLO", stage_verify),
 ]
 
 
-def cmd_status(args) -> int:
-    """Probe everything exactly once, then read both the table and the
-    next-stage hint off that single snapshot. Deliberately not memoised at
-    module level: the stage functions re-probe after they change the device
-    (stage_unlock reads RDP again after the power cycle), and a cache would
-    hand them the pre-change answer."""
-    print(f"\n  HTRAM — стан конверсії (хост: {args.host})\n", flush=True)
+def _snapshot(args) -> dict:
+    """Take a single hardware state snapshot for cmd_status / cmd_all."""
     missing = toolchain_missing()
-    snap = {
+    snap: dict = {
         "tool": (NO if missing else OK, ", ".join(missing) if missing else "усе на місці"),
         "secrets": secrets_state(),
         "build": firmware_built(),
@@ -1124,9 +1149,6 @@ def cmd_status(args) -> int:
         "dump": dump_state(),
     }
     if snap["probe"][0] == OK:
-        # One attach for all three words. Each separate session was another
-        # connect/disconnect on a link that has dropped out before, and polling
-        # --status was doing three of them plus a `pyocd list` apiece.
         cpuid, dhcsr, obstat = read32_many([SCB_CPUID, DHCSR, FMC_OBSTAT])
         snap["swd"] = swd_alive(cpuid)
         snap["core"] = core_state(dhcsr)
@@ -1139,26 +1161,31 @@ def cmd_status(args) -> int:
         snap["rdp"] = (HUH, "потрібен пробник")
         snap["blank"] = (HUH, "потрібен пробник")
 
-    # An erased GD32 explains an absent ESP completely: no PB3, no rail. Say so
-    # rather than reporting it as an unflashed ESP and sending the operator
-    # back through `--stage esp`.
     trusted = getattr(args, "host_trusted", False)
     recorded = getattr(args, "esp_recorded", False)
     snap["esp_done"] = recorded or (snap["esp"][0] == OK and trusted)
     if snap["esp"][0] != OK and recorded:
-        snap["esp"] = (HUH, f"{args.host} не відповідає з цього хоста, але етап "
-                            "пройдено: ім'я записане для UID саме цього пристрою. "
-                            "mDNS тут не бачить пристрій на пробнику (ede9e33)")
+        snap["esp"] = (HUH, f"{args.host} не відповідає з цього хоста (або тримається "
+                            "в завантажувачі з GPIO0=GND), але етап пройдено: ім'я "
+                            "записане для UID саме цього пристрою.")
     if snap["esp"][0] == OK and not trusted:
-        # It answered, but nothing ties it to the unit on the probe. Counting
-        # that as a done `esp` stage is what waves the operator through to the
-        # irreversible unlock with an unflashed ESP on the bench.
         snap["esp"] = (HUH, f"{args.host} відповідає, але не підтверджено, "
                             "що це ESP пристрою на стенді (немає звірки по UID)")
     if snap["esp"][0] != OK and snap["blank"][0] == NO and trusted:
         snap["esp"] = (HUH, "без живлення — GD32 порожній, PB3 не тримається; "
                             "між unlock і flash так і має бути")
         snap["esp_done"] = True
+    return snap
+
+
+def cmd_status(args) -> int:
+    """Probe everything exactly once, then read both the table and the
+    next-stage hint off that single snapshot. Deliberately not memoised at
+    module level: the stage functions re-probe after they change the device
+    (stage_unlock reads RDP again after the power cycle), and a cache would
+    hand them the pre-change answer."""
+    print(f"\n  HTRAM — стан конверсії (хост: {args.host})\n", flush=True)
+    snap = _snapshot(args)
 
     rows = [("тулчейн", "tool"), ("secrets.yaml", "secrets"), ("прошивка GD32", "build"),
             ("ESP у мережі", "esp"), ("SWD-пробник", "probe"), ("SWD-зв'язок", "swd"),
@@ -1173,9 +1200,25 @@ def cmd_status(args) -> int:
     nxt = next((n for n, _, _ in STAGES if not _stage_done(n, snap)), None)
     print(f"\n  наступний етап: {nxt or 'усе пройдено'}", flush=True)
     if nxt:
-        print(f"  запустити:      tools/convert.py --stage {nxt}\n", flush=True)
+        print(f"  запустити:      tools/convert.py --stage {nxt}", flush=True)
+        print("  або все по черзі: tools/convert.py --all\n", flush=True)
     else:
         print(flush=True)
+    return 0
+
+
+def cmd_all(args) -> int:
+    """Run all remaining conversion stages in sequence."""
+    snap = _snapshot(args)
+    for name, title, fn in STAGES:
+        if name != "verify" and _stage_done(name, snap):
+            say(name, f"уже пройдено ({title}) — пропускаю")
+            continue
+        print(f"\n  ══ Етап {name}: {title} ══", flush=True)
+        rc = fn(args)
+        if rc != 0:
+            say(name, f"зупинено на етапі {name} (код {rc})")
+            return rc
     return 0
 
 
@@ -1184,13 +1227,10 @@ def _stage_done(name: str, snap: dict) -> bool:
     ok = lambda k: snap[k][0] == OK
     if name == "prep":
         return ok("tool") and ok("secrets") and ok("build")
+    if name == "probe":
+        return ok("probe") and ok("swd")
     if name == "esp":
         return snap["esp_done"]
-    if name == "probe":
-        # Only the electrical half is observable. Whether the UART wires have
-        # been moved to the inter-chip pads is asked for in `dump`, which is
-        # the stage that actually needs them.
-        return ok("probe") and ok("swd")
     if name == "dump":
         return ok("dump")
     if name == "unlock":
@@ -1211,6 +1251,8 @@ def main() -> int:
                     help="показати стан, нічого не робити")
     ap.add_argument("--stage", choices=[n for n, _, _ in STAGES],
                     help="виконати один етап")
+    ap.add_argument("--all", action="store_true",
+                    help="виконати всі незавершені етапи поспіль за один прохід")
     ap.add_argument("--list", action="store_true", help="перелік етапів")
     ap.add_argument("--host", default=None,
                     help="адреса ESP. Типово шукається по mDNS: конфіги мають "
@@ -1219,6 +1261,9 @@ def main() -> int:
                          "htram-c1da24.local). IP теж годиться")
     ap.add_argument("--port", help="послідовний порт пробника (типово єдиний "
                                    "/dev/ttyACM*)")
+    ap.add_argument("--legacy-uart-dump", action="store_true",
+                    help="використати старий дамп через міжчиповий UART (GPIO16/17) "
+                         "замість SWD-mailbox")
     ap.add_argument("--resume", action="store_true",
                     help="зняти GD32 з паузи, якщо його лишила зупиненим "
                          "обірвана сесія відладчика")
@@ -1283,6 +1328,8 @@ def main() -> int:
             print("  ESP по mDNS не знайдено — поки вона заводська, так і має бути",
                   flush=True)
 
+    if args.all:
+        return cmd_all(args)
     if args.stage:
         fn = dict((n, f) for n, _, f in STAGES)[args.stage]
         return fn(args)
