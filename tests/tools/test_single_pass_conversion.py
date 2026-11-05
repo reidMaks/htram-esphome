@@ -189,3 +189,50 @@ def test_convert_stages_and_swd_power_cycle() -> None:
     # Second batch turns PF7 and PB3 back on
     assert "write32 0x48001418 0x00000080" in calls[1]
     assert "write32 0x48000418 0x00000008" in calls[1]
+
+
+def test_config_node_info_and_swd_auto_download_mode() -> None:
+    assert convert._config_node_info(convert.REPO_ROOT / "esphome" / "htram.yaml") == (
+        "htram",
+        False,
+    )
+    assert convert._config_node_info(convert.REPO_ROOT / "esphome" / "htram-9436b0.yaml") == (
+        "htram-9436b0",
+        False,
+    )
+    assert convert._config_node_info(convert.REPO_ROOT / "esphome" / "htram-base.yaml") == (
+        "htram",
+        True,
+    )
+
+    writes: list[tuple[int, int]] = []
+    fake_target = MagicMock()
+    fake_target.write32.side_effect = lambda addr, val: writes.append((addr, val))
+
+    fake_session = MagicMock()
+    fake_session.__enter__.return_value = fake_session
+    fake_session.board.target = fake_target
+
+    fake_ser = MagicMock()
+    fake_ser.__enter__.return_value = fake_ser
+    fake_ser.read.return_value = (
+        b"rst:0x1 (POWERON_RESET),boot:0x3 (DOWNLOAD_BOOT)\r\nwaiting for download\r\n"
+    )
+
+    with (
+        patch("serial.Serial", return_value=fake_ser),
+        patch(
+            "pyocd.core.helpers.ConnectHelper.session_with_chosen_probe",
+            return_value=fake_session,
+        ),
+        patch("time.sleep"),
+    ):
+        ok = convert.swd_wait_for_esp_download_boot("/dev/ttyACM0")
+
+    assert ok is True
+    fake_target.halt.assert_called_once()
+    # PA1 must be driven LOW (0x48000028 = 0x0000000E) and NEVER set HIGH (0x48000018 = 0x00000002) before DOWNLOAD_BOOT
+    assert (0x48000028, 0x0000000E) in writes
+    assert (0x48000018, 0x00000002) not in writes
+    # Green LEDs (PC14=1 -> 0x48000818 = 0x00004000) turned on upon DOWNLOAD_BOOT
+    assert (0x48000818, 0x00004000) in writes

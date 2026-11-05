@@ -40,7 +40,7 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
         preview-ui inspect-ui \
         lint lint-c lint-py lint-yaml format format-check \
         coverage coverage-html build-gd32 ota-gd32 pack-assets validate-assets flash-assets \
-        status build-esp install-hooks clean help \
+        status build-esp convert convert-status install-hooks clean help \
         ota-esp ota-esp-all ota-all update-all ota-gd32-all flash-assets-all status-all \
         device device-silence device-status device-beep \
         container-build container-run container-stop \
@@ -75,6 +75,8 @@ help:
 	@echo "  make validate-assets- Validate graphic assets container for geometry and memory safety"
 	@echo "  make flash-assets  - Pack, validate, and upload graphic assets to SPI Flash: make flash-assets DEVICE=<alias|ip>"
 	@echo "  make build-esp     - Compile ESPHome ESP32 firmware"
+	@echo "  make convert       - Convert a brand-new stock HTRAM device end-to-end (Usage: make convert [CONFIG=esphome/htram.yaml])"
+	@echo "  make convert-status- Show hardware conversion status on the bench"
 	@echo "  make ota-esp       - Flash ESPHome firmware to a device: make ota-esp DEVICE=<alias|ip>"
 	@echo "  make update-all    - Flash ESPHome firmware to ALL devices (office, bedroom, living)"
 	@echo "  make ota-esp-all   - Alias for update-all"
@@ -409,6 +411,13 @@ endif
 build-esp:
 	@echo "==> Compiling ESPHome ESP32 firmware..."
 	$(ESPHOME) compile esphome/htram.yaml
+
+convert:
+	@echo "==> Starting single-pass HTRAM stock device conversion..."
+	$(PYTHON) tools/convert.py --all --yes $(if $(CONFIG),--config $(CONFIG),) $(if $(TARGET_DEVICE),--host $(TARGET_DEVICE),)
+
+convert-status:
+	@$(PYTHON) tools/convert.py --status $(if $(CONFIG),--config $(CONFIG),) $(if $(TARGET_DEVICE),--host $(TARGET_DEVICE),)
 
 # ── Device API Management ───────────────────────────────────────────────────
 device:

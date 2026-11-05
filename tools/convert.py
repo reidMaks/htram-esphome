@@ -1,31 +1,27 @@
 #!/usr/bin/env python3
 """Drive a stock HTRAM through to this firmware, one stage at a time (or all at once).
 
-With SWD-mailbox stubs for `dump`, `unlock`, and `flash`, the entire conversion
-uses a single one-time 5-wire hookup (or 6-pin pogo-pin jig) with zero resoldering:
+With SWD-mailbox stubs for `dump`, `unlock`, and `flash`, plus automatic SWD
+entry into ESP32 ROM Download Mode (`PA1=0` during `PB3`/`PF7` power-up), the
+entire conversion uses a single one-time 5-wire hookup (or 5-pin pogo-pin jig)
+with zero resoldering and zero jumpers:
   - Pico GP2 (SWCLK) -> TP16 (GD32 PA14)
   - Pico GP3 (SWDIO) -> TP17 (GD32 PA13)
   - Pico GP4 (TX)    -> ESP32 GPIO3 / RXD0 (pad 34)
   - Pico GP5 (RX)    -> ESP32 GPIO1 / TXD0 (pad 35)
   - Pico GND         -> GND (ESP32 pad 38 / micro-USB shield)
-  - Jumper           -> ESP32 GPIO0 (pad 25) to GND (pad 38)
 
-The inter-chip UART (GPIO16/GPIO17, pads 27/28) is never touched.
-
-State is read from the hardware, never from a file. `--status` is therefore
-always true, including after an interrupted run or on someone else's machine.
-Converting several units is the case that motivates reading the GD32's unique
-ID: a structurally valid gd32_flash.bin proves nothing if it came off a
-different device.
+Neither GPIO0 (pad 25) nor the inter-chip UART (GPIO16/GPIO17, pads 27/28) is
+ever touched.
 
 Stages, in order:
-    prep     host toolchain, secrets, GD32 build
-    probe    one-time Pico hookup (SWD + ESP UART0 + GPIO0->GND), power-on check
-    esp      flash base ESPHome over UART0 (auto-enters bootloader via SWD PB3)
+    prep     host toolchain, secrets, GD32 build, graphic assets pack
+    probe    one-time 5-wire Pico hookup (SWD + ESP UART0), power-on check
+    esp      flash full HTRAM firmware over UART0 (auto Download Mode via SWD PA1=0)
     dump     read the 64 KB factory GD32 image out from under RDP1 over SWD
-    unlock   remove RDP over SWD -- MASS ERASE, needs a valid dump first
-    flash    write our GD32 firmware over SWD
-    verify   remove wires/jumper, confirm Wi-Fi + HELLO, and hand over to OTA
+    unlock   remove RDP over SWD + 1 physical board power-cycle (POR mass erase)
+    flash    write our GD32 firmware over SWD and boot both chips
+    verify   confirm Wi-Fi (or setup via HTRAM Setup AP), upload SPI Flash assets, check sensors
 """
 
 from __future__ import annotations
@@ -52,10 +48,11 @@ SWD_DIR = REPO_ROOT / "tools" / "swd"
 FACTORY_IMAGE = SWD_DIR / "gd32_flash.bin"
 FW_IMAGE = REPO_ROOT / "firmware" / "gd32" / "build" / "gd32_firmware.bin"
 SECRETS = REPO_ROOT / "esphome" / "secrets.yaml"
-# Conversion flashes the dependency-free base config, not the author's own
-# face: at the riskiest moment the ESP must not fail over a weather entity
-# that does not exist in someone else's Home Assistant.
-YAML = REPO_ROOT / "esphome" / "htram-base.yaml"
+# Default conversion flashes the full standalone firmware (esphome/htram.yaml),
+# which has zero Home Assistant dependencies, captive portal ("HTRAM Setup" QR
+# code on screen), Web UI, SPI Flash assets support, and 1-click GitHub OTA.
+# Use --config esphome/htram-XXXX.yaml when provisioning a named fleet device.
+YAML = REPO_ROOT / "esphome" / "htram.yaml"
 # Flashed only for the dump: it declares no uart, so GPIO16/17 stay inputs and
 # the probe owns the inter-chip line. See ensure_esp_quiet().
 QUIET_YAML = REPO_ROOT / "esphome" / "htram-quiet.yaml"
@@ -127,11 +124,17 @@ def toolchain_missing() -> list[str]:
 
 def secrets_state() -> tuple[str, str]:
     if not SECRETS.exists():
+        example = REPO_ROOT / "esphome" / "secrets.yaml.example"
+        if example.exists():
+            shutil.copyfile(example, SECRETS)
+            return OK, "створено з шаблону (Wi-Fi через точку доступу HTRAM Setup)"
         return NO, "нема esphome/secrets.yaml"
     text = SECRETS.read_text(encoding="utf-8")
     blanks = [ln.split(":", 1)[0].strip() for ln in text.splitlines() if "REPLACE_WITH" in ln]
+    if "YourWiFi" in text or "wifi_ssid" in blanks:
+        return OK, "шаблон (Wi-Fi налаштовується через точку доступу HTRAM Setup)"
     if blanks:
-        return NO, "не заповнено: " + ", ".join(blanks)
+        return OK, "заповнено Wi-Fi (шаблонні: " + ", ".join(blanks) + ")"
     return OK, "заповнено"
 
 
@@ -152,9 +155,35 @@ def pick_serial_port(explicit: str | None) -> str | None:
     return ports[0] if len(ports) == 1 else None
 
 
-def esp_factory_image(started: float) -> Path | None:
-    """The image `esphome compile` produced for htram-base.yaml (`htram`)."""
-    target = REPO_ROOT / "esphome/.esphome/build/htram/build/firmware.factory.bin"
+def _config_yaml(args) -> Path:
+    cfg = getattr(args, "config", None)
+    if cfg:
+        p = Path(cfg)
+        return p if p.is_absolute() else (REPO_ROOT / p)
+    return YAML
+
+
+def _config_node_info(yaml_path: Path) -> tuple[str, bool]:
+    """Return (node_name, name_add_mac_suffix) from an ESPHome YAML file."""
+    try:
+        text = yaml_path.read_text(encoding="utf-8")
+    except OSError:
+        return "htram", False
+    m_name = re.search(r"^\s*name:\s*['\"]?([A-Za-z0-9_-]+)['\"]?", text, re.MULTILINE)
+    node_name = m_name.group(1) if m_name else "htram"
+    m_suffix = re.search(
+        r"^\s*name_add_mac_suffix:\s*['\"]?(true|false)['\"]?",
+        text,
+        re.MULTILINE | re.IGNORECASE,
+    )
+    add_suffix = (m_suffix.group(1).lower() == "true") if m_suffix else False
+    return node_name, add_suffix
+
+
+def esp_factory_image(started: float, yaml_path: Path | None = None) -> Path | None:
+    """The image `esphome compile` produced for the target YAML config."""
+    node_name, _ = _config_node_info(yaml_path or YAML)
+    target = REPO_ROOT / "esphome" / ".esphome" / "build" / node_name / "build" / "firmware.factory.bin"
     if target.exists() and target.stat().st_mtime >= started - 5:
         return target
     fresh = [
@@ -490,14 +519,14 @@ def swd_power_cycle_esp() -> bool:
 
 
 def swd_wait_for_esp_download_boot(port: str) -> bool:
-    """Continuously power-cycle ESP32 via SWD until GPIO0 is grounded (DOWNLOAD_BOOT).
+    """Automatically enter ESP32 ROM Download Mode over SWD (PA1=0 during PB3/PF7 power-on).
 
-    Drives PC15=0, PF7=0, PB3=0 actively LOW for 1.0s (yellow LED off) and then
-    drives PC15=1, PF7=1, PB3=1 HIGH for 0.5s (yellow LED on) while reading the
-    ESP32 ROM boot banner from UART0.
-    Once `DOWNLOAD_BOOT` / `waiting for download` is seen, turns ON the two
-    GREEN LEDs (PC14=1) solid so the operator sees directly on the board that
-    tweezers can be released. Automatically reconnects if SWD glitches.
+    Halts the factory GD32 firmware so its main loop cannot overwrite GPIO state,
+    cuts ESP32 power (PC15=0, PF7=0, PB3=0, PA1=0, PA2/PA3=input) for 0.6s, and
+    then raises PC15=1, PF7=1, PB3=1 while holding PA1=0 (Output LOW).
+    Holding PA1=0 causes the ESP32 to boot directly into `boot:0x3 (DOWNLOAD_BOOT)`
+    (`waiting for download`) with zero GPIO0 jumpers and zero button presses.
+    Once `DOWNLOAD_BOOT` is seen on UART0, lights up the green LEDs (PC14=1).
     """
     try:
         import serial
@@ -505,11 +534,7 @@ def swd_wait_for_esp_download_boot(port: str) -> bool:
     except ImportError:
         return swd_power_cycle_esp()
 
-    say("esp", "Авто-перезапуск ESP32 кожні 1.5 с (ЖОВТИЙ світлодіод блимає в такт ребуту).")
-    say(
-        "esp",
-        "Замкни пінцетом GPIO0 (пад 25) на GND (пад 38) — коли загоряться ЗЕЛЕНІ світлодіоди, відпускай!",
-    )
+    say("esp", "Автоматичний перевід ESP32 у Download Mode через SWD (PA1=0 при старті PB3/PF7)...")
     attempt = 0
     try:
         with serial.Serial(port, 115200, timeout=0.05) as ser:
@@ -520,9 +545,10 @@ def swd_wait_for_esp_download_boot(port: str) -> bool:
                         options={"connect_mode": "attach", "frequency": 100000},
                     ) as s:
                         t = s.board.target
+                        t.halt()
                         while True:
                             attempt += 1
-                            # 1. Cut ESP32 power: PC15=0, PF7=0, PB3=0, PA2/PA3=input, LEDs OFF
+                            # 1. Cut ESP32 power: PC15=0, PF7=0, PB3=0, PA1=0, PA2/PA3=input
                             t.write32(0x40021014, 0x004E0014)  # PAEN|PBEN|PCEN|PFEN
                             t.write32(0x48000000, 0x28000004)  # PA1=out, PA2/PA3=in
                             t.write32(0x48000028, 0x0000000E)  # PA1=0, PA2=0, PA3=0
@@ -532,37 +558,32 @@ def swd_wait_for_esp_download_boot(port: str) -> bool:
                             t.write32(0x48000428, 0x00000018)  # PB3=0 (ESP OFF), PB4=0 (Yellow OFF)
                             t.write32(0x48001400, 0x00004000)  # PF7=out
                             t.write32(0x48001428, 0x00000080)  # PF7=0
-                            time.sleep(1.0)
+                            time.sleep(0.6)
 
                             ser.reset_input_buffer()
 
-                            # 2. Power ON ESP32: PC15=1, PF7=1, PB3=1 + Yellow LED ON (PA1=1, PB4=1)
+                            # 2. Power ON ESP32: PC15=1, PF7=1, PB3=1 while keeping PA1=0!
                             t.write32(0x48000818, 0x00008000)  # PC15=1
                             t.write32(0x48001418, 0x00000080)  # PF7=1
-                            t.write32(0x48000418, 0x00000018)  # PB3=1 (ESP ON), PB4=1 (Yellow ON)
-                            t.write32(0x48000018, 0x00000002)  # PA1=1 (VLED ON)
+                            t.write32(0x48000418, 0x00000018)  # PB3=1 (ESP ON), PB4=1
 
-                            # 3. Read ESP32 ROM boot log for 0.5s
+                            # 3. Read ESP32 ROM boot log for 0.6s
                             buf = bytearray()
-                            deadline = time.time() + 0.50
+                            deadline = time.time() + 0.60
                             while time.time() < deadline:
                                 chunk = ser.read(256)
                                 if chunk:
                                     buf.extend(chunk)
                                     text = buf.decode("utf-8", errors="ignore")
                                     if "DOWNLOAD_BOOT" in text or "waiting for download" in text:
-                                        # Turn Yellow OFF, Green ON solid!
-                                        t.write32(0x48000428, 0x00000010)  # PB4=0 (Yellow OFF)
+                                        t.write32(0x48000428, 0x00000010)  # PB4=0
                                         t.write32(0x48000818, 0x00004000)  # PC14=1 (Green ON)
                                         print("\a", end="", flush=True)
                                         print(
                                             "\n  ================================================================"
                                         )
                                         print(
-                                            "  ✓ УСПІХ! ESP32 У РЕЖИМІ ПРОШИВКИ (boot:0x3 / waiting for download)"
-                                        )
-                                        print(
-                                            "  >>> ЗЕЛЕНІ СВІТЛОДІОДИ ГОРЯТЬ — ПІНЦЕТ МОЖНА ВІДПУСКАТИ! <<<"
+                                            "  ✓ ESP32 АВТОМАТИЧНО У РЕЖИМІ ПРОШИВКИ (boot:0x3 / waiting for download)"
                                         )
                                         print(
                                             "  ================================================================\n",
@@ -579,7 +600,7 @@ def swd_wait_for_esp_download_boot(port: str) -> bool:
                             )
                             say(
                                 "esp",
-                                f"Спроба #{attempt}: {boot_info} — замкни GPIO0 (пад 25) на GND (пад 38)...",
+                                f"Спроба #{attempt}: {boot_info} — повторюю авто-вхід у Download Mode...",
                             )
                 except KeyboardInterrupt:
                     raise
@@ -590,6 +611,22 @@ def swd_wait_for_esp_download_boot(port: str) -> bool:
         print()
         say("esp", "очікування перервано користувачем (Ctrl-C)")
         return False
+
+
+def swd_restore_esp_normal_boot() -> None:
+    """Restore PA1=1 and resume the GD32 core after ESP32 serial flashing."""
+    try:
+        from pyocd.core.helpers import ConnectHelper
+
+        with ConnectHelper.session_with_chosen_probe(
+            target_override="cortex_m",
+            options={"connect_mode": "attach", "frequency": 100000},
+        ) as s:
+            t = s.board.target
+            t.write32(0x48000018, 0x00000002)  # PA1=1
+            t.resume()
+    except Exception:
+        pass
 
 
 _UID_SEEN: str | None = None
@@ -717,23 +754,8 @@ def discover_esp(timeout: float = 6.0) -> list[str]:
     return sorted(f"{n}.local" for n in found)
 
 
-def remember_esp_host(port: str) -> str | None:
-    """Ask the ESP we just flashed who it is, and write that down.
-
-    Discovery alone is not safe here. On this bench the mDNS browse returned
-    exactly one HTRAM -- htram-9436b0, the converted unit in daily use -- while
-    the device actually on the probe advertised nothing at all. A single answer
-    therefore proves nothing, and auto-picking it would have aimed the quiet
-    config in `--stage dump` at a working device.
-
-    The MAC is the one identity that comes from the unit itself, so it wins.
-    The chip is still in the bootloader at this point (--after no-reset), so
-    this connects immediately; the name follows the configs' name_add_mac_suffix
-    rule, last three bytes, lowercase.
-
-    This is the one thing the tool keeps in a file. It is still a hardware fact
-    -- just one that cannot be re-read once the probe moves on.
-    """
+def remember_esp_host(port: str, yaml_path: Path | None = None) -> str | None:
+    """Ask the ESP we just flashed who it is, and write that down."""
     rc, out = _run(
         [
             str(ESPTOOL),
@@ -756,14 +778,24 @@ def remember_esp_host(port: str) -> str | None:
     m = re.search(r"MAC:\s*((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})", out)
     if rc != 0 or not m:
         return None
-    tail = m.group(1).replace(":", "").lower()[-6:]
-    host = f"htram-{tail}.local"
+    mac_str = m.group(1).lower()
+    tail = mac_str.replace(":", "")[-6:]
+    node_name, add_suffix = _config_node_info(yaml_path or YAML)
+    host = f"{node_name}-{tail}.local" if add_suffix else f"{node_name}.local"
     FACTORY_DIR.mkdir(parents=True, exist_ok=True)
-    # Bound to the GD32 UID, not stored bare: a name on its own cannot say which
-    # unit it came from, and an inherited one silently aims later stages -- and
-    # the `esp` tick itself -- at whatever answered last time.
     HOST_FILE.write_text(
-        json.dumps({"host": host, "uid": device_uid()}, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(
+            {
+                "host": host,
+                "mac": mac_str,
+                "mac_tail": tail,
+                "uid": device_uid(),
+                "config": str((yaml_path or YAML).relative_to(REPO_ROOT)),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
     )
     return host
 
@@ -895,16 +927,26 @@ def stage_prep(args) -> int:
     if missing or st == NO:
         return 1
     if built == NO:
-        if not ask("Зібрати прошивку GD32 зараз?"):
-            return 1
+        say("prep", "автоматично збираю прошивку GD32 (make -C firmware/gd32)...")
         rc, out = _run(["make"], cwd=REPO_ROOT / "firmware" / "gd32")
-        print(out.strip(), flush=True)
+        if out.strip():
+            print(out.strip(), flush=True)
         if rc != 0:
+            return 1
+        built, bnote = firmware_built()
+        say("prep", f"прошивка GD32: {bnote}")
+    assets_bin = REPO_ROOT / "firmware" / "gd32" / "build" / "flash_assets.bin"
+    if not assets_bin.exists():
+        say("prep", "пакую графічні асети для SPI Flash (pack_flash_assets.py)...")
+        rc, out = _run([str(VENV_PYTHON), str(REPO_ROOT / "tools" / "pack_flash_assets.py")], cwd=REPO_ROOT)
+        if rc != 0:
+            print(out.strip(), flush=True)
             return 1
     return 0
 
 
 def stage_probe(args) -> int:
+    global _PROBE_SEEN
     if probe_attached()[0] == OK and swd_alive()[0] == OK and serial_ports():
         say(
             "probe",
@@ -913,7 +955,7 @@ def stage_probe(args) -> int:
         return 0
     physical(
         [
-            "ОДНОРАЗОВЕ ПІДКЛЮЧЕННЯ (паяння один раз або накладка з пого-пінами).",
+            "ОДНОРАЗОВЕ ПІДКЛЮЧЕННЯ (паяння один раз або 5-пінова пого-пін накладка).",
             "Жодні дроти під час конверсії перепаювати НЕ доведеться.",
             "",
             "Спершу паяння (плата ЗНЕСТРУМЛЕНА, Pico ВІД'ЄДНАНО від USB):",
@@ -938,19 +980,25 @@ def stage_probe(args) -> int:
             "горить — плата знеструмлена й живиться паразитно. Негайно від'єднати.",
         ]
     )
-    input("  Enter, коли зроблено… ")
-    st, note = probe_attached()
-    say("probe", f"пробник: {note}")
-    if st != OK:
-        return 1
-    ports = serial_ports()
-    say("probe", f"послідовні порти: {', '.join(ports) if ports else 'нема'}")
-    st, note = swd_alive()
-    say("probe", f"SWD: {note}")
-    return 0 if st == OK else 1
+    while True:
+        try:
+            input("  Натисни Enter, коли 5 дротів підключено, плата заживлена і Pico в USB… ")
+        except EOFError:
+            return 1
+        _PROBE_SEEN = None
+        st, note = probe_attached()
+        say("probe", f"пробник: {note}")
+        ports = serial_ports()
+        say("probe", f"послідовні порти: {', '.join(ports) if ports else 'нема'}")
+        swd_st, swd_note = swd_alive()
+        say("probe", f"SWD: {swd_note}")
+        if st == OK and swd_st == OK and ports:
+            return 0
+        say("probe", "ще не все готово — перевір підключення і натисни Enter ще раз (або Ctrl-C)")
 
 
 def stage_esp(args) -> int:
+    yaml_path = _config_yaml(args)
     if getattr(args, "esp_recorded", False):
         say(
             "esp",
@@ -964,9 +1012,6 @@ def stage_esp(args) -> int:
         say("esp", "цей етап уже пройдено; далі все йде по OTA")
         return 0
     if st == OK:
-        # Something answers on that name, but nothing ties it to the unit wired
-        # to the probe -- and a wrong skip here is what walks an unflashed ESP
-        # into the irreversible unlock. Make the operator say which it is.
         say(
             "esp",
             f"на {args.host} щось відповідає, але це НЕ підтверджено як ESP пристрою на стенді",
@@ -984,14 +1029,12 @@ def stage_esp(args) -> int:
     if swd_alive()[0] != OK:
         physical(
             [
-                "Підключення UART0 ESP32 (якщо ще не підпаяно на етапі probe):",
+                "Підключення 5 дротів (SWD + UART0 ESP32):",
+                "     Pico GP2       → TP16  (PA14, SWCLK)",
+                "     Pico GP3       → TP17  (PA13, SWDIO)",
                 "     Pico GP4 (TX)  → GPIO3 (RXD0, пад 34)",
                 "     Pico GP5 (RX)  → GPIO1 (TXD0, пад 35)",
                 "     Pico GND       → GND   (пад 38 або екран micro-USB)",
-                "     GPIO0 (пад 25) → GND   (пад 38)",
-                "",
-                "Рекомендовано також одразу під'єднати SWD (GP2→TP16, GP3→TP17):",
-                "тоді скрипт сам перезапустить ESP32 у Download Mode через PB3 по SWD.",
             ]
         )
         if not ask("Дроти підпаяно?"):
@@ -1003,37 +1046,33 @@ def stage_esp(args) -> int:
         say("esp", f"портів {len(serial_ports())} — вкажи потрібний через --port")
         return 1
 
-    # Build before the hands are busy (reuse existing image if already up to date).
-    image: Path | None = esp_factory_image(YAML.stat().st_mtime)
+    say("esp", f"конфігурація ESPHome: {yaml_path.relative_to(REPO_ROOT)}")
+    image: Path | None = esp_factory_image(yaml_path.stat().st_mtime, yaml_path)
     if image is not None:
         say(
             "esp",
             f"використовую готовий образ: {image.relative_to(REPO_ROOT)} ({image.stat().st_size} Б)",
         )
     else:
-        say("esp", "спершу збираю образ — руки поки вільні")
+        say("esp", f"збираю образ {yaml_path.name} — руки поки вільні")
         started = time.time()
-        rc, _ = _run_streaming([str(ESPHOME), "compile", str(YAML)])
+        rc, _ = _run_streaming([str(ESPHOME), "compile", str(yaml_path)])
         if rc != 0:
             say("esp", "збірка не вдалася — до заліза не дійшли")
             return 1
-        image = esp_factory_image(started)
+        image = esp_factory_image(started, yaml_path)
         if image is None:
             say("esp", "не знайшов свіжий firmware.factory.bin після збірки")
             return 1
         say("esp", f"образ: {image.relative_to(REPO_ROOT)} ({image.stat().st_size} Б)")
 
     if swd_alive()[0] == OK:
-        say(
-            "esp",
-            "SWD активний — автоматично переводжу ESP32 у Download Mode (PA1=0 під час старту PB3/PF7)...",
-        )
         if not swd_wait_for_esp_download_boot(port):
             return 1
     else:
         physical(
             [
-                "Якщо перемичка GPIO0 → GND ще не стоїть, переведи ESP у download mode:",
+                "SWD недоступний — переведи ESP у download mode вручну:",
                 "  1. Затиснути кнопку SW1 до входу в standby — ESP гасне.",
                 "  2. Притиснути GPIO0 (пад 25) до GND (пад 38) і тримати.",
                 "  3. Затиснути кнопку SW1 ще раз — ESP стартує в download mode.",
@@ -1044,11 +1083,11 @@ def stage_esp(args) -> int:
         say("esp", "заливка не вдалася")
         say(
             "esp",
-            "перевір, що GPIO0 (пад 25) з'єднано з GND (пад 38), "
-            "а GP4→пад 34 (RXD0), GP5→пад 35 (TXD0)",
+            "перевір контакти GP4→пад 34 (RXD0), GP5→пад 35 (TXD0), GND→пад 38",
         )
         return 1
-    host = remember_esp_host(port)
+    host = remember_esp_host(port, yaml_path)
+    swd_restore_esp_normal_boot()
     if host:
         args.host = host
         if device_uid():
@@ -1138,23 +1177,14 @@ def stage_dump(args) -> int:
             say("dump", f"образ саме цього пристрою вже знято ({note})")
             return 0
         if uid and known and uid != known:
-            # The exact multi-device trap: a valid image, but another unit's.
-            say("dump", f"НАЯВНИЙ ОБРАЗ — ВІД ІНШОГО ПРИСТРОЮ (знято з {known})")
-            say("dump", "для цього пристрою заводського образу ще немає")
-            if not ask("Зняти образ цього пристрою? (наявний буде збережено в архіві)"):
-                return 1
+            say("dump", f"наявний gd32_flash.bin від іншого пристрою ({known}) — уже збережений у factory/, знімаю дамп для {uid}...")
         else:
             say("dump", f"наявний образ: {note}")
             say("dump", "звірити з UID не вдалося, тож автоматично довіряти йому не можна")
-            if not ask("Це образ САМЕ ЦЬОГО пристрою, знімати не треба?"):
-                if not ask("Тоді зняти образ цього пристрою зараз?"):
-                    return 1
-            else:
+            if ask("Це образ САМЕ ЦЬОГО пристрою, знімати не треба?"):
                 return 0
     elif FACTORY_IMAGE.exists():
-        say("dump", f"наявний файл невалідний: {note}")
-        if not ask("Перезняти образ поверх нього?"):
-            return 1
+        say("dump", f"наявний файл невалідний ({note}) — перезнімаю дамп...")
     rdp, rnote = rdp_state()
     if rdp == OK:
         say("dump", "RDP уже знято — заводський флеш стерто, знімати нічого")
@@ -1190,11 +1220,9 @@ def stage_dump(args) -> int:
     else:
         say(
             "dump",
-            "читання 64 КБ заводської прошивки під RDP1 через SWD-mailbox "
-            "(TP16/TP17, без UART і без перепаювання, ~15 с)",
+            "автоматичне читання 64 КБ заводської прошивки під RDP1 через SWD-mailbox "
+            "(TP16/TP17, без UART і без перепаювання, ~5 с)...",
         )
-        if not ask("Почати зняття заводського образу по SWD?"):
-            return 1
         rc, _ = _run_streaming(
             [str(VENV_PYTHON), str(SWD_DIR / "flash.py"), "--dump", str(FACTORY_IMAGE)],
             cwd=REPO_ROOT,
@@ -1217,11 +1245,12 @@ def stage_dump(args) -> int:
     dest = archive_dump(uid, label)
     say("dump", f"результат: {dump_state()[1]}")
     say("dump", f"в архіві: {dest.relative_to(REPO_ROOT)}")
-    say("dump", "єдина копія заводської прошивки цього пристрою — зроби бекап поза репозиторієм")
+    say("dump", "єдина копія заводської прошивки цього пристрою — збережено!")
     return 0
 
 
 def stage_unlock(args) -> int:
+    global _PROBE_SEEN
     rdp, rnote = rdp_state()
     if rdp == OK:
         say("unlock", f"{rnote} — етап уже пройдено")
@@ -1235,8 +1264,6 @@ def stage_unlock(args) -> int:
         say("unlock", "зняття RDP стирає заводський флеш назавжди. Спершу `--stage dump`.")
         return 1
 
-    # Having *an* image is not enough when converting more than one unit: it has
-    # to be THIS unit's image, or the rollback belongs to a different device.
     uid = device_uid()
     meta = dump_provenance(FACTORY_IMAGE.read_bytes()) or {}
     known = meta.get("uid")
@@ -1257,19 +1284,19 @@ def stage_unlock(args) -> int:
     say("unlock", f"заводський образ на місці: {note}")
     print(flush=True)
     print("  ╭─────────────────────────────────────────────────────────────────╮", flush=True)
-    print("  │  НЕЗВОРОТНО. Зняття RDP запускає MASS ERASE основного флешу.   │", flush=True)
-    print("  │  Заводська прошивка GD32 зникне. Єдиний шлях назад —           │", flush=True)
-    print("  │  tools/swd/gd32_flash.bin, який щойно перевірено вище.         │", flush=True)
+    print("  │  Зняття RDP запускає MASS ERASE основного флешу GD32 на POR.    │", flush=True)
+    print("  │  Заводський бекап перевірено: tools/swd/gd32_flash.bin.         │", flush=True)
     print("  ╰─────────────────────────────────────────────────────────────────╯", flush=True)
     print(flush=True)
-    try:
-        typed = input('  Надрукуй "стерти", щоб підтвердити: ').strip()
-    except EOFError:
-        typed = ""
-    if typed != "стерти":
-        say("unlock", "не підтверджено — нічого не зроблено")
-        return 1
-    say("unlock", "вантажу rdp_unlock.c у SRAM через SWD; він програмує байти опцій")
+    if not getattr(args, "all", False) and not getattr(args, "yes", False):
+        try:
+            typed = input('  Надрукуй "стерти", щоб підтвердити: ').strip()
+        except EOFError:
+            typed = ""
+        if typed != "стерти":
+            say("unlock", "не підтверджено — нічого не зроблено")
+            return 1
+    say("unlock", "вантажу rdp_unlock.c у SRAM через SWD; він програмує байти опцій (SPC=0xA5)...")
     rc, _ = _run_streaming(
         [str(VENV_PYTHON), str(SWD_DIR / "flash.py"), "--rdp-unlock"],
         cwd=REPO_ROOT,
@@ -1279,19 +1306,33 @@ def stage_unlock(args) -> int:
         return 1
     physical(
         [
-            "Стаб записав байти опцій (SPC=0xA5). Вони застосовуються на",
-            "ПОВНОМУ ПЕРЕЗАПУСКУ ЖИВЛЕННЯ (POR), не на звичайному reset.",
+            "ДІЯ КОРИСТУВАЧА: ОДИН ПОВНИЙ ПЕРЕЗАПУСК ЖИВЛЕННЯ (POR).",
+            "Стаб записав байти опцій (SPC=0xA5). Вони застосовуються лише при",
+            "повному знеструмленні плати:",
             "",
-            "  1. Від'єднати USB Pico.",
-            "  2. Повністю знеструмити плату (USB + акумулятор).",
-            "  3. Подати живлення знову — на цьому POR залізо робить mass erase.",
-            "  4. Під'єднати USB Pico назад.",
+            "  1. Від'єднай USB Pico від комп'ютера.",
+            "  2. Повністю знеструм плату (від'єднай зарядку та/або акумулятор на 3 с).",
+            "  3. Подай живлення на плату знову — на цьому POR залізо робить mass erase.",
+            "  4. Під'єднай USB Pico назад у комп'ютер.",
         ]
     )
-    input("  Enter після перезапуску живлення… ")
-    rdp, rnote = rdp_state()
-    say("unlock", rnote)
-    return 0 if rdp == OK else 1
+    while True:
+        try:
+            input("  Натисни Enter після перезапуску живлення плати… ")
+        except EOFError:
+            return 1
+        _PROBE_SEEN = None
+        if probe_attached()[0] != OK:
+            say("unlock", "Pico ще не видно по USB — під'єднай USB Pico і натисни Enter")
+            continue
+        rdp, rnote = rdp_state()
+        say("unlock", rnote)
+        if rdp == OK:
+            return 0
+        say(
+            "unlock",
+            "RDP усе ще активний (OBSTAT != 0xFFFFFF00) — переконайся, що плату було ПОВНІСТЮ знеструмлено (POR), і натисни Enter",
+        )
 
 
 def stage_flash(args) -> int:
@@ -1301,8 +1342,6 @@ def stage_flash(args) -> int:
         return 1
     rdp, rnote = rdp_state()
     if rdp != OK:
-        # Not just NO: an unreadable OBSTAT means no live SWD, and SWD is the
-        # only way this stage writes anything. Either way there is nothing to do.
         say("flash", rnote)
         say(
             "flash",
@@ -1310,11 +1349,7 @@ def stage_flash(args) -> int:
         )
         return 1
     say("flash", f"образ: {bnote}")
-    say("flash", "заливка йде без таймауту — обірваний запис цеглить GD32")
-    if not ask("Залити прошивку по SWD?"):
-        return 1
-    # --swd-mem talks through a mailbox in SRAM over the AHB-AP, so no wire
-    # between the chips is involved at all.
+    say("flash", "автоматична заливка нашої прошивки GD32 по SWD (без таймауту)...")
     rc, _ = _run_streaming(
         [str(VENV_PYTHON), str(SWD_DIR / "flash.py"), "--swd-mem"], cwd=REPO_ROOT
     )
@@ -1324,56 +1359,130 @@ def stage_flash(args) -> int:
     return 0
 
 
-def stage_verify(args) -> int:
-    physical(
-        [
-            "Прошивку ESP32 та GD32 записано! Тепер від'єднай стенд / зніми накладку:",
-            "",
-            "  1. Від'єднати Pico від USB комп'ютера.",
-            "  2. Знеструмити плату.",
-            "  3. Зняти перемичку GPIO0 → GND (пад 25 → пад 38) та відпаяти дроти",
-            "     (або зняти плату з пого-пінів).",
-            "  4. Увімкнути живлення плати штатно.",
-        ]
-    )
-    input("  Enter, коли дроти/перемичку знято й плата ввімкнена… ")
+def _resolve_reachable_host(host: str) -> str:
+    """Return an IP or hostname that actually answers HTTP, resolving .local if needed."""
+    import requests
 
+    try:
+        requests.get(f"http://{host}/", timeout=4)
+        return host
+    except requests.RequestException:
+        if host.lower().endswith(".local"):
+            addr = resolve_local(host)
+            if addr:
+                return addr
+    return host
+
+
+def stage_verify(args) -> int:
+    yaml_path = _config_yaml(args)
+    say(
+        "verify",
+        f"GD32 прошито і запущено! Чекаю на вихід ESP32 ({args.host}) у Wi-Fi мережу...",
+    )
     st, note = NO, ""
     for attempt in range(6):
         st, note = esp_online(args.host)
         if st == OK:
             break
         if attempt < 5:
-            say("verify", f"чекаю, поки ESP32 підніметься у Wi-Fi ({attempt + 1}/6)...")
+            say("verify", f"пошук ESP32 у мережі ({attempt + 1}/6)...")
             time.sleep(3)
-    say("verify", f"ESP: {note}")
+
+    while st != OK:
+        physical(
+            [
+                "ДІЯ КОРИСТУВАЧА: НАЛАШТУВАННЯ WI-FI (або вказання IP-адреси).",
+                f"Пристрій ({args.host}) ще не відповів у локальній мережі.",
+                "",
+                "  Якщо Wi-Fi ще не налаштовано:",
+                "    1. Зачекай ~15 с після старту — на екрані годинника з'явиться QR-код",
+                '       точки доступу "HTRAM Setup".',
+                '    2. Підключись з телефону або ноутбука до Wi-Fi мережі "HTRAM Setup".',
+                "    3. У вікні (або http://192.168.4.1) обери свою домашню мережу і введи пароль.",
+                "",
+                "  Якщо пристрій уже у Wi-Fi, але mDNS (.local) не резолвиться на цьому ПК —",
+                "  просто введи нижче його IP-адресу (наприклад, з роутера або екрана пристрою).",
+            ]
+        )
+        try:
+            user_host = input(
+                f"  Натисни Enter після підключення до Wi-Fi (або введи IP / хост замість {args.host}): "
+            ).strip()
+        except EOFError:
+            return 1
+        if user_host:
+            args.host = user_host
+            args.host_trusted = True
+        for attempt in range(4):
+            st, note = esp_online(args.host)
+            if st == OK:
+                break
+            say("verify", f"перевіряю зв'язок із {args.host} ({attempt + 1}/4)...")
+            time.sleep(2)
+        if st != OK:
+            say("verify", f"не вдалося достукатись до {args.host}: {note}")
+
+    say("verify", f"ESP у мережі: {note}")
+    target_addr = _resolve_reachable_host(args.host)
 
     if getattr(args, "legacy_uart_dump", False) and st == OK:
-        if not getattr(args, "host_trusted", False):
-            say("verify", f"{args.host} не підтверджено як ESP цього пристрою")
-            if not ask(f"Заливати саме в {args.host}?"):
-                say("verify", "передай правильний через --host")
-                return 1
-        if ask(f"Повернути справжній конфіг ({YAML.name}) поверх тихого?"):
+        if ask(f"Повернути справжній конфіг ({yaml_path.name}) поверх тихого?"):
             rc, _ = _run_streaming(
-                [str(ESPHOME), "run", str(YAML), "--device", args.host, "--no-logs"]
+                [str(ESPHOME), "run", str(yaml_path), "--device", target_addr, "--no-logs"]
             )
             if rc != 0:
                 say("verify", "не вдалося залити — пристрій лишився з тихим конфігом")
                 return 1
 
+    # Automatically upload SPI Flash graphic assets (flash_assets.bin) once GD32 telemetry arrives
+    say("verify", f"автоматичне завантаження графічних асетів у SPI Flash ({target_addr})...")
+    assets_ok = False
+    for attempt in range(1, 6):
+        rc, out = _run(
+            [str(VENV_PYTHON), str(REPO_ROOT / "tools" / "flash_assets.py"), target_addr],
+            cwd=REPO_ROOT,
+            timeout=90,
+        )
+        if rc == 0:
+            print(out.strip(), flush=True)
+            assets_ok = True
+            break
+        if "SPI flash not detected" in out and attempt < 5:
+            say(
+                "verify",
+                f"чекаю на перший пакет телеметрії від GD32 зі статусом SPI Flash ({attempt}/5)...",
+            )
+            time.sleep(3)
+        else:
+            print(out.strip(), flush=True)
+            break
+
+    if not assets_ok:
+        say(
+            "verify",
+            f"асети можна дозалити пізніше командою: make flash-assets DEVICE={target_addr}",
+        )
+
+    say("verify", "перевірка живої телеметрії пристрою:")
+    _run_streaming([str(VENV_PYTHON), str(REPO_ROOT / "tools" / "device.py"), target_addr, "status"])
+
     physical(
         [
-            "GD32 після старту шле HELLO зі своїм build epoch і git-хешем.",
-            "Подивитись у логах ESP:",
-            f"    .venv/bin/esphome logs {YAML.relative_to(REPO_ROOT)} --device {args.host}",
+            "✓ КОНВЕРСІЮ ПОВНІСТЮ ЗАВЕРШЕНО! Обидва чипи та SPI Flash асети прошиті.",
             "",
-            "Далі всі оновлення прошивки та графічних асетів ідуть по повітрю (OTA):",
-            f"    make flash-assets DEVICE={args.host}",
-            f"    .venv/bin/python tools/swd/flash.py --ota {args.host}",
+            "Тепер безпечно від'єднай стенд:",
+            "  1. Від'єднати USB Pico від комп'ютера.",
+            "  2. Вимкнути живлення плати.",
+            "  3. Відпаяти всі 5 дротів (або зняти плату з пого-пін накладки) та зібрати корпус.",
+            "",
+            "Надалі всі оновлення прошивки (ESP32, GD32) та графічних асетів ідуть по Wi-Fi (OTA):",
+            f"    make device-status DEVICE={target_addr}",
+            f"    make flash-assets DEVICE={target_addr}",
+            f"    .venv/bin/python tools/swd/flash.py --ota {target_addr}",
         ]
     )
-    return 0 if st == OK else 1
+    return 0
 
 
 def _run_streaming(cmd, cwd=None) -> tuple[int, str]:
@@ -1535,6 +1644,18 @@ def main() -> int:
         "name_add_mac_suffix, тож ім'я виглядає як "
         "htram-<останні 3 байти MAC>.local (напр. "
         "htram-c1da24.local). IP теж годиться",
+    )
+    ap.add_argument(
+        "--config",
+        default=None,
+        help="ESPHome YAML конфігурація для заливки в ESP32 (типово: esphome/htram.yaml; "
+        "для іменованого пристрою флоту: напр. esphome/htram-9436b0.yaml)",
+    )
+    ap.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="не питати проміжних підтверджень у терміналі (зупинятись лише на фізичному POR та Wi-Fi)",
     )
     ap.add_argument("--port", help="послідовний порт пробника (типово єдиний /dev/ttyACM*)")
     ap.add_argument(
