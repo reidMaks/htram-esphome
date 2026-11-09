@@ -14,12 +14,12 @@ plain "htram.local".
 """
 
 import argparse
+import json
 import os
 import struct
 import subprocess
 import sys
 import time
-import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -38,11 +38,11 @@ if not sys.prefix.startswith(str(REPO / ".venv")) and VENV_PYTHON.exists():
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-import serial
-import requests
-from requests.auth import HTTPDigestAuth
+import requests  # noqa: E402
+import serial  # noqa: E402
+from requests.auth import HTTPDigestAuth  # noqa: E402
 
-from tools.device import resolve_device_address
+from tools.device import resolve_device_address  # noqa: E402
 
 SWD = REPO / "tools/swd"
 PYOCD = REPO / ".venv/bin/pyocd"
@@ -108,11 +108,11 @@ def check_status(host: str) -> int:
             return 1
 
         info = await cli.device_info()
-        print(f"\n========================================================")
+        print("\n========================================================")
         print(f"  DEVICE: {info.name} ({info.mac_address})")
         print(f"  ESPHome Version: {info.esphome_version}")
         print(f"  Compilation:     {info.compilation_time}")
-        print(f"========================================================")
+        print("========================================================")
 
         entities, user_services = await cli.list_entities_services()
         states = {}
@@ -150,8 +150,9 @@ def pyocd(*cmds, freq="100k", timeout=60):
     return subprocess.run(args, timeout=timeout, check=True)
 
 
-def build_writer() -> tuple[Path, str]:
-    elf, binf = SWD / "flash_writer.elf", SWD / "flash_writer.bin"
+def _build_sram_stub(stem: str, label: str) -> tuple[Path, int]:
+    """Compile tools/swd/<stem>.c for SRAM execution; return (bin path, thumb entry PC int)."""
+    elf, binf = SWD / f"{stem}.elf", SWD / f"{stem}.bin"
     subprocess.run(
         [
             "arm-none-eabi-gcc",
@@ -166,108 +167,33 @@ def build_writer() -> tuple[Path, str]:
             "-Wl,--entry=main",
             "-o",
             str(elf),
-            str(SWD / "flash_writer.c"),
+            str(SWD / f"{stem}.c"),
         ],
         check=True,
     )
     subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
     nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
-    entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
-    pc = f"0x{int(entry, 16) | 1:08X}"
-    print(f"[build] writer {binf.stat().st_size} B, entry {pc}")
-    # Missing until 2026-09-08: the function did all its work and returned
-    # None, so `binf, pc = build_writer()` raised TypeError every time. The OTA
-    # path never calls it, and the SWD path had not been run since -- which is
-    # how the only route into a device with factory firmware stayed broken
-    # without anyone noticing.
+    entry = next(line for line in nm.splitlines() if " T main" in line).split()[0]
+    pc = int(entry, 16) | 1
+    print(f"[build] {label} {binf.stat().st_size} B, entry 0x{pc:08X}")
     return binf, pc
+
+
+def build_writer() -> tuple[Path, str]:
+    binf, pc = _build_sram_stub("flash_writer", "writer")
+    return binf, f"0x{pc:08X}"
 
 
 def build_swd_writer() -> tuple[Path, int]:
-    """Build swd_flash_writer.c for SRAM exec; return (bin path, thumb entry PC int)."""
-    elf, binf = SWD / "swd_flash_writer.elf", SWD / "swd_flash_writer.bin"
-    subprocess.run(
-        [
-            "arm-none-eabi-gcc",
-            "-mcpu=cortex-m3",
-            "-mthumb",
-            "-Os",
-            "-nostdlib",
-            "-nostartfiles",
-            "-ffreestanding",
-            "-T",
-            str(SWD / "sram.ld"),
-            "-Wl,--entry=main",
-            "-o",
-            str(elf),
-            str(SWD / "swd_flash_writer.c"),
-        ],
-        check=True,
-    )
-    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
-    nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
-    entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
-    pc = int(entry, 16) | 1
-    print(f"[build] swd_writer {binf.stat().st_size} B, entry 0x{pc:08X}")
-    return binf, pc
+    return _build_sram_stub("swd_flash_writer", "swd_writer")
 
 
 def build_swd_dumper() -> tuple[Path, int]:
-    """Build swd_flash_dump.c for SRAM exec; return (bin path, thumb entry PC int)."""
-    elf, binf = SWD / "swd_flash_dump.elf", SWD / "swd_flash_dump.bin"
-    subprocess.run(
-        [
-            "arm-none-eabi-gcc",
-            "-mcpu=cortex-m3",
-            "-mthumb",
-            "-Os",
-            "-nostdlib",
-            "-nostartfiles",
-            "-ffreestanding",
-            "-T",
-            str(SWD / "sram.ld"),
-            "-Wl,--entry=main",
-            "-o",
-            str(elf),
-            str(SWD / "swd_flash_dump.c"),
-        ],
-        check=True,
-    )
-    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
-    nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
-    entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
-    pc = int(entry, 16) | 1
-    print(f"[build] swd_dumper {binf.stat().st_size} B, entry 0x{pc:08X}")
-    return binf, pc
+    return _build_sram_stub("swd_flash_dump", "swd_dumper")
 
 
 def build_rdp_unlocker() -> tuple[Path, int]:
-    """Build rdp_unlock.c for SRAM exec; return (bin path, thumb entry PC int)."""
-    elf, binf = SWD / "rdp_unlock.elf", SWD / "rdp_unlock.bin"
-    subprocess.run(
-        [
-            "arm-none-eabi-gcc",
-            "-mcpu=cortex-m3",
-            "-mthumb",
-            "-Os",
-            "-nostdlib",
-            "-nostartfiles",
-            "-ffreestanding",
-            "-T",
-            str(SWD / "sram.ld"),
-            "-Wl,--entry=main",
-            "-o",
-            str(elf),
-            str(SWD / "rdp_unlock.c"),
-        ],
-        check=True,
-    )
-    subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(elf), str(binf)], check=True)
-    nm = subprocess.run(["arm-none-eabi-nm", str(elf)], capture_output=True, text=True).stdout
-    entry = next(l for l in nm.splitlines() if " T main" in l).split()[0]
-    pc = int(entry, 16) | 1
-    print(f"[build] rdp_unlocker {binf.stat().st_size} B, entry 0x{pc:08X}")
-    return binf, pc
+    return _build_sram_stub("rdp_unlock", "rdp_unlocker")
 
 
 def dump_via_swd_mem(out_path: Path = FACTORY_IMAGE, total_size: int = 65536) -> int:

@@ -7,7 +7,7 @@ description: Step-by-step interactive guide and single-command workflow for conv
 
 Цей скіл описує актуальний однокроковий процес перепрошивки нового («з коробки») пристрою HTRAM на кастомну прошивку (ESP32 + GD32F150 + SPI Flash асети) за допомогою одного Raspberry Pi Pico (`debugprobe`) та однієї наскрізної команди.
 
-Повна технічна документація та вбудовані схеми: [`docs/CONVERSION.md`](../../docs/CONVERSION.md).
+Повна технічна документація та вбудовані схеми: [`docs/CONVERSION.md`](../../../docs/CONVERSION.md).
 
 ---
 
@@ -28,9 +28,9 @@ description: Step-by-step interactive guide and single-command workflow for conv
    - Коли скрипт `tools/convert.py` зупиняє ядро заводської GD32 по SWD (`target.halt()`), вимикає живлення ESP32 на 600 мс і знову піднімає `PC15=1`, `PF7=1`, `PB3=1`, утримуючи пін **`PA1 = 0` (`Output LOW`)**, ESP32 з першої спроби автоматично завантажується у **`boot:0x3 (DOWNLOAD_BOOT)` (`waiting for download`)**!
    - Замикати `GPIO0` (пад 25) пінцетом чи натискати кнопку `SW1` **не потрібно**.
 2. **SWD-mailbox стаби для GD32 (`dump`, `unlock`, `flash`)**:
-   - Читання 64 КБ заводської прошивки з-під `RDP1` ([`tools/swd/swd_flash_dump.c`](../../tools/swd/swd_flash_dump.c), ~5 с), зняття `RDP` ([`tools/swd/rdp_unlock.c`](../../tools/swd/rdp_unlock.c)) та запис нової прошивки GD32 ([`tools/swd/swd_flash_writer.c`](../../tools/swd/swd_flash_writer.c), ~27 с) працюють виключно через поштову скриньку в SRAM по SWD (`TP16`/`TP17`).
+   - Читання 64 КБ заводської прошивки з-під `RDP1` ([`tools/swd/swd_flash_dump.c`](../../../tools/swd/swd_flash_dump.c), ~5 с), зняття `RDP` ([`tools/swd/rdp_unlock.c`](../../../tools/swd/rdp_unlock.c)) та запис нової прошивки GD32 ([`tools/swd/swd_flash_writer.c`](../../../tools/swd/swd_flash_writer.c), ~27 с) працюють виключно через поштову скриньку в SRAM по SWD (`TP16`/`TP17`).
 
-Візуальні схеми підключення лежать у [`docs/wiring/swd.svg`](../../docs/wiring/swd.svg) та [`docs/wiring/esp-uart0.svg`](../../docs/wiring/esp-uart0.svg) і вбудовані прямо в [`docs/CONVERSION.md`](../../docs/CONVERSION.md).
+Візуальні схеми підключення лежать у [`docs/wiring/swd.svg`](../../../docs/wiring/swd.svg) та [`docs/wiring/esp-uart0.svg`](../../../docs/wiring/esp-uart0.svg) і вбудовані прямо в [`docs/CONVERSION.md`](../../../docs/CONVERSION.md).
 
 ---
 
@@ -89,7 +89,7 @@ make convert CONFIG=esphome/htram-c1da24.yaml   # Вітальня (living)
 1. **Уточни цільову конфігурацію (якщо не вказано)**:
    - Чи це новий автономний пристрій (`esphome/htram.yaml`), чи заміна одного з пристроїв домашнього флоту (`office` → `esphome/htram-9436b0.yaml`, `bedroom` → `esphome/htram-954f48.yaml`, `living` → `esphome/htram-c1da24.yaml`)?
 2. **Крок 1 — Перевір підключення 5 дротів та порядок живлення**:
-   - Дай користувачу посилання на схеми в [`docs/CONVERSION.md`](../../docs/CONVERSION.md) (`GP2`→`TP16`, `GP3`→`TP17`, `GP4`→пад `34`, `GP5`→пад `35`, `GND`→пад `38`).
+   - Дай користувачу посилання на схеми в [`docs/CONVERSION.md`](../../../docs/CONVERSION.md) (`GP2`→`TP16`, `GP3`→`TP17`, `GP4`→пад `34`, `GP5`→пад `35`, `GND`→пад `38`).
    - Нагадай обов'язковий порядок увімкнення: **спершу живлення плати (акумулятор або окрема USB-зарядка, НЕ цей ПК) → переконатись, що плата працює → увімкнути USB Pico в ПК**.
 3. **Крок 2 — Запусти єдину команду і веди користувача через дві зупинки**:
    - Ти можеш або запропонувати користувачу виконати `make convert` у своєму терміналі, або **сам запустити команду у фоні** через `run_command`:
@@ -105,5 +105,5 @@ make convert CONFIG=esphome/htram-c1da24.yaml   # Вітальня (living)
      - Якщо пристрій ще не знайдено автоматично, попроси користувача підключити годинник до Wi-Fi через точку доступу **`HTRAM Setup`** (QR-код на екрані пристрою) або повідомити його IP-адресу з роутера, і передай `<ip>\n` у задачу через `manage_task(Action="send_input", ...)`.
 4. **Крок 3 — Фінальна перевірка та завершення**:
    - Переконайся, що `flash_assets.bin` успішно записано у SPI Flash (`[ok] Assets successfully written to SPI Flash`), а сенсори (`CO2`, `Temperature`, `Humidity`, `Battery`) віддають валідні значення.
-   - Якщо пристрій замінив один із вузлів флоту (`office`, `bedroom`, `living`) і отримав новий IP, онови IP в [`tools/device.py`](../../tools/device.py), [`Makefile`](../../Makefile), [`AGENTS.md`](../../AGENTS.md) та [`tests/tools/test_device.py`](../../tests/tools/test_device.py).
+   - Якщо пристрій замінив один із вузлів флоту (`office`, `bedroom`, `living`) і отримав новий IP, онови IP в [`tools/device.py`](../../../tools/device.py), [`Makefile`](../../../Makefile), [`AGENTS.md`](../../../AGENTS.md) та [`tests/tools/test_device.py`](../../../tests/tools/test_device.py).
    - Нагадай безпечний порядок від'єднання: **1) Від'єднати USB Pico → 2) Вимкнути живлення плати → 3) Відпаяти 5 дротів (або зняти з пого-пінів) і зібрати корпус**.

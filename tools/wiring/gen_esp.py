@@ -22,7 +22,7 @@ PADS = {38 - i: (PX_X, (_GAPS[i] + _GAPS[i + 1]) / 2) for i in range(14)}
 CROP = (1050, 120, 1462, 790)
 FONTS = "Inter, 'Segoe UI', Helvetica, Arial, 'DejaVu Sans', sans-serif"
 # wire colours = the ones actually soldered to the Pico on the bench
-C = {'tx': '#e3b81f', 'rx': '#e8802a', 'gnd': '#1c1f22', 'tmp': '#8e5bb5',
+C = {'tx': '#e3b81f', 'rx': '#e8802a', 'gnd': '#1c1f22',
      'ink': '#0f1720', 'mute': '#5b6875', 'line': '#c8d0d8'}
 
 
@@ -54,7 +54,7 @@ pad_xy = lambda n: (IMX + (PADS[n][0] - CROP[0]) * isc, IMY + (PADS[n][1] - CROP
 pico_pin = lambda n: PICO_PINS[n]
 
 
-def build(fname, title, subtitle, links, gpio0, cross_note, extra):
+def build(fname, title, subtitle, links, cross_note, extra):
     s = []; a = s.append
 
     def chip(x, y, text, fill, size=17, anchor='middle', fg=None):
@@ -82,7 +82,7 @@ def build(fname, title, subtitle, links, gpio0, cross_note, extra):
     # faint tick + number on every pad of the row, so the count is checkable
     for n in sorted(PADS):
         x, y = pad_xy(n)
-        hot = n in {l[1] for l in links} or n == gpio0
+        hot = n in {l[1] for l in links}
         if not hot:
             a(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5.5" fill="none" stroke="#ffffff" '
               'stroke-width="1.6" opacity="0.75"/>')
@@ -105,21 +105,6 @@ def build(fname, title, subtitle, links, gpio0, cross_note, extra):
         x, y = pad_xy(pad)
         a(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="12" fill="none" stroke="{col}" stroke-width="4"/>')
         chip(x - 20, y + 5, f'{pad}', col, size=15, anchor='end')
-
-    # GPIO0 -> GND: a held jumper, not a soldered wire
-    if gpio0:
-        gx, gy = pad_xy(gpio0)
-        a(f'<circle cx="{gx:.1f}" cy="{gy:.1f}" r="12" fill="none" stroke="{C["tmp"]}" '
-          'stroke-width="4" stroke-dasharray="5 4"/>')
-        chip(gx - 20, gy + 5, f'{gpio0}', C['tmp'], size=15, anchor='end')
-        ex = IMX + (1148 - CROP[0]) * isc          # a clear spot on the ESP shield
-        ey = IMY + (452 - CROP[1]) * isc
-        a(f'<path d="M{gx:.1f},{gy:.1f} C{gx+40:.1f},{gy-30:.1f} {ex+70:.1f},{ey+90:.1f} '
-          f'{ex:.1f},{ey:.1f}" fill="none" stroke="{C["tmp"]}" '
-          'stroke-width="5" stroke-dasharray="7 5" stroke-linecap="round"/>')
-        a(f'<circle cx="{ex:.1f}" cy="{ey:.1f}" r="13" fill="none" stroke="{C["tmp"]}" '
-          'stroke-width="4"/>')
-        chip(ex + 4, ey - 26, 'кришка ESP = GND', C['tmp'], size=15)
 
     a('<g filter="url(#sh)">')
     for _f in PICO_FRAG:
@@ -165,7 +150,6 @@ build('esp-uart0.svg',
       [(6, 34, C['tx'], -104, 'GP4 · жовтий|GP4 = UART TX → GPIO3 (RXD0)'),
        (7, 35, C['rx'],  104, 'GP5 · помаранч.|GP5 = UART RX → GPIO1 (TXD0)'),
        (8, 38, C['gnd'], -62, 'GND · чорний|GND · чорний · pin 8 → пад 38 (GND модуля)')],
-      None,
       ('#eaf6ee', '#a8cdb5', '#1f5c3a',
        '<tspan font-weight="700">Перехрестя тут потрібне:</tspan> Pico виступає хостом, '
        'а не ESP. TX Pico йде на RXD0, RX Pico — на TXD0.'),

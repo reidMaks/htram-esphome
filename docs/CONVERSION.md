@@ -93,11 +93,10 @@ make convert CONFIG=esphome/htram-9436b0.yaml
 
 ```bash
 uv sync
-cp esphome/secrets.yaml.example esphome/secrets.yaml   # заповнити повністю
 cd firmware/gd32 && make
 ```
 
-Потрібні також `arm-none-eabi-gcc`, `openocd` у системі. Що саме бракує —
+Потрібен також `arm-none-eabi-gcc` у системі. Що саме бракує —
 покаже `tools/convert.py --status`.
 
 ---
@@ -116,7 +115,7 @@ prep → probe → esp → dump → unlock → flash → verify
 Рейку живлення ESP32 гейтить `PB3`, і драйвить його GD32
 ([GD32_HARDWARE_MAP.md:349](GD32_HARDWARE_MAP.md:349)). Поки у GD32 стоїть
 заводська прошивка, ми маємо живий SWD-доступ до її GPIO і можемо програмно
-пересмикнути `PB3`/`PF7` через `pyocd` (`swd_power_cycle_esp()`), утримуючи
+пересмикнути `PB3`/`PF7` через `pyocd` (`swd_wait_for_esp_download_boot()`), утримуючи
 `PA1 = 0` (Output LOW), що автоматично переводить ESP32 у режим `Download Mode`
 (`boot:0x3`) без жодних перемичок на `GPIO0` і без маніпуляцій кнопкою `SW1`. Ба
 більше, наявність SWD під час етапу `esp` дозволяє одразу прив'язати прочитаний
@@ -143,9 +142,9 @@ MAC-адрес ESP32 до 96-бітного апаратного `UID` чипа 
 tools/convert.py --stage prep
 ```
 
-Перевіряє тулчейн, заповненість `secrets.yaml` (жодного `REPLACE_WITH`) і
-наявність `firmware/gd32/build/gd32_firmware.bin`; за потреби зібере прошивку.
-Заліза не торкається.
+Перевіряє тулчейн, створює `esphome/secrets.yaml` із шаблону (якщо його ще немає),
+автоматично збирає `firmware/gd32/build/gd32_firmware.bin` і пакує
+`firmware/gd32/build/flash_assets.bin`. Заліза не торкається.
 
 ### probe — одноразове підключення Pico та живлення
 
@@ -177,7 +176,7 @@ tools/convert.py --stage probe
 Перевіряє видимість `debugprobe`, наявність `/dev/ttyACM*` та відповідь ядра
 GD32 по SWD (`CPUID` через `-M attach`, не зупиняючи прошивку).
 
-### esp — UART0 і базовий ESPHome
+### esp — UART0 і прошивка ESPHome
 
 Джерело: [CUSTOM_FIRMWARE_SPEC.md:80](CUSTOM_FIRMWARE_SPEC.md:80) §3.1.
 
@@ -185,9 +184,10 @@ GD32 по SWD (`CPUID` через `-M attach`, не зупиняючи прош�
 tools/convert.py --stage esp
 ```
 
-1. Спершу тул компілює [`esphome/htram-base.yaml`](../esphome/htram-base.yaml).
+1. Спершу тул компілює повну автономну прошивку [`esphome/htram.yaml`](../esphome/htram.yaml)
+   (або переданий через `--config` іменований конфіг пристрою).
 2. Далі, якщо SWD уже підключений, `convert.py` **автоматично перезапускає
-   живлення ESP32 у режим Download Mode** через регістри GD32 (`swd_power_cycle_esp()`:
+   живлення ESP32 у режим Download Mode** через регістри GD32 (`swd_wait_for_esp_download_boot()`:
    зупиняє ядро GD32, переводить `PA2`/`PA3` у вхід для уникнення паразитного
    підживлення через ESD-діоди та brown-out засувки з
    [GD32_HARDWARE_MAP.md §6.6](GD32_HARDWARE_MAP.md#66-%D0%BA%D0%B5%D1%80%D1%83%D0%B2%D0%B0%D0%BD%D0%BD%D1%8F-%D0%B6%D0%B8%D0%B2%D0%BB%D0%B5%D0%BD%D0%BD%D1%8F%D0%BC--power-rails),
@@ -195,17 +195,18 @@ tools/convert.py --stage esp
    залишаючи **`PA1 = 0`**). Завдяки `PA1 = 0` ESP32 гарантовано стартує в режимі
    `boot:0x3 (DOWNLOAD_BOOT)` без жодної перемички на `GPIO0` (пад 25) і без натискань кнопки `SW1`.
 3. В одній сесії `esptool` записує `firmware.factory.bin` на швидкості 115200 бод,
-   читає MAC-адресу ESP32 і зберігає ім'я `htram-<mac6>.local` у
-   `tools/swd/factory/current-esp` **разом з 96-бітним UID чипа GD32**, після чого
-   відновлює нормальний запуск ESP32 (`PA1 = 1`).
+   читає MAC-адресу ESP32 і зберігає ім'я хоста у `tools/swd/factory/current-esp`
+   **разом з 96-бітним UID чипа GD32**, після чого відновлює нормальний запуск
+   ESP32 (`PA1 = 1`, перезапуск `PB3` та скидання GD32).
 
 Відпаювати дроти після цього етапу **не потрібно** — вони залишаються на місці
 до самого кінця конверсії (`verify`).
 
-> **Шиється базова прошивка (`htram-base.yaml`), а не індивідуальний конфіг.**
-> У неї нуль зовнішніх залежностей: шрифти вбудовані в LVGL, час із SNTP, жодної
-> сутності Home Assistant. Повний конфіг із погодою та асетами заливається потім
-> по OTA.
+> **За замовчуванням шиється повна автономна прошивка (`htram.yaml`).**
+> Вона не потребує Home Assistant, має вбудовану точку доступу `HTRAM Setup`
+> (QR-код на екрані), веб-інтерфейс, підтримку графічних асетів у SPI Flash та
+> 1-клік оновлення з GitHub. Для іменованого пристрою флоту передайте
+> `--config esphome/htram-9436b0.yaml`.
 
 ### dump — заводський образ GD32 (по SWD)
 
@@ -218,13 +219,12 @@ tools/convert.py --stage dump
 GD32 (`0x20000000`). Стаб знімає `CDBGPWRUPREQ` (`writedp 0x4 0x0`,
 GigaVulnerability #2), щоб контролер флешу `FMC` дозволив читання з-під `RDP1`
 тому коду, що виконується із SRAM, і передає всі 64 КБ (`0x08000000..0x0800FFFF`)
-блоками по 1 КБ через поштову скриньку в SRAM (`0x20000400`) безпосередньо по SWD
+блоками по 4 КБ через поштову скриньку в SRAM (`0x20000400`) безпосередньо по SWD
 (`TP16`/`TP17`) з перевіркою CRC-16/CCITT кожного блока та всього образу.
 
-- **Час виконання:** ~15 секунд (проти ~2 хвилин старим UART-дампером).
+- **Час виконання:** ~5 секунд (проти ~2 хвилин старим UART-дампером).
 - **Нуль перепаювань і нуль OTA-перепрошивок:** міжчиповий UART (`GPIO16`/`GPIO17`)
-  і проміжний конфіг `htram-quiet.yaml` більше не потрібні (старий шлях збережено
-  лише за прапорцем `--legacy-uart-dump`).
+  і проміжний конфіг `htram-quiet.yaml` більше не потрібні.
 
 Результат перевіряється структурно (64 КБ, початковий `SP` у межах SRAM,
 валідний вектор скидання) і одразу архівується в `tools/swd/factory/gd32-<uid>.bin`
