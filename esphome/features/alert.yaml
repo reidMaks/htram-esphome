@@ -1,14 +1,14 @@
 # HTRAM Feature: Повітряна тривога та загрози (Standalone Air Raid & Threat Alerts via JAAM Cloud WS)
 #
-# Надає інтеграцію з відкритим публічним хмарним сервером JAAM (ws.jaam.net.ua:80/data_fusion_v1, https://jaam.net.ua):
-# - 0 токенів / API ключів, відкритий WebSocket;
+# Надає інтеграцію з публічним сервісним API JAAM (ws.jaam.net.ua:80/data_service_v1, https://jaam.net.ua):
+# - Некомерційне використання (CC BY-NC 4.0) з обов'язковою ідентифікацією сервісу в пакеті hello;
 # - Отримання прапорців усіх типів загроз (повітряна, артобстріл, вуличні бої, хімічна, радіаційна,
 #   дрони, ракети, КАБи, балістика, вибухи, розвіддрони);
 # - Звукове сповіщення через диспетчер звуку з найвищим пріоритетом (SOUND_PRIO_ALERT = 40);
 # - Відображення піктограми найвищої за пріоритетом загрози у верхньому статусному слоті;
 # - Перефарбовування цифр годинника відповідно до типу тривоги та зелений колір при відбої;
 # - Індикатор втрати зв'язку з сервером тривог (ui_nolink);
-# - Збереження обраного регіону в NVS з можливістю зміни через веб-інтерфейс.
+# - Збереження обраного регіону та UUID екземпляра (client_id) у NVS.
 
 substitutions:
   alert_start_rtttl: "AlertOn:d=8,o=6,b=180:a,b,c7,16p,a,b,c7"
@@ -21,6 +21,11 @@ substitutions:
   alert_mark_minutes: "5"
   jaam_host: "ws.jaam.net.ua"
   jaam_port: "80"
+  jaam_service_id: "htram-esphome"
+  jaam_service_name: "HTRAM ESPHome"
+  jaam_website: "https://github.com/reidMaks/htram-esphome"
+  jaam_contact: "reid.maks@gmail.com"
+  firmware_version: "2.4.1"
 
 external_components:
   - source:
@@ -32,7 +37,12 @@ jaam_ws:
   id: jaam
   host: ${jaam_host}
   port: ${jaam_port}
-  path: "/data_fusion_v1"
+  path: "/data_service_v1"
+  service_id: ${jaam_service_id}
+  service_name: ${jaam_service_name}
+  website: ${jaam_website}
+  contact: ${jaam_contact}
+  version: ${firmware_version}
   region_id: 31
   on_flags:
     then:

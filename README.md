@@ -33,8 +33,8 @@ the time, and the front LED bar showing CO2 at a glance](docs/device-clock.jpg)
   commemoration with 60-second metronome beeps, national emblem (Tryzub)
   blitted from SPI Flash, and the State Anthem.
 - **Air raid alerts & threat tracking**: Real-time alerts powered by
-  [JAAM (jaam.net.ua)](https://jaam.net.ua) over its Fusion WebSocket API
-  (`ws.jaam.net.ua/data_fusion_v1`) — deliberately not through Home Assistant,
+  [JAAM (jaam.net.ua)](https://jaam.net.ua) over its public Service WebSocket API
+  (`ws.jaam.net.ua/data_service_v1`) — deliberately not through Home Assistant,
   which may be restarting exactly when it matters. Displays dedicated icons for
   threat types (missiles, drones, ballistic, guided aerial bombs / KAB,
   reconnaissance UAVs) and plays RTTTL audio alerts. Data:
