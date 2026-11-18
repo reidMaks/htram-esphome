@@ -13,7 +13,7 @@
 #ifdef USE_ESP_IDF
 #include <esp_random.h>
 
-#include "esphome/components/json/json_util.h"
+#include "esphome/core/preferences.h"
 #endif
 
 #ifdef USE_WIFI
@@ -24,6 +24,13 @@ namespace esphome {
 namespace jaam_ws {
 
 static const char* const TAG = "jaam_ws";
+
+static constexpr uint32_t CLIENT_ID_MAGIC = 0x4A41414Du;  // "JAAM"
+
+struct JaamClientIdStore {
+  uint32_t magic;
+  char uuid[37];
+};
 
 // Mapping of legacy indices (0..26) to modern JAAM regionId
 static const uint16_t LEGACY_TO_REGION_ID[27] = {
@@ -401,20 +408,112 @@ static inline uint16_t get_parent_state_id(uint16_t rid) {
   }
 }
 
-std::string JaamWsComponent::build_chip_id_message() const {
-  uint8_t mac[6] = {0};
-  get_mac_address_raw(mac);
-  char buf[32];
-  snprintf(buf, sizeof(buf), "chip_id:%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+static bool is_hex_char(char c) {
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+bool JaamWsComponent::is_valid_uuid(const char* s) {
+  if (s == nullptr || strlen(s) != 36)
+    return false;
+  for (size_t i = 0; i < 36; i++) {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (s[i] != '-')
+        return false;
+    } else if (!is_hex_char(s[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static std::string generate_uuid_v4() {
+  uint8_t b[16];
+#ifdef USE_ESP_IDF
+  esp_fill_random(b, sizeof(b));
+#else
+  for (size_t i = 0; i < sizeof(b); i++) {
+    b[i] = (uint8_t)(std::rand() & 0xFF);
+  }
+#endif
+  b[6] = (uint8_t)((b[6] & 0x0Fu) | 0x40u);  // RFC 4122 version 4
+  b[8] = (uint8_t)((b[8] & 0x3Fu) | 0x80u);  // RFC 4122 variant 1
+  char buf[37];
+  snprintf(buf, sizeof(buf), "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0], b[1], b[2],
+           b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
   return std::string(buf);
 }
 
-std::string JaamWsComponent::build_firmware_message() const {
+static void append_json_escaped(std::string& out, const std::string& val) {
+  for (unsigned char c : val) {
+    if (c < 0x20 || c == 0x7F)
+      continue;  // JAAM spec: no control characters or newlines inside hello fields
+    if (c == '"' || c == '\\')
+      out.push_back('\\');
+    out.push_back((char)c);
+  }
+}
+
+std::string JaamWsComponent::effective_version() const {
+  if (!this->version_.empty())
+    return this->version_;
 #ifdef ESPHOME_PROJECT_VERSION
-  return std::string("firmware:") + ESPHOME_PROJECT_VERSION;
+  return std::string(ESPHOME_PROJECT_VERSION);
 #else
-  return "firmware:HTRAM";
+  return "2.4.1";
 #endif
+}
+
+void JaamWsComponent::ensure_client_id() {
+  if (is_valid_uuid(this->client_id_.c_str()))
+    return;
+
+#ifdef USE_ESP_IDF
+  if (global_preferences != nullptr) {
+    ESPPreferenceObject pref = global_preferences->make_preference<JaamClientIdStore>(fnv1_hash("jaam_client_id_v1"));
+    JaamClientIdStore store{};
+    if (pref.load(&store) && store.magic == CLIENT_ID_MAGIC) {
+      store.uuid[sizeof(store.uuid) - 1] = '\0';
+      if (is_valid_uuid(store.uuid)) {
+        this->client_id_ = store.uuid;
+        ESP_LOGI(TAG, "Restored persistent JAAM client_id from NVS: %s", this->client_id_.c_str());
+        return;
+      }
+    }
+    this->client_id_ = generate_uuid_v4();
+    JaamClientIdStore new_store{};
+    new_store.magic = CLIENT_ID_MAGIC;
+    strncpy(new_store.uuid, this->client_id_.c_str(), sizeof(new_store.uuid) - 1);
+    if (pref.save(&new_store)) {
+      global_preferences->sync();
+      ESP_LOGI(TAG, "Generated and saved persistent JAAM client_id to NVS: %s", this->client_id_.c_str());
+    }
+    return;
+  }
+#endif
+  this->client_id_ = generate_uuid_v4();
+}
+
+const std::string& JaamWsComponent::get_client_id() {
+  this->ensure_client_id();
+  return this->client_id_;
+}
+
+std::string JaamWsComponent::build_hello_message() {
+  this->ensure_client_id();
+  std::string out = "hello:{\"service_id\":\"";
+  append_json_escaped(out, this->service_id_);
+  out += "\",\"client_id\":\"";
+  append_json_escaped(out, this->client_id_);
+  out += "\",\"name\":\"";
+  append_json_escaped(out, this->service_name_);
+  out += "\",\"website\":\"";
+  append_json_escaped(out, this->website_);
+  out += "\",\"contact\":\"";
+  append_json_escaped(out, this->contact_);
+  out += "\",\"version\":\"";
+  append_json_escaped(out, this->effective_version());
+  out += "\"}";
+  return out;
 }
 
 void JaamWsComponent::send_text(const char* msg) {
@@ -454,10 +553,22 @@ void JaamWsComponent::notify_session_ended() {
 }
 
 void JaamWsComponent::on_ws_rejected() {
-  ESP_LOGW(TAG, "Server rejected connection or closed with policy violation (1008); jumping to max backoff (300 s)");
+  ESP_LOGW(TAG, "Server rejected or closed connection with policy/block code; jumping to max backoff (%u s)",
+           (unsigned)(MAX_BACKOFF_MS / 1000u));
   this->penalty_max_backoff_ = true;
   this->reconnect_requested_ = true;
   this->session_ended_ = true;
+}
+
+void JaamWsComponent::on_ws_close_code(uint16_t close_code, const char* reason, size_t reason_len) {
+  if (reason != nullptr && reason_len > 0) {
+    ESP_LOGW(TAG, "JAAM server closed WebSocket: code=%u reason='%.*s'", (unsigned)close_code, (int)reason_len, reason);
+  } else {
+    ESP_LOGW(TAG, "JAAM server closed WebSocket: code=%u", (unsigned)close_code);
+  }
+  if (close_code == 1008 || close_code == 4403 || close_code == 4410) {
+    this->on_ws_rejected();
+  }
 }
 
 uint32_t JaamWsComponent::apply_jitter(uint32_t base_ms) const {
@@ -466,7 +577,9 @@ uint32_t JaamWsComponent::apply_jitter(uint32_t base_ms) const {
 #else
   const uint32_t r = (uint32_t)(std::rand() % 401);
 #endif
-  return (uint32_t)(((uint64_t)base_ms * (800u + r)) / 1000u);
+  const uint32_t raw_ms = (uint32_t)(((uint64_t)base_ms * (800u + r)) / 1000u);
+  const uint32_t rounded_ms = std::max<uint32_t>(2000u, ((raw_ms + 1000u) / 2000u) * 2000u);
+  return std::min(rounded_ms, MAX_BACKOFF_MS);
 }
 
 void JaamWsComponent::schedule_reconnect(uint32_t now_ms) {
@@ -521,34 +634,9 @@ void JaamWsComponent::update_flags_from_fusion() {
     this->flags_ = f;
     this->pending_ = true;
     ESP_LOGI(
-        TAG, "Fusion alert flags updated: 0x%04X (region %u [0x%04X], district %u [0x%04X], parent state %u [0x%04X])",
+        TAG, "Service alert flags updated: 0x%04X (region %u [0x%04X], district %u [0x%04X], parent state %u [0x%04X])",
         (unsigned)f, this->region_id_, flags_region, this->district_id_, flags_district, this->state_id_, flags_state);
   }
-}
-
-void JaamWsComponent::update_flags_from_upstream() {
-  uint32_t f = 0;
-  if (this->upstream_air_) {
-    f |= (1u << alert_bits::AIR_LEGACY);
-    if (this->upstream_missile_ || this->upstream_kab_ || this->upstream_ballistic_) {
-      f |= (1u << alert_bits::RED);
-    } else if (this->upstream_drone_) {
-      f |= (1u << alert_bits::YELLOW);
-    } else {
-      f |= (1u << alert_bits::RED);
-    }
-  }
-  if (this->upstream_drone_)
-    f |= (1u << alert_bits::DRONES);
-  if (this->upstream_missile_)
-    f |= (1u << alert_bits::MISSILES);
-  if (this->upstream_kab_)
-    f |= (1u << alert_bits::KABS);
-  if (this->upstream_ballistic_)
-    f |= (1u << alert_bits::BALLISTIC);
-
-  this->flags_ = f;
-  this->pending_ = true;
 }
 
 void JaamWsComponent::set_region_id(uint16_t rid) {
@@ -563,39 +651,17 @@ void JaamWsComponent::set_region_id(uint16_t rid) {
   this->flags_ = 0xFFFFFFFF;
   ESP_LOGI(TAG, "Alert region configured: region_id=%u, district_id=%u, parent_state_id=%u", this->region_id_,
            this->district_id_, this->state_id_);
-
-  if (this->is_fusion_mode()) {
-    this->update_flags_from_fusion();
-  }
+  this->update_flags_from_fusion();
 }
 
 void JaamWsComponent::set_region_index(int idx) {
   this->region_index_ = idx;
   if (idx >= 30) {
-    // Already modern region_id
     this->set_region_id((uint16_t)idx);
     return;
   }
-  if (this->is_fusion_mode()) {
-    if (idx >= 0 && idx < 27) {
-      this->set_region_id(LEGACY_TO_REGION_ID[idx]);
-    }
-    return;
-  }
-
-  // Upstream /data_v4 legacy mode
-  if (idx >= 0 && idx < 32) {
-    this->upstream_air_ = (this->alerts_status_[idx] > 0);
-    this->upstream_drone_ = (this->drones_status_[idx] > 0);
-    this->upstream_missile_ = (this->missiles_status_[idx] > 0);
-    this->upstream_kab_ = (this->kabs_status_[idx] > 0);
-    this->reported_ = 0xFFFFFFFF;
-    this->update_flags_from_upstream();
-#ifdef USE_ESP_IDF
-    if (this->connected_ && this->is_upstream_mode()) {
-      this->send_text("user_info:{\"legacy\":0}");
-    }
-#endif
+  if (idx >= 0 && idx < 27) {
+    this->set_region_id(LEGACY_TO_REGION_ID[idx]);
   }
 }
 
@@ -691,6 +757,10 @@ void JaamWsComponent::parse_binary_packet(const uint8_t* data, size_t len) {
       uint16_t flags16 = (uint16_t)ptr[2] | ((uint16_t)ptr[3] << 8);
       ptr += 4;
 
+      // JAAM spec: flags = 0 in 0xA2 is NOT an all-clear and not an active event
+      if (flags16 == 0)
+        continue;
+
       if (rid == this->region_id_) {
         this->notif_flags_region_ |= flags16;
         matched = true;
@@ -710,16 +780,8 @@ void JaamWsComponent::parse_binary_packet(const uint8_t* data, size_t len) {
       this->notif_expires_ms_ = (now + NOTIF_TTL_MS == 0) ? 1 : (now + NOTIF_TTL_MS);
       this->update_flags_from_fusion();
     }
-  } else if (type == 0xA3 || type == 0xA4) {
-    if (((len - 1) % 3) != 0)
-      return;
-  } else if (type == 0xA5) {
-    if (((len - 1) % 4) != 0)
-      return;
-  } else if (type == 0xA6 || type == 0xA7) {
-    if (((len - 1) % 5) != 0)
-      return;
   }
+  // Unknown packet types are silently ignored per JAAM /data_service_v1 spec.
 }
 
 #ifdef USE_ESP_IDF
@@ -729,20 +791,11 @@ static void ws_event_handler(void* arg, esp_event_base_t base, int32_t id, void*
   auto* ev = static_cast<esp_websocket_event_data_t*>(data);
   switch (id) {
     case WEBSOCKET_EVENT_CONNECTED: {
-      ESP_LOGI(TAG, "Connected to JAAM alert server");
+      ESP_LOGI(TAG, "Connected to JAAM service WebSocket");
       self->on_ws_connected();
-      const std::string chip_msg = self->build_chip_id_message();
-      const std::string fw_msg = self->build_firmware_message();
-      if (self->is_fusion_mode()) {
-        self->clear_fusion_state();
-        self->send_text(chip_msg.c_str());
-        self->send_text(fw_msg.c_str());
-        self->send_text("user_info:{\"chip\":\"ESP32\"}");
-      } else if (self->is_upstream_mode()) {
-        self->send_text(chip_msg.c_str());
-        self->send_text(fw_msg.c_str());
-        self->send_text("user_info:{\"legacy\":0}");
-      }
+      self->clear_fusion_state();
+      const std::string hello_msg = self->build_hello_message();
+      self->send_text(hello_msg.c_str());
       break;
     }
     case WEBSOCKET_EVENT_ERROR:
@@ -763,16 +816,14 @@ static void ws_event_handler(void* arg, esp_event_base_t base, int32_t id, void*
       if (ev->op_code == 0x08) {  // Close control frame
         if (ev->data_ptr != nullptr && ev->data_len >= 2) {
           const uint16_t close_code = ((uint16_t)(uint8_t)ev->data_ptr[0] << 8) | (uint16_t)(uint8_t)ev->data_ptr[1];
-          if (close_code == 1008) {
-            self->on_ws_rejected();
-          }
+          const char* reason = (ev->data_len > 2) ? (ev->data_ptr + 2) : nullptr;
+          const size_t reason_len = (ev->data_len > 2) ? (size_t)(ev->data_len - 2) : 0;
+          self->on_ws_close_code(close_code, reason, reason_len);
         }
         self->notify_session_ended();
       } else if (ev->op_code == 0x02 || ev->op_code == 0x00) {
         self->on_ws_binary(reinterpret_cast<const uint8_t*>(ev->data_ptr), ev->data_len, ev->payload_offset,
                            ev->payload_len, ev->fin);
-      } else if (ev->op_code == 0x01 && ev->data_len > 0) {
-        self->on_ws_data(ev->data_ptr, ev->data_len);
       }
       break;
     default:
@@ -784,10 +835,14 @@ void JaamWsComponent::start_client() {
   if (this->client_ != nullptr)
     return;
 
+  this->ensure_client_id();
+
   std::string uri = "ws://" + this->host_ + ":" + std::to_string(this->port_) + this->path_;
+  std::string user_agent = this->service_id_ + "/" + this->effective_version();
 
   esp_websocket_client_config_t cfg = {};
   cfg.uri = uri.c_str();
+  cfg.user_agent = user_agent.c_str();
   cfg.network_timeout_ms = 10000;
   // JAAM server pings every 20s; do not send client pings more often than 20s.
   cfg.ping_interval_sec = 45;
@@ -814,8 +869,9 @@ void JaamWsComponent::start_client() {
     this->stop_client();
     this->schedule_reconnect(millis());
   } else {
-    ESP_LOGI(TAG, "Connecting to %s (region_id=%u, district_id=%u, parent_state_id=%u)", uri.c_str(), this->region_id_,
-             this->district_id_, this->state_id_);
+    ESP_LOGI(TAG, "Connecting to %s (service_id=%s, client_id=%s, region_id=%u, district_id=%u, parent_state_id=%u)",
+             uri.c_str(), this->service_id_.c_str(), this->client_id_.c_str(), this->region_id_, this->district_id_,
+             this->state_id_);
   }
 }
 
@@ -833,122 +889,21 @@ void JaamWsComponent::restart_client() {
 }
 
 void JaamWsComponent::setup() {
+  this->ensure_client_id();
   // Initial connection starts in loop() as soon as Wi-Fi is connected.
 }
 
-void JaamWsComponent::on_ws_data(const char* data, size_t len) {
-  this->rx_buf_.append(data, len);
-
-  bool parsed = json::parse_json(this->rx_buf_, [this](JsonObject root) -> bool {
-    // 1. Direct local home_alert_flags mode
-    if (!root["home_alert_flags"].isNull()) {
-      const char* type = root["type"];
-      if (type == nullptr || strcmp(type, "initial_state") == 0 || strcmp(type, "home_alert_change") == 0) {
-        this->flags_ = root["home_alert_flags"].as<uint32_t>();
-        this->pending_ = true;
-        return true;
-      }
-    }
-
-    // 2. Upstream data_v4 payloads
-    const char* payload = root["payload"];
-    if (payload != nullptr) {
-      bool changed = false;
-      const int idx = this->region_index_;
-
-      if (strcmp(payload, "alerts") == 0 && !root["alerts"].isNull()) {
-        JsonArrayConst arr = root["alerts"];
-        for (size_t i = 0; i < arr.size() && i < 32; i++) {
-          int status = arr[i][0].as<int>();
-          this->alerts_status_[i] = (status > 0) ? 1 : 0;
-        }
-        if (idx >= 0 && idx < 32) {
-          bool air = (this->alerts_status_[idx] > 0);
-          if (this->upstream_air_ != air) {
-            this->upstream_air_ = air;
-            changed = true;
-          }
-        }
-      } else if ((strcmp(payload, "drones") == 0 || strcmp(payload, "drones2") == 0) && !root["drones"].isNull()) {
-        JsonArrayConst arr = root["drones"];
-        for (size_t i = 0; i < arr.size() && i < 32; i++) {
-          bool drone = false;
-          if (arr[i].is<JsonArrayConst>()) {
-            drone = arr[i][0].as<int>() > 0;
-          } else {
-            drone = arr[i].as<int>() > 0;
-          }
-          this->drones_status_[i] = drone ? 1 : 0;
-        }
-        if (idx >= 0 && idx < 32) {
-          bool drone = (this->drones_status_[idx] > 0);
-          if (this->upstream_drone_ != drone) {
-            this->upstream_drone_ = drone;
-            changed = true;
-          }
-        }
-      } else if ((strcmp(payload, "missiles") == 0 || strcmp(payload, "missiles2") == 0) &&
-                 !root["missiles"].isNull()) {
-        JsonArrayConst arr = root["missiles"];
-        for (size_t i = 0; i < arr.size() && i < 32; i++) {
-          bool missile = false;
-          if (arr[i].is<JsonArrayConst>()) {
-            missile = arr[i][0].as<int>() > 0;
-          } else {
-            missile = arr[i].as<int>() > 0;
-          }
-          this->missiles_status_[i] = missile ? 1 : 0;
-        }
-        if (idx >= 0 && idx < 32) {
-          bool missile = (this->missiles_status_[idx] > 0);
-          if (this->upstream_missile_ != missile) {
-            this->upstream_missile_ = missile;
-            changed = true;
-          }
-        }
-      } else if (strcmp(payload, "kabs") == 0 && !root["kabs"].isNull()) {
-        JsonArrayConst arr = root["kabs"];
-        for (size_t i = 0; i < arr.size() && i < 32; i++) {
-          this->kabs_status_[i] = (arr[i].as<int>() > 0) ? 1 : 0;
-        }
-        if (idx >= 0 && idx < 32) {
-          bool kab = (this->kabs_status_[idx] > 0);
-          if (this->upstream_kab_ != kab) {
-            this->upstream_kab_ = kab;
-            changed = true;
-          }
-        }
-      } else if (strcmp(payload, "global") == 0) {
-        if (!root["ballistic_missiles"].isNull()) {
-          bool ballistic = root["ballistic_missiles"].as<bool>();
-          if (this->upstream_ballistic_ != ballistic) {
-            this->upstream_ballistic_ = ballistic;
-            changed = true;
-          }
-        }
-      }
-
-      if (changed) {
-        this->update_flags_from_upstream();
-      }
-      return true;
-    }
-
-    return true;
-  });
-
-  if (parsed || this->rx_buf_.size() > 8192)
-    this->rx_buf_.clear();
-}
 #else
 
 // Host / Simulation mode
 void JaamWsComponent::setup() {
-  ESP_LOGI(TAG, "JAAM WS initialized in simulation mode (Host)");
+  this->ensure_client_id();
+  ESP_LOGI(TAG, "JAAM WS initialized in simulation mode (Host, client_id=%s)", this->client_id_.c_str());
   this->on_ws_connected();
 }
 
 void JaamWsComponent::start_client() {
+  this->ensure_client_id();
   this->on_ws_connected();
 }
 
@@ -959,11 +914,6 @@ void JaamWsComponent::stop_client() {
 void JaamWsComponent::restart_client() {
   this->stop_client();
   this->start_client();
-}
-
-void JaamWsComponent::on_ws_data(const char* data, size_t len) {
-  (void)data;
-  (void)len;
 }
 #endif
 
@@ -976,9 +926,7 @@ void JaamWsComponent::loop() {
     this->notif_flags_region_ = 0;
     this->notif_flags_district_ = 0;
     this->notif_flags_state_ = 0;
-    if (this->is_fusion_mode()) {
-      this->update_flags_from_fusion();
-    }
+    this->update_flags_from_fusion();
   }
 
 #ifdef USE_ESP_IDF
@@ -1036,8 +984,9 @@ void JaamWsComponent::loop() {
 }
 
 void JaamWsComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "JAAM alert server:");
+  ESP_LOGCONFIG(TAG, "JAAM alert service client:");
   ESP_LOGCONFIG(TAG, "  Host: %s:%u%s", this->host_.c_str(), this->port_, this->path_.c_str());
+  ESP_LOGCONFIG(TAG, "  Service ID: %s (client_id: %s)", this->service_id_.c_str(), this->client_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Region ID: %u (district: %u, parent state: %u)", this->region_id_, this->district_id_,
                 this->state_id_);
   ESP_LOGCONFIG(TAG, "  Connected: %s", YESNO(this->connected_));

@@ -1274,19 +1274,44 @@ void test_setup_and_dump_config(void) {
 }
 
 // ---------------------------------------------------------------------------
-// 16. JAAM WebSocket Server API Compliance Tests
+// 16. JAAM WebSocket Service API (/data_service_v1) Compliance Tests
 // ---------------------------------------------------------------------------
-void test_jaam_ws_handshake_chip_id_and_firmware(void) {
+void test_jaam_ws_hello_handshake_and_uuid_persistence(void) {
   JaamWsComponent ws;
-  uint8_t custom_mac[6] = {0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6};
-  std::memcpy(esphome::mock_mac_address, custom_mac, 6);
+  TEST_ASSERT_EQUAL_STRING("/data_service_v1", ws.get_path().c_str());
 
-  std::string chip_msg = ws.build_chip_id_message();
-  TEST_ASSERT_EQUAL_STRING("chip_id:A1B2C3D4E5F6", chip_msg.c_str());
+  // Generated client_id must be a valid RFC 4122 v4 UUID (8-4-4-4-12) and remain stable across calls/reconnects
+  std::string cid1 = ws.get_client_id();
+  TEST_ASSERT_TRUE(JaamWsComponent::is_valid_uuid(cid1.c_str()));
+  TEST_ASSERT_EQUAL_CHAR('4', cid1[14]);
+  TEST_ASSERT_TRUE(cid1[19] == '8' || cid1[19] == '9' || cid1[19] == 'a' || cid1[19] == 'b');
 
-  std::string fw_msg = ws.build_firmware_message();
-  TEST_ASSERT_EQUAL_INT(0, strncmp(fw_msg.c_str(), "firmware:", 9));
-  TEST_ASSERT_TRUE(fw_msg.size() > 9);
+  ws.restart_client();
+  std::string cid2 = ws.get_client_id();
+  TEST_ASSERT_EQUAL_STRING(cid1.c_str(), cid2.c_str());
+
+  // Validate invalid UUID rejection
+  TEST_ASSERT_FALSE(JaamWsComponent::is_valid_uuid(""));
+  TEST_ASSERT_FALSE(JaamWsComponent::is_valid_uuid("A1B2C3D4E5F6"));
+  TEST_ASSERT_FALSE(JaamWsComponent::is_valid_uuid("3f9c2a7e_1b4d_4c8e_9a52_7d0e6f1b2c33"));
+
+  // Verify exact hello:<JSON> payload with all 6 required fields
+  ws.set_client_id("3f9c2a7e-1b4d-4c8e-9a52-7d0e6f1b2c33");
+  ws.set_service_id("htram-esphome");
+  ws.set_service_name("HTRAM ESPHome");
+  ws.set_website("https://github.com/reidMaks/htram-esphome");
+  ws.set_contact("reid.maks@gmail.com");
+  ws.set_version("2.4.0");
+
+  std::string hello = ws.build_hello_message();
+  const char* expected =
+      "hello:{\"service_id\":\"htram-esphome\","
+      "\"client_id\":\"3f9c2a7e-1b4d-4c8e-9a52-7d0e6f1b2c33\","
+      "\"name\":\"HTRAM ESPHome\","
+      "\"website\":\"https://github.com/reidMaks/htram-esphome\","
+      "\"contact\":\"reid.maks@gmail.com\","
+      "\"version\":\"2.4.0\"}";
+  TEST_ASSERT_EQUAL_STRING(expected, hello.c_str());
 }
 
 void test_jaam_ws_0xa1_hash_chain_and_malformed_frames(void) {
@@ -1391,6 +1416,14 @@ void test_jaam_ws_0xa2_notifications_ttl(void) {
   TEST_ASSERT_TRUE(ws.is_ballistic());
   TEST_ASSERT_TRUE(ws.is_explosion());
 
+  // Receive 0xA2 with flags = 0 for region 31 -> must NOT clear active notifications (flags=0 is not an all-clear in
+  // 0xA2)
+  uint8_t notif_zero[] = {0xA2, 31, 0x00, 0x00, 0x00};
+  ws.on_ws_binary(notif_zero, sizeof(notif_zero), 0, sizeof(notif_zero), true);
+  ws.loop();
+  TEST_ASSERT_TRUE(ws.is_ballistic());
+  TEST_ASSERT_TRUE(ws.is_explosion());
+
   // Advance time past NOTIF_TTL_MS (180s) -> notifications expire automatically
   mock_esphome_millis += JaamWsComponent::NOTIF_TTL_MS + 1000;
   ws.loop();
@@ -1421,13 +1454,13 @@ void test_jaam_ws_all_threat_bits(void) {
   TEST_ASSERT_TRUE(ws.is_nuclear());
 }
 
-void test_jaam_ws_exponential_backoff_jitter_and_1008_penalty(void) {
+void test_jaam_ws_exponential_backoff_jitter_and_close_penalties(void) {
   mock_esphome_millis = 1000;
   JaamWsComponent ws;
   ws.setup();
 
-  // Expected base progression: 5s -> 10s -> 20s -> 40s -> 80s -> 160s -> 300s -> 300s
-  const uint32_t expected_bases[] = {5000, 10000, 20000, 40000, 80000, 160000, 300000, 300000};
+  // Expected base progression per JAAM /data_service_v1 spec: 4s -> 8s -> 16s -> 32s -> 64s -> 128s -> 128s
+  const uint32_t expected_bases[] = {4000, 8000, 16000, 32000, 64000, 128000, 128000};
   for (size_t i = 0; i < sizeof(expected_bases) / sizeof(expected_bases[0]); i++) {
     uint32_t base = expected_bases[i];
     TEST_ASSERT_EQUAL_UINT32(base, ws.backoff_base_ms());
@@ -1438,31 +1471,52 @@ void test_jaam_ws_exponential_backoff_jitter_and_1008_penalty(void) {
     ws.loop();
 
     uint32_t scheduled_wait = ws.next_reconnect_ms() - mock_esphome_millis;
-    TEST_ASSERT_TRUE(scheduled_wait >= (base * 80) / 100);
-    TEST_ASSERT_TRUE(scheduled_wait <= (base * 120) / 100);
+    // Must be rounded to a multiple of 2 s (2000 ms) and never exceed MAX_BACKOFF_MS (128000 ms)
+    TEST_ASSERT_EQUAL_UINT32(0, scheduled_wait % 2000);
+    TEST_ASSERT_TRUE(scheduled_wait <= JaamWsComponent::MAX_BACKOFF_MS);
+    uint32_t min_expected = std::max<uint32_t>(2000, (((base * 80) / 100 + 1000) / 2000) * 2000);
+    TEST_ASSERT_TRUE(scheduled_wait >= min_expected);
 
     // Reconnect starts
     mock_esphome_millis = ws.next_reconnect_ms();
     ws.start_client();
   }
 
-  // Now simulate a stable connection lasting >= 60s (e.g., 65s) -> resets backoff to 5s!
+  // Simulate a stable connection lasting >= 60s (e.g., 65s) -> resets backoff to 4s!
   mock_esphome_millis += 65000;
   ws.notify_session_ended();
   ws.loop();
   uint32_t reset_wait = ws.next_reconnect_ms() - mock_esphome_millis;
-  TEST_ASSERT_TRUE(reset_wait >= 4000 && reset_wait <= 6000);
-  TEST_ASSERT_EQUAL_UINT32(10000, ws.backoff_base_ms());
+  TEST_ASSERT_EQUAL_UINT32(0, reset_wait % 2000);
+  TEST_ASSERT_TRUE(reset_wait >= 2000 && reset_wait <= 6000);
+  TEST_ASSERT_EQUAL_UINT32(8000, ws.backoff_base_ms());
 
-  // Now simulate server policy violation (close code 1008) even after >60s -> jumps to max 300s!
+  // Simulate server close code 1008 (bad_hello / ip_blocked) even after >60s -> jumps to max 128s (102..128s)!
   mock_esphome_millis = ws.next_reconnect_ms();
   ws.start_client();
   mock_esphome_millis += 120000;
-  ws.on_ws_rejected();
+  ws.on_ws_close_code(1008, "bad_hello:contact", 17);
   ws.loop();
   uint32_t penalty_wait = ws.next_reconnect_ms() - mock_esphome_millis;
-  TEST_ASSERT_TRUE(penalty_wait >= 240000 && penalty_wait <= 360000);
-  TEST_ASSERT_EQUAL_UINT32(300000, ws.backoff_base_ms());
+  TEST_ASSERT_TRUE(penalty_wait >= 102000 && penalty_wait <= 128000);
+  TEST_ASSERT_EQUAL_UINT32(128000, ws.backoff_base_ms());
+
+  // Reset via 65s stable session, then verify close code 4403 (service_blocked) also jumps to max 128s!
+  mock_esphome_millis = ws.next_reconnect_ms();
+  ws.start_client();
+  mock_esphome_millis += 65000;
+  ws.notify_session_ended();
+  ws.loop();
+  TEST_ASSERT_EQUAL_UINT32(8000, ws.backoff_base_ms());
+
+  mock_esphome_millis = ws.next_reconnect_ms();
+  ws.start_client();
+  mock_esphome_millis += 5000;
+  ws.on_ws_close_code(4403, "service_blocked", 15);
+  ws.loop();
+  uint32_t blocked_wait = ws.next_reconnect_ms() - mock_esphome_millis;
+  TEST_ASSERT_TRUE(blocked_wait >= 102000 && blocked_wait <= 128000);
+  TEST_ASSERT_EQUAL_UINT32(128000, ws.backoff_base_ms());
 }
 
 int main(void) {
@@ -1497,10 +1551,10 @@ int main(void) {
   RUN_TEST(test_execute_assets_upload_success);
   RUN_TEST(test_assets_web_handler);
   RUN_TEST(test_setup_and_dump_config);
-  RUN_TEST(test_jaam_ws_handshake_chip_id_and_firmware);
+  RUN_TEST(test_jaam_ws_hello_handshake_and_uuid_persistence);
   RUN_TEST(test_jaam_ws_0xa1_hash_chain_and_malformed_frames);
   RUN_TEST(test_jaam_ws_0xa2_notifications_ttl);
   RUN_TEST(test_jaam_ws_all_threat_bits);
-  RUN_TEST(test_jaam_ws_exponential_backoff_jitter_and_1008_penalty);
+  RUN_TEST(test_jaam_ws_exponential_backoff_jitter_and_close_penalties);
   return UNITY_END();
 }

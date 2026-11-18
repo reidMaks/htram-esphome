@@ -51,7 +51,7 @@ The **HTRAM Standalone-First Transition** fundamentally reframes the device from
 1. **Zero Mandatory External Hub**: Functions 100% out of the box without requiring a Home Assistant server, MQTT broker, or vendor cloud account.
 2. **Direct Edge Cloud Connectivity**: Connects directly to public, open services:
    - **Open-Meteo REST API** over raw HTTP (port 80) for weather forecasts without TLS overhead or API tokens.
-   - **JAAM Cloud WebSocket Fusion v1** (`ws://ws.jaam.net.ua:80/data_fusion_v1`) for real-time national air raid alerts and threat differentiation.
+   - **JAAM Cloud WebSocket Service v1** (`ws://ws.jaam.net.ua:80/data_service_v1`) for real-time national air raid alerts and threat differentiation.
    - **Public SNTP Pool** (`time.google.com`, `pool.ntp.org`) for timezone-aware (`Europe/Kyiv`) POSIX system time.
 3. **Out-of-the-Box Experience (OOBE)**: If unconfigured, the device autonomously spawns a Wi-Fi Access Point (`HTRAM Setup`), renders an on-screen dynamic QR code, and serves an embedded Captive Portal.
 4. **Resilience & Uninterruptible Operation**: In the event of network disruption or router failure, the device maintains continuous local RTC timekeeping, continues sensor polling, disables reboot loops (`reboot_timeout: 0s`), and isolates the status warning indicator (`!`) exclusively to network reachability.
@@ -207,7 +207,7 @@ To ensure product ergonomics, software behavior, and error handling align with r
                                              ▼
                                [Revert to Neutral White #F0EAE0]
 ```
-1. **Direct Fusion Stream:** The embedded `jaam_ws` client maintains an active connection to `ws://ws.jaam.net.ua:80/data_fusion_v1`.
+1. **Direct Service Stream:** The embedded `jaam_ws` client maintains an active connection to `ws://ws.jaam.net.ua:80/data_service_v1`.
 2. **Dual-Stream Binary Processing:** The component parses 0xA1 (bulk snapshot for 1400 regions) and 0xA2 (incremental event pushes) without heap allocations.
 3. **District & Oblast Hierarchy:** Threat flags from the user's specific district (`region_id`) are fused with parent oblast flags (`state_id`) to ensure full territorial coverage.
 4. **Differentiated Visual Threat Levels:**
