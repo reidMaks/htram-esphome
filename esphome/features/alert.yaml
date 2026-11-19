@@ -21,6 +21,10 @@ substitutions:
   alert_mark_minutes: "5"
   jaam_host: "ws.jaam.net.ua"
   jaam_port: "80"
+  alert_icon_x: "190"
+  alert_icon_y: "86"
+  alert_nolink_x: "209"
+  alert_nolink_y: "209"
 
 external_components:
   - source:
@@ -33,7 +37,7 @@ jaam_ws:
   host: ${jaam_host}
   port: ${jaam_port}
   path: "/data_fusion_v1"
-  region_id: 31
+  region_id: 13
   on_flags:
     then:
       - lambda: |-
@@ -143,7 +147,7 @@ globals:
   - id: alert_region
     type: int
     restore_value: true
-    initial_value: "31" # За замовчуванням м. Київ (region_id 31 у JAAM)
+    initial_value: "13" # Івано-Франківська область у JAAM
   - id: alert_active
     type: bool
     restore_value: false
@@ -213,6 +217,10 @@ globals:
     restore_value: false
     initial_value: "0xE5484D"
   - id: alert_nolink_drawn
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: alert_led_held
     type: bool
     restore_value: false
     initial_value: "false"
@@ -318,18 +326,46 @@ script:
           }
 
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
-          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          const bool dashboard_threat_icon = ${dashboard_mode} && has_icon;
+          const bool can_show = !dashboard_threat_icon && is_top &&
+                                (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show) {
             if (id(alert_icon_drawn_asset) >= 0 && id(alert_icon_drawn_asset) != (int) asset_id) {
-              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
+              id(htram_core)->send_clear_cached_asset_centered(
+                  (uint16_t) id(alert_icon_drawn_asset), ${alert_icon_x}, ${alert_icon_y});
             }
             id(htram_core)->send_draw_cached_asset_centered(
-                asset_id, 190, 86, Color((uint32_t) id(alert_icon_color)), Color(0x000000), 1);
+                asset_id, ${alert_icon_x}, ${alert_icon_y},
+                Color((uint32_t) id(alert_icon_color)), Color(0x000000), 1);
             id(alert_icon_drawn_asset) = (int) asset_id;
           } else if (id(alert_icon_drawn_asset) >= 0) {
-            id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
+            id(htram_core)->send_clear_cached_asset_centered(
+                (uint16_t) id(alert_icon_drawn_asset), ${alert_icon_x}, ${alert_icon_y});
             id(alert_icon_drawn_asset) = -1;
           }
+
+  - id: refresh_alert_led
+    then:
+      - lambda: |-
+          const bool active = id(alert_active) || id(alert_yellow) || id(alert_drone) ||
+                              id(alert_missile) || id(alert_ballistic) || id(alert_kab) ||
+                              id(alert_artillery) || id(alert_urban) || id(alert_chemical) ||
+                              id(alert_nuclear) || id(alert_explosion) || id(alert_recon);
+          if (!active) {
+            if (id(alert_led_held)) {
+              id(alert_led_held) = false;
+              id(htram_arbiter_hub)->release_leds("alert");
+              id(refresh_leds).execute();
+            }
+            return;
+          }
+
+          id(alert_led_held) = true;
+          const bool yellow = id(alert_yellow);
+          const bool blink_on = ((millis() / 500) & 1u) == 0;
+          id(htram_arbiter_hub)->set_leds(
+              20, "alert",
+              blink_on && !yellow, blink_on && yellow, 0, 0);
 
   - id: refresh_alert_marks
     then:
@@ -362,11 +398,13 @@ script:
       - lambda: |-
           if (face != 0) {
             if (id(alert_icon_drawn_asset) >= 0) {
-              id(htram_core)->send_clear_cached_asset_centered((uint16_t) id(alert_icon_drawn_asset), 190, 86);
+              id(htram_core)->send_clear_cached_asset_centered(
+                  (uint16_t) id(alert_icon_drawn_asset), ${alert_icon_x}, ${alert_icon_y});
               id(alert_icon_drawn_asset) = -1;
             }
             if (id(alert_nolink_drawn)) {
-              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_ALERT_SMALL, 209, 209);
+              id(htram_core)->send_clear_cached_asset_centered(
+                  htram_gd32::ASSET_ID_ALERT_SMALL, ${alert_nolink_x}, ${alert_nolink_y});
               id(alert_nolink_drawn) = false;
             }
           } else {
@@ -377,10 +415,11 @@ script:
     then:
       - lambda: |-
           const bool is_top = (id(htram_arbiter_hub)->get_top_status_icon_owner() == "alert");
-          const bool can_show = is_top && (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
+          const bool can_show = !${dashboard_mode} && is_top &&
+                                (id(htram_arbiter_hub)->get_screen_mode() == 0) && !id(slot_hold);
           if (can_show && id(alert_icon_drawn_asset) >= 0) {
             id(htram_core)->send_draw_cached_asset_centered(
-                (uint16_t) id(alert_icon_drawn_asset), 190, 86,
+                (uint16_t) id(alert_icon_drawn_asset), ${alert_icon_x}, ${alert_icon_y},
                 Color((uint32_t) id(alert_icon_color)), Color(0x000000), 1);
           }
 
@@ -410,12 +449,17 @@ interval:
             id(alert_nolink_drawn) = lost;
             if (lost) {
               id(htram_core)->send_draw_cached_asset_centered(
-                  htram_gd32::ASSET_ID_ALERT_SMALL, 209, 209, Color(0x707880), Color(0x000000), 1);
+                  htram_gd32::ASSET_ID_ALERT_SMALL, ${alert_nolink_x}, ${alert_nolink_y},
+                  Color(0x707880), Color(0x000000), 1);
             } else {
               id(htram_core)->send_clear_cached_asset_centered(
-                  htram_gd32::ASSET_ID_ALERT_SMALL, 209, 209);
+                  htram_gd32::ASSET_ID_ALERT_SMALL, ${alert_nolink_x}, ${alert_nolink_y});
             }
           }
+
+  - interval: 250ms
+    then:
+      - script.execute: refresh_alert_led
 
 esphome:
   on_boot:
@@ -430,3 +474,4 @@ esphome:
             active: !lambda "return id(alert_active);"
         - script.execute: refresh_alert_icon
         - script.execute: refresh_alert_marks
+        - script.execute: refresh_alert_led

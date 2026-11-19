@@ -15,6 +15,7 @@ MYPY         := $(VENV)/bin/mypy
 YAMLLINT     := $(VENV)/bin/yamllint
 CLANG_FORMAT := $(VENV)/bin/clang-format
 CLANG_TIDY   := $(VENV)/bin/clang-tidy
+SIM_DOCKER_IMAGE := htram-esphome-sim
 
 UNITY_DIR    := tests/vendor/unity
 MOCKS_DIR    := tests/mocks
@@ -44,6 +45,7 @@ TEST_BIN_ESPHOME  := $(TEST_DIR)/test_htram_gd32_bin
         ota-esp ota-esp-all ota-all update-all ota-gd32-all flash-assets-all status-all \
         device device-silence device-status device-beep \
         container-build container-run container-stop \
+        sim-docker-image preview-dashboard-docker \
         remote-control-start remote-control-stop remote-control-status
 
 all: test
@@ -58,6 +60,7 @@ help:
 	@echo "  make test-standalone - Run Standalone-First 4-Tier E2E tests"
 	@echo "  make test-e2e      - Run Full Playwright Web & Simulator E2E tests"
 	@echo "  make test-sim      - Run Host Simulation feature tests (Unity/Harness)"
+	@echo "  make preview-dashboard-docker - Capture dashboard preview using cached Docker layers"
 	@echo "  make preview-ui    - Capture on-demand UI preview (Usage: make preview-ui [SCREEN=weather|clock|timer|alert|silence])"
 	@echo "  make inspect-ui    - Inspect UI screen geometry & bezel margins (Usage: make inspect-ui [IMAGE=path.png])"
 	@echo "  make lint          - Run all linters and static analyzers (C/C++, Python, YAML)"
@@ -182,6 +185,18 @@ IMAGE    ?= docs/screenshots/after_weather.png
 preview-ui:
 	@echo "==> Capturing on-demand UI preview for screen '$(SCREEN)'..."
 	uv run python3 tools/preview_ui.py capture $(SCREEN)
+
+sim-docker-image:
+	docker build -f Dockerfile.sim -t $(SIM_DOCKER_IMAGE) .
+
+preview-dashboard-docker: sim-docker-image
+	docker run --rm \
+		--volume "$(CURDIR):/workspace" \
+		--volume htram-esphome-sim-cache:/root/.cache/esphome \
+		--volume htram-esphome-platformio-cache:/root/.platformio \
+		--workdir /workspace \
+		$(SIM_DOCKER_IMAGE) \
+		python3 tools/preview_ui.py capture dashboard
 
 inspect-ui:
 	@echo "==> Inspecting UI geometry for '$(IMAGE)'..."

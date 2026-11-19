@@ -19,6 +19,14 @@ esphome:
   on_boot:
     - priority: 600
       then:
+        - lambda: |-
+            id(internet_last_sync_ms) = millis();
+        - sensor.template.publish:
+            id: sensor_batt_level
+            state: 72
+        - binary_sensor.template.publish:
+            id: sensor_usb
+            state: OFF
         - text_sensor.template.publish:
             id: device_id
             state: "sim001"
@@ -328,6 +336,10 @@ time:
   - platform: host
     id: net_time
     timezone: "Europe/Kyiv"
+    on_time_sync:
+      then:
+        - lambda: |-
+            id(internet_last_sync_ms) = millis();
 
 globals:
   - id: current_backlight_val
@@ -644,6 +656,26 @@ number:
             id(sensor_temp).publish_state(id(t_from_gd32) + x);
             id(refresh_slot).execute();
           }
+
+  - platform: template
+    name: "CO2 Yellow Threshold"
+    id: co2_thresh_yellow
+    unit_of_measurement: "ppm"
+    min_value: 600
+    max_value: 2500
+    step: 50
+    initial_value: 1000
+    optimistic: true
+
+  - platform: template
+    name: "CO2 Red Threshold"
+    id: co2_thresh_red
+    unit_of_measurement: "ppm"
+    min_value: 800
+    max_value: 5000
+    step: 50
+    initial_value: 1500
+    optimistic: true
 
 switch:
   - platform: template

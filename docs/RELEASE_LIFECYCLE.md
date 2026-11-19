@@ -44,7 +44,7 @@ Because HTRAM is a dual-chip system with coprocessor firmware and cached SPI Fla
 
 | Subsystem | Source Location | Tracking Mechanism | Example Artifact |
 | :--- | :--- | :--- | :--- |
-| **ESP32 Firmware** | `esphome/` | Git release tag (`v*`) & ESPHome version | `htram-standalone.bin` |
+| **ESP32 Firmware** | `esphome/` | Git release tag (`v*`) & ESPHome version | `htram-<room>.bin` and `htram-standalone.bin` |
 | **GD32 Coprocessor** | `firmware/gd32/` | `#define GD32_FW_VERSION` in `inc/protocol.h` | `gd32_firmware-v1.3.0.bin` |
 | **SPI Flash Assets** | `firmware/gd32/assets/`| CRC32 container checksum | `flash_assets.bin` |
 
@@ -83,7 +83,7 @@ flowchart TD
     C --> D["4. Merge & Tag<br>(git merge --no-ff, git tag -a vX.Y.Z)"]
     D --> E["5. Push to GitHub<br>(git push origin main && git push origin vX.Y.Z)"]
     E --> F["6. Monitor GitHub Actions<br>(GD32 CI & ESPHome CI)"]
-    F --> G["7. Verify GitHub Release<br>(htram-standalone.bin, gd32_firmware.bin, flash_assets.bin)"]
+    F --> G["7. Verify GitHub Release<br>(five room images + standalone, GD32, assets)"]
     G --> H["8. Fleet Verification<br>(Web UI 1-Click Update on Physical Devices)"]
 ```
 
@@ -138,16 +138,18 @@ make test         # Run complete 132+ test suite
 #### Step 5: Automated GitHub Actions CI & Artifact Validation
 GitHub Actions automatically builds and publishes the release assets.
 Mandatory artifacts that must be attached to the release:
-- `htram-standalone.bin` (ESPHome OTA image, ~1.4 MB)
+- `htram-standalone.bin` (generic ESPHome OTA image, ~1.4 MB)
+- `htram-living.bin`, `htram-bedroom.bin`, `htram-office.bin`,
+  `htram-kids-1.bin`, and `htram-kids-2.bin` (room-specific OTA images)
 - `gd32_firmware.bin` (GD32 coprocessor firmware, ~16 KB)
 - `flash_assets.bin` (SPI Flash vector assets container, ~20 KB)
-- Associated `.md5` and `.sha256` checksums for all three binaries.
+- Associated `.md5` and `.sha256` checksums for every binary.
 
 Verify using Python API:
 ```bash
 python3 -c "
 import urllib.request, json
-url = 'https://api.github.com/repos/reidMaks/htram-esphome/releases/tags/v<X.Y.Z>'
+url = 'https://api.github.com/repos/warp0/htram-esphome/releases/tags/v<X.Y.Z>'
 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
 with urllib.request.urlopen(req) as resp:
     data = json.loads(resp.read().decode())
@@ -158,13 +160,18 @@ with urllib.request.urlopen(req) as resp:
 ```
 
 #### Step 6: End-User 1-Click Update Verification
-Physical devices automatically poll GitHub Releases. In the web interface (`http://<ip>/`):
+Physical devices automatically poll GitHub Releases. The five room profiles use
+matching ESP32 images (`htram-living.bin`, `htram-bedroom.bin`,
+`htram-office.bin`, `htram-kids-1.bin`, `htram-kids-2.bin`) so OTA preserves
+each device's ESPHome name and Home Assistant area. `htram-standalone.bin`
+remains the generic conversion/development image. All profiles share the GD32
+firmware and SPI Flash assets. In the web interface (`http://<ip>/`):
 1. The update notification appears: "Доступне оновлення: **v<X.Y.Z>**".
 2. Clicking **«Оновити все»** executes:
    - NVS Wi-Fi credential persistence (`htram_wifi_perm_v1`).
    - GD32 staging to SPI Flash Block 3 and GD32 reflash.
    - Readable fallback diagnostic screen while ESP32 reboots.
-   - ESP32 OTA download and partition swap.
+   - Profile-matched ESP32 OTA download and partition swap.
    - Clean boot, Wi-Fi reconnection, and boot confirmation.
 
 ---
@@ -272,7 +279,9 @@ HTRAM features an autonomous over-the-air update system designed to allow users 
 ```
 +---------------------------------------------------------------------------------+
 | GITHUB RELEASES (Cloud Hosting)                                                 |
-| - htram-standalone.bin (ESP32 Firmware)                                         |
+| - htram-standalone.bin (generic ESP32 Firmware)                                 |
+| - htram-living.bin, htram-bedroom.bin, htram-office.bin                         |
+| - htram-kids-1.bin, htram-kids-2.bin (room-specific ESP32 Firmware)             |
 | - gd32_firmware-vX.Y.Z.bin (GD32 Firmware)                                      |
 | - flash_assets.bin (SPI Flash Graphic Assets)                                   |
 +---------------------------------------------------------------------------------+

@@ -1,0 +1,518 @@
+# HTRAM Feature: Room Dashboard
+#
+# Main face with temperature, relative humidity, CO2, and the active JAAM alert status.
+
+substitutions:
+  dashboard_temp_color: "0xFF9F43"
+  dashboard_humidity_color: "0x38BDF8"
+  dashboard_co2_green: "0x36D399"
+  dashboard_co2_yellow: "0xF5B942"
+  dashboard_co2_red: "0xF05D6C"
+
+globals:
+  - id: dashboard_sim_indicator_mode
+    type: int
+    restore_value: false
+    initial_value: "-1"
+
+image:
+  - platform: file
+    file: "images/dashboard_thermometer_mask.png"
+    id: dashboard_thermometer
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_humidity_drop_mask.png"
+    id: dashboard_humidity_drop
+    type: BINARY
+  - platform: file
+    file: "images/co2_leaf_mask.png"
+    id: dashboard_co2_leaf
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_drone_icon_mask.png"
+    id: dashboard_drone_icon
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_missile_icon_mask.png"
+    id: dashboard_missile_icon
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_alert_icon_mask.png"
+    id: dashboard_alert_icon
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_wifi_mask.png"
+    id: dashboard_wifi
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_internet_mask.png"
+    id: dashboard_internet
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_jaam_mask.png"
+    id: dashboard_jaam
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_battery_mask.png"
+    id: dashboard_battery
+    type: BINARY
+  - platform: file
+    file: "images/dashboard_usb_mask.png"
+    id: dashboard_usb
+    type: BINARY
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            if (${dashboard_mode} && id(face_state) == 0) {
+              lv_obj_remove_flag(id(ui_room_dashboard), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(id(ui_room_dashboard), LV_OBJ_FLAG_HIDDEN);
+            }
+        - script.execute: initialize_room_dashboard
+
+lvgl:
+  widgets:
+    - obj:
+        id: ui_room_dashboard
+        align: center
+        width: 240
+        height: 240
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        scrollable: false
+        clickable: false
+        hidden: true
+        widgets:
+          - image:
+              id: ui_dashboard_wifi_icon
+              align: top_left
+              x: 46
+              y: 9
+              src: dashboard_wifi
+              image_recolor: ${dashboard_co2_green}
+              image_recolor_opa: 100%
+          - image:
+              id: ui_dashboard_internet_icon
+              align: top_left
+              x: 78
+              y: 9
+              src: dashboard_internet
+              image_recolor: ${dashboard_co2_green}
+              image_recolor_opa: 100%
+          - image:
+              id: ui_dashboard_jaam_icon
+              align: top_left
+              x: 110
+              y: 9
+              src: dashboard_jaam
+              image_recolor: ${dashboard_co2_green}
+              image_recolor_opa: 100%
+          - image:
+              id: ui_dashboard_battery_frame
+              align: top_left
+              x: 140
+              y: 10
+              src: dashboard_battery
+              image_recolor: 0x647681
+              image_recolor_opa: 100%
+          - obj:
+              id: ui_dashboard_battery_fill
+              align: top_left
+              x: 143
+              y: 14
+              width: 12
+              height: 4
+              radius: 1
+              bg_color: ${dashboard_co2_green}
+              bg_opa: cover
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+          - image:
+              id: ui_dashboard_usb_icon
+              align: top_left
+              x: 174
+              y: 9
+              src: dashboard_usb
+              image_recolor: 0x647681
+              image_recolor_opa: 100%
+          - obj:
+              align: top_left
+              x: 30
+              y: 30
+              width: 180
+              height: 44
+              radius: 8
+              bg_color: 0x0B1118
+              bg_opa: cover
+              border_width: 1
+              border_color: 0x1B2A31
+              pad_all: 0
+              scrollable: false
+              clickable: false
+          - image:
+              id: ui_dashboard_thermometer
+              align: top_left
+              x: 48
+              y: 37
+              src: dashboard_thermometer
+              image_recolor: ${dashboard_temp_color}
+              image_recolor_opa: 100%
+          - label:
+              id: ui_dashboard_temp_label
+              align: top_left
+              x: 82
+              y: 31
+              text: "TEMP"
+              text_font: font_dashboard_label
+              text_color: 0x647681
+          - label:
+              id: ui_dashboard_temp_value
+              align: top_left
+              x: 82
+              y: 45
+              text: "--.-°C"
+              text_font: font_dashboard_value
+              text_color: ${dashboard_temp_color}
+
+          - obj:
+              align: top_left
+              x: 30
+              y: 79
+              width: 180
+              height: 44
+              radius: 8
+              bg_color: 0x0B1118
+              bg_opa: cover
+              border_width: 1
+              border_color: 0x1B2A31
+              pad_all: 0
+              scrollable: false
+              clickable: false
+          - image:
+              id: ui_dashboard_humidity_drop
+              align: top_left
+              x: 45
+              y: 87
+              src: dashboard_humidity_drop
+              image_recolor: ${dashboard_humidity_color}
+              image_recolor_opa: 100%
+          - label:
+              id: ui_dashboard_humidity_label
+              align: top_left
+              x: 82
+              y: 80
+              text: "RH"
+              text_font: font_dashboard_label
+              text_color: 0x647681
+          - label:
+              id: ui_dashboard_humidity_value
+              align: top_left
+              x: 82
+              y: 94
+              text: "--%"
+              text_font: font_dashboard_value
+              text_color: ${dashboard_humidity_color}
+
+          - obj:
+              align: top_left
+              x: 30
+              y: 128
+              width: 180
+              height: 44
+              radius: 8
+              bg_color: 0x0B1118
+              bg_opa: cover
+              border_width: 1
+              border_color: 0x1B2A31
+              pad_all: 0
+              scrollable: false
+              clickable: false
+          - label:
+              id: ui_dashboard_co2_label
+              align: top_left
+              x: 82
+              y: 129
+              text: "CO2"
+              text_font: font_dashboard_label
+              text_color: 0x647681
+          - label:
+              id: ui_dashboard_co2_value
+              align: top_left
+              x: 82
+              y: 143
+              text: "---- ppm"
+              text_font: font_dashboard_value
+              text_color: ${dashboard_co2_green}
+          - image:
+              id: ui_dashboard_co2_leaf
+              align: top_left
+              x: 39
+              y: 136
+              src: dashboard_co2_leaf
+              image_recolor: ${dashboard_co2_green}
+              image_recolor_opa: 100%
+
+          - obj:
+              align: top_left
+              x: 30
+              y: 177
+              width: 180
+              height: 48
+              radius: 8
+              bg_color: 0x0B1118
+              bg_opa: cover
+              border_width: 1
+              border_color: 0x1B2A31
+              pad_all: 0
+              scrollable: false
+              clickable: false
+          - label:
+              id: ui_dashboard_alert_title
+              align: top_left
+              x: 82
+              y: 180
+              text: "AIR RAID"
+              text_font: font_dashboard_label
+              text_color: 0x647681
+          - image:
+              id: ui_dashboard_drone_icon
+              align: top_left
+              x: 36
+              y: 185
+              src: dashboard_drone_icon
+              image_recolor: ${dashboard_co2_yellow}
+              image_recolor_opa: 100%
+              hidden: true
+          - image:
+              id: ui_dashboard_missile_icon
+              align: top_left
+              x: 42
+              y: 185
+              src: dashboard_missile_icon
+              image_recolor: ${dashboard_co2_red}
+              image_recolor_opa: 100%
+              hidden: true
+          - image:
+              id: ui_dashboard_alert_icon
+              align: top_left
+              x: 40
+              y: 185
+              src: dashboard_alert_icon
+              image_recolor: ${dashboard_co2_red}
+              image_recolor_opa: 100%
+              hidden: true
+          - obj:
+              id: ui_dashboard_status_badge
+              align: top_left
+              x: 41
+              y: 185
+              width: 32
+              height: 32
+              radius: 4
+              bg_color: ${dashboard_co2_green}
+              bg_opa: cover
+              border_width: 0
+              pad_all: 0
+              scrollable: false
+              clickable: false
+              widgets:
+                - label:
+                    id: ui_dashboard_status_check
+                    align: center
+                    text: "✓"
+                    text_font: font_dashboard_status_icon
+                    text_color: 0x000000
+          - label:
+              id: ui_dashboard_status
+              align: top_left
+              x: 82
+              y: 194
+              text: "NO ALERT"
+              text_font: font_dashboard_status
+              text_color: ${dashboard_co2_green}
+
+script:
+  - id: initialize_room_dashboard
+    mode: restart
+    then:
+      - delay: 200ms
+      - if:
+          condition:
+            lambda: |-
+              return ${dashboard_mode} &&
+                     id(htram_arbiter_hub)->get_screen_mode() == 0;
+          then:
+            - lambda: |-
+                lv_obj_remove_flag(id(ui_room_dashboard), LV_OBJ_FLAG_HIDDEN);
+                lv_obj_invalidate(id(ui_root));
+            - script.execute: refresh_room_dashboard
+            - script.execute: refresh_room_dashboard_status
+
+  - id: refresh_room_dashboard
+    mode: restart
+    then:
+      - lambda: |-
+          if (!${dashboard_mode} || id(htram_arbiter_hub)->get_screen_mode() != 0 ||
+              id(face_state) != 0 || id(slot_hold)) return;
+
+          auto set_text = [](lv_obj_t *label, const char *value) {
+            const char *current = lv_label_get_text(label);
+            if (current == nullptr || strcmp(current, value) != 0) {
+              lv_label_set_text(label, value);
+            }
+          };
+
+          char value[24];
+          if (isnan(id(sensor_temp).state)) {
+            set_text(id(ui_dashboard_temp_value), "--.-°C");
+          } else {
+            snprintf(value, sizeof(value), "%.1f°C", id(sensor_temp).state);
+            set_text(id(ui_dashboard_temp_value), value);
+          }
+
+          if (isnan(id(sensor_hum).state)) {
+            set_text(id(ui_dashboard_humidity_value), "--%");
+          } else {
+            snprintf(value, sizeof(value), "%.0f%%", id(sensor_hum).state);
+            set_text(id(ui_dashboard_humidity_value), value);
+          }
+
+          if (isnan(id(sensor_co2).state)) {
+            set_text(id(ui_dashboard_co2_value), "---- ppm");
+            lv_obj_set_style_image_recolor(id(ui_dashboard_co2_leaf),
+                                           lv_color_hex(${dashboard_co2_green}), LV_PART_MAIN);
+            lv_obj_set_style_text_color(id(ui_dashboard_co2_value),
+                                        lv_color_hex(${dashboard_co2_green}), LV_PART_MAIN);
+          } else {
+            const float ppm = id(sensor_co2).state;
+            const float yellow = id(co2_thresh_yellow).state;
+            const float red = id(co2_thresh_red).state;
+            uint32_t color = ${dashboard_co2_green};
+            if (!isnan(red) && ppm >= red) {
+              color = ${dashboard_co2_red};
+            } else if (!isnan(yellow) && ppm >= yellow) {
+              color = ${dashboard_co2_yellow};
+            }
+            snprintf(value, sizeof(value), "%.0f ppm", ppm);
+            set_text(id(ui_dashboard_co2_value), value);
+            lv_obj_set_style_image_recolor(id(ui_dashboard_co2_leaf),
+                                           lv_color_hex(color), LV_PART_MAIN);
+            lv_obj_set_style_text_color(id(ui_dashboard_co2_value),
+                                        lv_color_hex(color), LV_PART_MAIN);
+          }
+
+  - id: !extend refresh_room_dashboard_status
+    then:
+      - lambda: |-
+          const bool active = id(system_alert_active);
+          const char *text = active ? "ALERT" : "NO ALERT";
+          const int indicator_mode = id(dashboard_sim_indicator_mode);
+          const uint32_t inactive_color = 0x647681;
+          const bool uav_threat = id(alert_drone) || id(alert_recon) || id(alert_yellow);
+          const bool missile_threat = id(alert_missile) || id(alert_ballistic) ||
+                                      id(alert_kab) || id(jaam)->is_red();
+          const uint32_t color = !active ? ${dashboard_co2_green} :
+                                 (uav_threat && !missile_threat
+                                      ? ${dashboard_co2_yellow}
+                                      : ${dashboard_co2_red});
+          #ifdef USE_WIFI
+          const bool real_wifi_connected = wifi::global_wifi_component != nullptr &&
+                                           wifi::global_wifi_component->is_connected();
+          #else
+          const bool real_wifi_connected = true;
+          #endif
+          const bool wifi_connected = indicator_mode < 0 ? real_wifi_connected : indicator_mode == 1;
+          const bool internet_connected = indicator_mode < 0
+                                              ? id(internet_last_sync_ms) != 0 &&
+                                                    (millis() - id(internet_last_sync_ms)) < 1800000u
+                                              : indicator_mode == 1;
+          const bool jaam_connected = indicator_mode < 0 ? id(jaam)->connected()
+                                                         : indicator_mode == 1;
+          const float battery_level = indicator_mode == 1 ? 100.0f :
+                                      (indicator_mode == 0 ? NAN : id(sensor_batt_level).state);
+          const bool usb_powered = indicator_mode < 0 ? id(sensor_usb).state
+                                                       : indicator_mode == 1;
+          lv_obj_set_style_image_recolor(id(ui_dashboard_wifi_icon),
+                                         lv_color_hex(wifi_connected ? ${dashboard_co2_green} : inactive_color),
+                                         LV_PART_MAIN);
+          lv_obj_set_style_image_recolor(id(ui_dashboard_internet_icon),
+                                         lv_color_hex(internet_connected ? ${dashboard_co2_green} : inactive_color),
+                                         LV_PART_MAIN);
+          lv_obj_set_style_image_recolor(id(ui_dashboard_jaam_icon),
+                                         lv_color_hex(jaam_connected ? ${dashboard_co2_green} : inactive_color),
+                                         LV_PART_MAIN);
+          lv_obj_set_style_image_recolor(id(ui_dashboard_usb_icon),
+                                         lv_color_hex(usb_powered ? ${dashboard_co2_green} : inactive_color),
+                                         LV_PART_MAIN);
+          if (isnan(battery_level)) {
+            lv_obj_set_width(id(ui_dashboard_battery_fill), 0);
+            lv_obj_set_style_image_recolor(id(ui_dashboard_battery_frame),
+                                           lv_color_hex(inactive_color), LV_PART_MAIN);
+          } else {
+            const float clamped_level = fminf(100.0f, fmaxf(0.0f, battery_level));
+            const uint32_t battery_color = clamped_level <= 20.0f ? ${dashboard_co2_red} :
+                                           (clamped_level <= 50.0f ? ${dashboard_co2_yellow} :
+                                                                    ${dashboard_co2_green});
+            lv_obj_set_width(id(ui_dashboard_battery_fill),
+                             (lv_coord_t) lroundf(13.0f * clamped_level / 100.0f));
+            lv_obj_set_style_image_recolor(id(ui_dashboard_battery_frame),
+                                           lv_color_hex(battery_color), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(id(ui_dashboard_battery_fill),
+                                      lv_color_hex(battery_color), LV_PART_MAIN);
+          }
+          lv_label_set_text(id(ui_dashboard_status), text);
+          lv_obj_set_style_text_color(id(ui_dashboard_status), lv_color_hex(color), LV_PART_MAIN);
+          if (active) {
+            lv_obj_add_flag(id(ui_dashboard_status_badge), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_remove_flag(id(ui_dashboard_status_badge), LV_OBJ_FLAG_HIDDEN);
+          }
+          if (active && uav_threat && !missile_threat) {
+            lv_obj_remove_flag(id(ui_dashboard_drone_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_dashboard_missile_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_dashboard_alert_icon), LV_OBJ_FLAG_HIDDEN);
+          } else if (active && missile_threat) {
+            lv_obj_add_flag(id(ui_dashboard_drone_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_dashboard_missile_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_dashboard_alert_icon), LV_OBJ_FLAG_HIDDEN);
+          } else if (active) {
+            lv_obj_add_flag(id(ui_dashboard_drone_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_dashboard_missile_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(id(ui_dashboard_alert_icon), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(ui_dashboard_drone_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_dashboard_missile_icon), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(ui_dashboard_alert_icon), LV_OBJ_FLAG_HIDDEN);
+          }
+
+  - id: !extend on_face_changed
+    then:
+      - lambda: |-
+          if (!${dashboard_mode}) return;
+          if (face == 0) {
+            lv_obj_remove_flag(id(ui_room_dashboard), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(ui_room_dashboard), LV_OBJ_FLAG_HIDDEN);
+          }
+          lv_obj_invalidate(id(ui_root));
+      - script.execute: refresh_room_dashboard
+      - script.execute: refresh_room_dashboard_status
+
+  - id: !extend on_alert_changed
+    then:
+      - script.execute: refresh_room_dashboard_status
+
+interval:
+  - interval: 1s
+    then:
+      - script.execute: refresh_room_dashboard
+
+  - interval: 5s
+    then:
+      - script.execute: refresh_room_dashboard_status

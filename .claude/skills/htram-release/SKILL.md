@@ -182,7 +182,7 @@ Monitor build progress using the Python API script:
 ```bash
 python3 -c "
 import urllib.request, json
-url = 'https://api.github.com/repos/reidMaks/htram-esphome/actions/runs?per_page=4'
+url = 'https://api.github.com/repos/warp0/htram-esphome/actions/runs?per_page=4'
 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
 with urllib.request.urlopen(req) as resp:
     data = json.loads(resp.read().decode())
@@ -196,7 +196,7 @@ Once both workflows finish with `conclusion: success`, verify the release assets
 ```bash
 python3 -c "
 import urllib.request, json
-url = 'https://api.github.com/repos/reidMaks/htram-esphome/releases/tags/v2.1.3'
+url = 'https://api.github.com/repos/warp0/htram-esphome/releases/tags/v2.1.3'
 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
 with urllib.request.urlopen(req) as resp:
     data = json.loads(resp.read().decode())

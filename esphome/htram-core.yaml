@@ -5,7 +5,8 @@ substitutions:
   name_add_mac_suffix: "false"
   friendly_name: HTRAM
   # Базовий URL для шрифтів та зображень (GitOps)
-  repo_url: "https://raw.githubusercontent.com/reidMaks/htram-esphome/main/esphome"
+  repo_url: "https://raw.githubusercontent.com/warp0/htram-esphome/main/esphome"
+  ota_firmware_asset: "htram-standalone.bin"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
   firmware_version: "2.4.0"
@@ -369,8 +370,8 @@ script:
 
           // 3. Flash ESP32 firmware
       - ota.http_request.flash:
-          url: "https://github.com/reidMaks/htram-esphome/releases/latest/download/htram-standalone.bin"
-          md5_url: "https://github.com/reidMaks/htram-esphome/releases/latest/download/htram-standalone.bin.md5"
+          url: "https://github.com/warp0/htram-esphome/releases/latest/download/${ota_firmware_asset}"
+          md5_url: "https://github.com/warp0/htram-esphome/releases/latest/download/${ota_firmware_asset}.md5"
 
   # CO2 moved off the screen and onto the LEDs above it, so they have to
   # actually track it now.
@@ -503,6 +504,7 @@ time:
     on_time_sync:
       then:
         - lambda: |-
+            id(internet_last_sync_ms) = millis();
             id(face_state) = -1;
             id(htram_arbiter_hub)->dispatch_event("time_synced");
         - script.execute: refresh_pocket
@@ -584,6 +586,7 @@ sensor:
       id: sensor_batt_level
       on_value:
         - script.execute: refresh_pocket
+        - script.execute: refresh_room_dashboard_status
 
 binary_sensor:
   - platform: htram_gd32
@@ -592,6 +595,7 @@ binary_sensor:
       id: sensor_usb
       on_state:
         - script.execute: refresh_pocket
+        - script.execute: refresh_room_dashboard_status
     charging:
       name: "Charging"
       id: sensor_chrg

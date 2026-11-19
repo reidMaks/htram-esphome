@@ -5,6 +5,7 @@
 # - Alarm (Будильник)
 # - Weather (Прогноз погоди)
 # - Timer (Кухонний таймер)
+# - Optional room dashboard (disabled unless dashboard_mode is enabled)
 
 substitutions:
   name: htram-sim
@@ -26,6 +27,7 @@ packages:
   timer: !include features/timer.yaml
   climate: !include features/climate.yaml
   debug: !include features/debug.yaml
+  room_dashboard: !include features/room_dashboard.yaml
 
 api:
   services:

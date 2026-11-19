@@ -5,9 +5,7 @@ monitor whose vendor shut its cloud down. The stock firmware is replaced
 entirely: ESPHome on the ESP32, hand-written bare-metal on the GD32F150 that
 owns the sensors, the panel and the buttons.
 
-![The device running this firmware: the clock face on the 240 x 240 panel, with
-the outline ring and its orbiting seconds dot, temperature and humidity under
-the time, and the front LED bar showing CO2 at a glance](docs/device-clock.jpg)
+![The device running an earlier firmware revision with a clock face](docs/device-clock.jpg)
 
 > Looking for the Home Assistant integration that talks to the **stock**
 > firmware over BLE and MQTT? That lives in
@@ -16,29 +14,23 @@ the time, and the front LED bar showing CO2 at a glance](docs/device-clock.jpg)
 
 ## What the device does now
 
-- **A clock as the face.** 240 × 240 panel, 27 mm across, driven from the GD32
-  over a bit-banged SPI link; the ESP renders with LVGL and ships dirty
-  rectangles at 921600 baud. Time comes from SNTP or Home Assistant, so a
-  reboot without either says so instead of showing dashes.
-- **CO2, temperature and humidity** from the original sensors, published to
-  Home Assistant over the native API. The three front LEDs track CO2 (green /
-  amber / red) and stay dark until there is a real reading.
-- **Weather forecast & current conditions**: Synchronized from Home Assistant,
-  displaying a 3-part day forecast (morning, midday, evening) with temperatures
-  and dynamic weather icons (sunny, cloudy, rainy, storm, snow, fog, wind).
-- **Countdown timer**: Quick countdown / kitchen timer with progress display
-  and audible confirmation chime.
+- **A room dashboard** on the 240 × 240 panel: temperature, relative humidity
+  and CO2 shown together in a high-contrast dark theme with JetBrains Mono and
+  compact icons.
+- **CO2 status** is shown with a color-coded leaf (green / amber / red) using
+  the configurable ppm thresholds. The front LED bar tracks the same CO2
+  quality in normal conditions.
 - **An alarm clock** that rings from the device, not from an automation.
-- **A minute of silence at 09:00**: Exact time-synchronized national
-  commemoration with 60-second metronome beeps, national emblem (Tryzub)
-  blitted from SPI Flash, and the State Anthem.
 - **Air raid alerts & threat tracking**: Real-time alerts powered by
   [JAAM (jaam.net.ua)](https://jaam.net.ua) over its Fusion WebSocket API
-  (`ws.jaam.net.ua/data_fusion_v1`) — deliberately not through Home Assistant,
-  which may be restarting exactly when it matters. Displays dedicated icons for
-  threat types (missiles, drones, ballistic, guided aerial bombs / KAB,
-  reconnaissance UAVs) and plays RTTTL audio alerts. Data:
-  [JAAM (jaam.net.ua)](https://jaam.net.ua).
+  (`ws.jaam.net.ua/data_fusion_v1`), with a persistent status icon, threat
+  sounds, and blinking yellow/red front LEDs. The five room profiles use the
+  Ivano-Frankivsk region (JAAM region ID 13).
+- **Five room profiles**: Living room, bedroom, office, kids' room 1 and kids'
+  room 2. Each has a room-specific Home Assistant identity and OTA image.
+- **Room-aware OTA from this fork**: Each profile downloads its matching ESP32
+  binary from the public `warp0/htram-esphome` GitHub Release; GD32 firmware
+  and SPI Flash assets are shared across rooms.
 - **Standby** on a long press, with a charge screen the GD32 draws by itself.
 - **Cached graphic assets on SPI Flash (v1.2.0)**: 25 monochrome bitmap icons
   (weather, threats, alerts, Tryzub) reside in external SPI Flash (`0x040000`)
@@ -75,6 +67,17 @@ uv sync
 cp esphome/secrets.yaml.example esphome/secrets.yaml   # fill it in
 uv run esphome run esphome/htram.yaml
 ```
+
+For a room-specific build, use one of:
+`esphome/htram-living.yaml`, `esphome/htram-bedroom.yaml`,
+`esphome/htram-office.yaml`, `esphome/htram-kids-1.yaml`, or
+`esphome/htram-kids-2.yaml`. GitHub Releases publish a matching
+`htram-<room>.bin` for each profile so one-click OTA preserves its room identity.
+
+To preview the room dashboard without an ESP32 or Pico, install Docker and run
+`make preview-dashboard-docker`. The `Dockerfile.sim` image keeps Python and
+system build dependencies in cached layers; ESPHome and PlatformIO caches are
+kept in named Docker volumes between preview runs.
 
 Run test suites locally before flashing:
 ```bash

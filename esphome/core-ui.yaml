@@ -3,6 +3,8 @@
 
 substitutions:
   ap_flip_interval: "7s"
+  dashboard_mode: "false"
+  hide_clock_chrome: "false"
 
 esphome:
   includes:
@@ -48,16 +50,48 @@ font:
     bpp: 4
     glyphs: " !#$%&()*+,-.:;=?@[]_{}~/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯабвгґдеєжзиіїйклмнопрстуфхцчшщьюя"
 
+  - file: "fonts/JetBrainsMono-Variable.ttf"
+    id: font_dashboard_value
+    size: 24
+    bpp: 4
+    glyphs: " 0123456789-.°C%pm"
+
+  - file: "fonts/JetBrainsMono-Variable.ttf"
+    id: font_dashboard_label
+    size: 13
+    bpp: 4
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789"
+
+  - file: "fonts/JetBrainsMono-Variable.ttf"
+    id: font_dashboard_status
+    size: 24
+    bpp: 4
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZ "
+
+  - file: "fonts/JetBrainsMono-Variable.ttf"
+    id: font_dashboard_status_icon
+    size: 18
+    bpp: 4
+    glyphs: "✓"
+
 display:
   - platform: htram_gd32
     id: htram_display
     update_interval: never
 
 globals:
+  - id: system_alert_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
   - id: ha_link
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: internet_last_sync_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
   - id: slot_idx
     type: int
     restore_value: false
@@ -211,7 +245,8 @@ script:
           // (a device asking to be configured can do nothing else useful), then
           // the minute of silence, then the ordinary faces.
           const bool silence = id(htram_arbiter_hub)->is_silence_active();
-          const int want = ap ? 3 : (silence ? 4 : (have_time ? 0 : (net ? 1 : 2)));
+          const int want = ap ? 3 : (silence ? 4 :
+                                    (${dashboard_mode} ? 0 : (have_time ? 0 : (net ? 1 : 2))));
           if (want != 3) {
             id(ap_manual) = false;
             if (id(htram_arbiter_hub)->get_screen_owner() == "ap") {
@@ -377,11 +412,16 @@ script:
   - id: set_system_alert_active
     parameters:
       active: bool
-    then: []
+    then:
+      - lambda: |-
+          id(system_alert_active) = active;
 
   - id: set_system_jaam_connected
     parameters:
       connected: bool
+    then: []
+
+  - id: refresh_room_dashboard_status
     then: []
 
   - id: apply_face_alert_color
@@ -617,6 +657,7 @@ lvgl:
         outline_width: 0
         bg_color: 0x000000
         bg_opa: cover
+        hidden: ${hide_clock_chrome}
         scrollable: false
         widgets:
           # A swept arc looked right but cost 8.9 s of UART once a minute: at the
@@ -634,6 +675,7 @@ lvgl:
               height: 228
               radius: 114
               bg_opa: TRANSP
+              hidden: ${hide_clock_chrome}
               border_width: 2
               border_color: 0xB9AFA3
               border_opa: 30%

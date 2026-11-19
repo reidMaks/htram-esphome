@@ -1,0 +1,47 @@
+substitutions:
+  name: htram-room-sim
+  friendly_name: "HTRAM Room Dashboard Simulator"
+  repo_url: "."
+  dashboard_mode: "true"
+  hide_clock_chrome: "true"
+  alert_icon_x: "184"
+  alert_icon_y: "202"
+  jaam_host: "127.0.0.1"
+  jaam_port: "1"
+  slot_interval: "24h"
+
+packages:
+  core: !include htram-sim-core.yaml
+  dashboard: !include features/room_dashboard.yaml
+  alert: !include features/alert.yaml
+  alarm: !include features/alarm.yaml
+  debug: !include features/debug.yaml
+
+api:
+  services:
+    - service: simulate_climate
+      variables:
+        co2: float
+        temperature: float
+        humidity: float
+      then:
+        - lambda: |-
+            if (!isnan(co2)) id(sensor_co2).publish_state(co2);
+            if (!isnan(temperature)) id(sensor_temp).publish_state(temperature);
+            if (!isnan(humidity)) id(sensor_hum).publish_state(humidity);
+            id(refresh_room_dashboard).execute();
+
+    - service: simulate_alert
+      variables:
+        flags: int
+      then:
+        - lambda: |-
+            id(jaam)->simulate_flags((uint32_t) flags);
+
+    - service: set_dashboard_indicator_mode
+      variables:
+        mode: int
+      then:
+        - lambda: |-
+            id(dashboard_sim_indicator_mode) = mode;
+        - script.execute: refresh_room_dashboard_status
