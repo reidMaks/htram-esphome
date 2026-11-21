@@ -10,6 +10,14 @@ Usage:
   uv run python3 tools/preview_ui.py capture clock
   uv run python3 tools/preview_ui.py capture timer
   uv run python3 tools/preview_ui.py capture alert
+  uv run python3 tools/preview_ui.py capture dashboard
+  uv run python3 tools/preview_ui.py capture dashboard_green
+  uv run python3 tools/preview_ui.py capture dashboard_gray
+  uv run python3 tools/preview_ui.py capture dashboard_yellow
+  uv run python3 tools/preview_ui.py capture dashboard_red
+  uv run python3 tools/preview_ui.py capture dashboard_uav
+  uv run python3 tools/preview_ui.py capture dashboard_missile
+  uv run python3 tools/preview_ui.py capture dashboard_other
   uv run python3 tools/preview_ui.py capture silence
 
   # Inspect UI geometry (bezel ring, element bounds, margins, overlaps):
@@ -39,7 +47,14 @@ async def capture_screen(screen: str, out_name: str | None = None) -> Path:
     if not out_name:
         out_name = f"preview_{screen}"
 
-    harness = SimulationHarness()
+    if screen.startswith("dashboard"):
+        room_sim = REPO_ROOT / "esphome/htram-room-sim.yaml"
+        room_binary = (
+            REPO_ROOT / "esphome/.esphome/build/htram-room-sim/.pioenvs/htram-room-sim/program"
+        )
+        harness = SimulationHarness(config_path=room_sim, binary_path=room_binary)
+    else:
+        harness = SimulationHarness()
     try:
         await harness.start()
 
@@ -74,6 +89,35 @@ async def capture_screen(screen: str, out_name: str | None = None) -> Path:
         elif screen == "alert":
             # Air raid + missile alert
             await harness.simulate_alert(flags=257)
+            await asyncio.sleep(0.4)
+
+        elif screen.startswith("dashboard"):
+            co2 = {
+                "dashboard": 850.0,
+                "dashboard_green": 850.0,
+                "dashboard_gray": 850.0,
+                "dashboard_yellow": 1200.0,
+                "dashboard_red": 1700.0,
+                "dashboard_uav": 850.0,
+                "dashboard_missile": 850.0,
+                "dashboard_other": 850.0,
+            }[screen]
+            await harness.call_service(
+                "simulate_climate",
+                {"temperature": 22.4, "humidity": 45.0, "co2": co2},
+            )
+            if screen in ("dashboard_green", "dashboard_gray"):
+                await harness.call_service(
+                    "set_dashboard_indicator_mode",
+                    {"mode": 1 if screen == "dashboard_green" else 0},
+                )
+            alert_flags = {
+                "dashboard_uav": (1 << 11) | (1 << 5),
+                "dashboard_missile": (1 << 12) | (1 << 6),
+                "dashboard_other": (1 << 1),
+            }.get(screen, 0)
+            if alert_flags:
+                await harness.simulate_alert(flags=alert_flags)
             await asyncio.sleep(0.4)
 
         elif screen == "silence":
@@ -250,7 +294,23 @@ def main() -> None:
         "screen",
         nargs="?",
         default="weather",
-        choices=["weather", "clock", "timer", "timer_arming", "alert", "silence", "device_id"],
+        choices=[
+            "weather",
+            "clock",
+            "timer",
+            "timer_arming",
+            "alert",
+            "dashboard",
+            "dashboard_green",
+            "dashboard_gray",
+            "dashboard_yellow",
+            "dashboard_red",
+            "dashboard_uav",
+            "dashboard_missile",
+            "dashboard_other",
+            "silence",
+            "device_id",
+        ],
         help="Screen to capture (default: weather)",
     )
     p_cap.add_argument("--out", "-o", help="Output filename base (without .png)")

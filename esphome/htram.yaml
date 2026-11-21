@@ -1,42 +1,33 @@
-# HTRAM — повна конфігурація з усіма функціями (Core + Alarm + Weather + Timer)
+# HTRAM — standalone room dashboard firmware
 #
-# Локальна збірка / прошивка:
+# Local build/flash:
 #   uv run esphome run esphome/htram.yaml
 #
-# На сервері ESPHome (https://esphome.kms-lab.in.ua/):
-#   Вставте наступний вміст у свій конфіг:
-#   -------------------------------------------------
-#   substitutions:
-#     name: htram
-#     friendly_name: "HTRAM"
-#
-#   packages:
-#     base:
-#       url: https://github.com/reidMaks/htram-esphome
-#       ref: main
-#       files:
-#         - esphome/htram-core.yaml
-#         - esphome/features/face_clock.yaml
-#         - esphome/features/silence.yaml
-#         - esphome/features/alert.yaml
-#         - esphome/features/alarm.yaml
-#         - esphome/features/weather.yaml
-#         - esphome/features/timer.yaml
-#       refresh: 0s
-#   -------------------------------------------------
+# This is the canonical standalone image used by GitHub Releases. The five
+# room-specific configs use the same packages with their own Home Assistant area.
 
 substitutions:
   name: htram
   friendly_name: HTRAM
   name_add_mac_suffix: "false"
+  area: "HTRAM"
   repo_url: "."
+  dashboard_mode: "true"
+  hide_clock_chrome: "true"
+  alert_icon_x: "184"
+  alert_icon_y: "202"
+  alert_nolink_x: "195"
+  alert_nolink_y: "18"
+  ota_firmware_asset: "htram-standalone.bin"
+  alarm_show_dial_tick: "false"
+  alarm_bell_x: "183"
+  alarm_bell_y: "198"
+
+esphome:
+  area: ${area}
 
 packages:
   core: !include htram-core.yaml
-  face_clock: !include features/face_clock.yaml
-  silence: !include features/silence.yaml
+  dashboard: !include features/room_dashboard.yaml
   alert: !include features/alert.yaml
   alarm: !include features/alarm.yaml
-  weather: !include features/weather.yaml
-  timer: !include features/timer.yaml
-  climate: !include features/climate.yaml

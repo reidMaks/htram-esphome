@@ -11,16 +11,16 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
   <title>HTRAM</title>
   <style>
     :root {
-      --bg: #090d16;
-      --card: #131b2e;
-      --card-border: #1e293b;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
+      --bg: #05080d;
+      --card: #0b1118;
+      --card-border: #1b2a31;
+      --text: #eff6f8;
+      --text-muted: #91a3ad;
       --primary: #38bdf8;
-      --primary-hover: #0284c7;
-      --success: #22c55e;
-      --warning: #f59e0b;
-      --danger: #ef4444;
+      --primary-hover: #0ea5e9;
+      --success: #36d399;
+      --warning: #f5b942;
+      --danger: #f05d6c;
       --radius: 12px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -31,7 +31,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       padding: 16px;
       line-height: 1.5;
     }
@@ -1423,7 +1423,7 @@ static const char STANDALONE_INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 
     async function checkGithubRelease(currentVer, showFeedback = false) {
       try {
-        const resp = await fetch('https://api.github.com/repos/reidMaks/htram-esphome/releases/latest', {
+        const resp = await fetch('https://api.github.com/repos/warp0/htram-esphome/releases/latest', {
           headers: { 'Accept': 'application/vnd.github.v3+json' }
         });
         if (!resp.ok) {

@@ -1,0 +1,27 @@
+# HTRAM — Дитяча 1
+substitutions:
+  name: htram-kids-1
+  friendly_name: "HTRAM — Дитяча 1"
+  area: "Дитяча 1"
+  repo_url: "."
+  dashboard_mode: "true"
+  hide_clock_chrome: "true"
+  alert_icon_x: "184"
+  alert_icon_y: "202"
+  alert_nolink_x: "195"
+  alert_nolink_y: "18"
+  ota_firmware_asset: "htram-kids-1.bin"
+  alarm_show_dial_tick: "false"
+  alarm_bell_x: "183"
+  alarm_bell_y: "198"
+
+esphome:
+  area: ${area}
+
+packages:
+  core: !include htram-core.yaml
+  dashboard: !include features/room_dashboard.yaml
+  alert: !include features/alert.yaml
+  alarm: !include features/alarm.yaml
+  timer: !include features/timer.yaml
+  ha: !include features/ha.yaml

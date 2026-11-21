@@ -296,10 +296,10 @@ class HtramGd32Component : public Component, public uart::UARTDevice {
 #else
   bool perform_remote_assets_update(
       http_request::HttpRequestComponent* http_client,
-      const std::string& url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/flash_assets.bin");
+      const std::string& url = "https://github.com/warp0/htram-esphome/releases/latest/download/flash_assets.bin");
   bool perform_remote_gd32_update(
       http_request::HttpRequestComponent* http_client, bool allow_on_battery = false,
-      const std::string& url = "https://github.com/reidMaks/htram-esphome/releases/latest/download/gd32_firmware.bin");
+      const std::string& url = "https://github.com/warp0/htram-esphome/releases/latest/download/gd32_firmware.bin");
 #endif
 
  protected:

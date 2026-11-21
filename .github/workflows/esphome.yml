@@ -91,6 +91,20 @@ jobs:
         run: |
           uv run esphome compile esphome/htram.yaml
 
+      - name: Compile Room ESP32 Firmware
+        run: |
+          for room in living bedroom office kids-1 kids-2; do
+            config="esphome/htram-${room}.yaml"
+            uv run esphome compile "$config"
+            bin_path="esphome/.esphome/build/htram-${room}/build/firmware.ota.bin"
+            if [ ! -f "$bin_path" ]; then
+              bin_path="esphome/.esphome/build/htram-${room}/build/htram-${room}.bin"
+            fi
+            cp "$bin_path" "htram-${room}.bin"
+            md5sum "htram-${room}.bin" | cut -d' ' -f1 > "htram-${room}.bin.md5"
+            sha256sum "htram-${room}.bin" | cut -d' ' -f1 > "htram-${room}.bin.sha256"
+          done
+
       - name: Package Release Binaries & Checksums
         id: pkg
         run: |
@@ -113,7 +127,7 @@ jobs:
         with:
           name: htram-release-binaries
           path: |
-            htram-standalone.bin*
+            htram-*.bin*
             gd32_firmware.bin*
             flash_assets.bin*
           retention-days: 14
@@ -147,6 +161,21 @@ jobs:
             htram-standalone.bin \
             htram-standalone.bin.md5 \
             htram-standalone.bin.sha256 \
+            htram-living.bin \
+            htram-living.bin.md5 \
+            htram-living.bin.sha256 \
+            htram-bedroom.bin \
+            htram-bedroom.bin.md5 \
+            htram-bedroom.bin.sha256 \
+            htram-office.bin \
+            htram-office.bin.md5 \
+            htram-office.bin.sha256 \
+            htram-kids-1.bin \
+            htram-kids-1.bin.md5 \
+            htram-kids-1.bin.sha256 \
+            htram-kids-2.bin \
+            htram-kids-2.bin.md5 \
+            htram-kids-2.bin.sha256 \
             gd32_firmware.bin \
             gd32_firmware.bin.md5 \
             gd32_firmware.bin.sha256 \
@@ -154,4 +183,3 @@ jobs:
             flash_assets.bin.md5 \
             flash_assets.bin.sha256 \
             --clobber
-

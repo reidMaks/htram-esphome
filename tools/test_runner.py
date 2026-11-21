@@ -100,10 +100,14 @@ class SimulationHarness:
         host: str = "127.0.0.1",
         port: int = 6053,
         screenshots_dir: Path | None = None,
+        config_path: Path = SIM_CONFIG,
+        binary_path: Path = SIM_BINARY,
     ):
         self.host = host
         self.port = port
         self.screenshots_dir = screenshots_dir or SCREENSHOTS_DIR
+        self.config_path = config_path
+        self.binary_path = binary_path
         self.proc: subprocess.Popen | None = None
         self.client: APIClient | None = None
         self.services: dict[str, Any] = {}
@@ -121,22 +125,27 @@ class SimulationHarness:
 
     def ensure_binary(self) -> None:
         """Ensures the simulator binary is compiled."""
-        recompile = not SIM_BINARY.exists()
+        recompile = not self.binary_path.exists()
         if not recompile:
-            bin_mtime = SIM_BINARY.stat().st_mtime
-            if any(
-                p.stat().st_mtime > bin_mtime
-                for p in REPO_ROOT.glob("esphome/**/*.yaml")
-                if ".esphome" not in p.parts
-            ):
+            bin_mtime = self.binary_path.stat().st_mtime
+            input_files = (
+                *(
+                    p
+                    for p in REPO_ROOT.glob("esphome/**/*.yaml")
+                    if ".esphome" not in p.parts
+                ),
+                *REPO_ROOT.glob("esphome/images/*.png"),
+                *REPO_ROOT.glob("esphome/images/*.svg"),
+            )
+            if any(p.stat().st_mtime > bin_mtime for p in input_files):
                 recompile = True
         if recompile:
-            print(f"[*] Compiling host simulator binary from {SIM_CONFIG}...")
-            cmd = ["uv", "run", "esphome", "compile", str(SIM_CONFIG)]
+            print(f"[*] Compiling host simulator binary from {self.config_path}...")
+            cmd = ["uv", "run", "esphome", "compile", str(self.config_path)]
             res = subprocess.run(cmd, cwd=REPO_ROOT, check=True)
             if res.returncode != 0:
-                raise RuntimeError("Failed to compile htram-sim!")
-        print(f"[*] Found simulator binary: {SIM_BINARY}")
+                raise RuntimeError(f"Failed to compile {self.config_path.name}!")
+        print(f"[*] Found simulator binary: {self.binary_path}")
 
     async def start(self) -> None:
         """Starts the simulator process and connects to its API."""
@@ -146,7 +155,7 @@ class SimulationHarness:
         env = os.environ.copy()
         env["HTRAM_SIM_PORT"] = str(self.port)
         self.proc = subprocess.Popen(
-            [str(SIM_BINARY)],
+            [str(self.binary_path)],
             env=env,
             stdout=self.log_file,
             stderr=subprocess.STDOUT,

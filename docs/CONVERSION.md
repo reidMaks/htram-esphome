@@ -208,6 +208,18 @@ tools/convert.py --stage esp
 > 1-клік оновлення з GitHub. Для іменованого пристрою флоту передайте
 > `--config esphome/htram-9436b0.yaml`.
 
+Для нових кімнатних пристроїв із Home Assistant використовуйте відповідний
+профіль, щоб зберегти унікальне ім'я пристрою й отримувати той самий профіль
+під час OTA:
+
+```bash
+make convert CONFIG=esphome/htram-living.yaml
+make convert CONFIG=esphome/htram-bedroom.yaml
+make convert CONFIG=esphome/htram-office.yaml
+make convert CONFIG=esphome/htram-kids-1.yaml
+make convert CONFIG=esphome/htram-kids-2.yaml
+```
+
 ### dump — заводський образ GD32 (по SWD)
 
 ```bash

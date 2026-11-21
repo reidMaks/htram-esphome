@@ -1,18 +1,18 @@
 # Fonts
 
-Three files ship here, and none of them are ours. What each one is, where it
-came from, and under what terms:
+The bundled font files and their licences:
 
 | File | Upstream | Licence |
 | --- | --- | --- |
 | `NotoSans-Regular.ttf` | [Noto](https://github.com/notofonts/notofonts.github.io), Google | SIL OFL 1.1 — [`LICENSE-Noto-OFL.txt`](LICENSE-Noto-OFL.txt) |
 | `DejaVuSans-ExtraLight.ttf` | [DejaVu](https://dejavu-fonts.github.io/) | Bitstream Vera — [`LICENSE-DejaVu.txt`](LICENSE-DejaVu.txt) |
 | `DejaVuSans-ExtraLight-Oblique.ttf` | generated here from the file above | Bitstream Vera, same file |
+| `JetBrainsMono-Variable.ttf` | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | SIL OFL 1.1 — [`LICENSE-JetBrainsMono-OFL.txt`](LICENSE-JetBrainsMono-OFL.txt) |
 
 Both licences are permissive and both require that their notice travel with the
 font, which is what those two files are for. Keep them next to the `.ttf`s.
 
-The oblique is the only one we made. ESPHome renders fonts from the TTF at build
+The oblique is the only font we modify. ESPHome renders fonts from the TTF at build
 time and LVGL cannot shear text, so a slanted clock needs a slanted file:
 
 ```bash

@@ -11,6 +11,9 @@ substitutions:
   alarm_rtttl: "Alarm:d=4,o=6,b=200:b,c7,b,c7,b,c7,b,c7"
   alarm_repeat_seconds: "3"
   alarm_snooze_minutes: "9"
+  alarm_show_dial_tick: "true"
+  alarm_bell_x: "190"
+  alarm_bell_y: "86"
 
 globals:
   - id: alarm_ringing
@@ -169,7 +172,8 @@ htram_arbiter:
             id(alarm_ui_sig) = -1;
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
             if (id(alarm_bell_drawn)) {
-              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
+              id(htram_core)->send_clear_cached_asset_centered(
+                  htram_gd32::ASSET_ID_BELL, ${alarm_bell_x}, ${alarm_bell_y});
               id(alarm_bell_drawn) = false;
             }
     - event: screen_idle
@@ -220,7 +224,7 @@ script:
           if (sig == id(alarm_ui_sig)) return;
           id(alarm_ui_sig) = sig;
 
-          if (armed && is_clock_face) {
+          if (armed && is_clock_face && ${alarm_show_dial_tick}) {
             // 12-годинне коло; LVGL рахує кути від 3-ї години, тож −90.
             const float dial = ((id(alarm_time).hour % 12) +
                                 id(alarm_time).minute / 60.0f) * 30.0f;
@@ -241,11 +245,13 @@ script:
           if (can_show) {
             const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
             id(htram_core)->send_draw_cached_asset_centered(
-                htram_gd32::ASSET_ID_BELL, 190, 86, Color(c), Color(0x000000), 1);
+                htram_gd32::ASSET_ID_BELL, ${alarm_bell_x}, ${alarm_bell_y},
+                Color(c), Color(0x000000), 1);
             id(alarm_bell_drawn) = true;
             id(alarm_bell_needed) = true;
           } else if (id(alarm_bell_drawn)) {
-            id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
+            id(htram_core)->send_clear_cached_asset_centered(
+                htram_gd32::ASSET_ID_BELL, ${alarm_bell_x}, ${alarm_bell_y});
             id(alarm_bell_drawn) = false;
             id(alarm_bell_needed) = false;
           }
@@ -327,7 +333,8 @@ script:
           if (face != 0) {
             lv_obj_add_flag(id(ui_alarm_tick), LV_OBJ_FLAG_HIDDEN);
             if (id(alarm_bell_drawn)) {
-              id(htram_core)->send_clear_cached_asset_centered(htram_gd32::ASSET_ID_BELL, 190, 86);
+              id(htram_core)->send_clear_cached_asset_centered(
+                  htram_gd32::ASSET_ID_BELL, ${alarm_bell_x}, ${alarm_bell_y});
               id(alarm_bell_drawn) = false;
             }
           } else {
@@ -348,7 +355,8 @@ script:
           if (can_show && (ringing || snoozing)) {
             const uint32_t c = ringing ? 0xFF9E3D : 0x707880;
             id(htram_core)->send_draw_cached_asset_centered(
-                htram_gd32::ASSET_ID_BELL, 190, 86, Color(c), Color(0x000000), 1);
+                htram_gd32::ASSET_ID_BELL, ${alarm_bell_x}, ${alarm_bell_y},
+                Color(c), Color(0x000000), 1);
             id(alarm_bell_drawn) = true;
           }
 
