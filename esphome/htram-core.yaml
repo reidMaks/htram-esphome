@@ -9,7 +9,7 @@ substitutions:
   ota_firmware_asset: "htram-standalone.bin"
   # Сигнал після успішної прошивки (короткий висхідний тризвук a6, b6, c7 у резонансній смузі динаміка)
   ota_done_rtttl: "Flashed:d=16,o=6,b=240:a,b,c7"
-  firmware_version: "2.4.0"
+  firmware_version: "2.4.1"
 
 packages:
   ui: !include core-ui.yaml
